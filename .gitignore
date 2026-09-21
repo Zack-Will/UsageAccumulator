@@ -1,0 +1,15 @@
+node_modules/
+dist/
+*.log
+.DS_Store
+data/
+
+# 凭证与本地环境：.env 只匹配字面量文件名，匹配不到 .env.local / .env.production，
+# 必须用通配。示例文件显式放行。
+.env
+.env.*
+!.env.example
+!*.env.example
+
+# 本地运行产物
+.claude/launch.json

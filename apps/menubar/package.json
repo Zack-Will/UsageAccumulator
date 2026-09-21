@@ -1,0 +1,20 @@
+{
+  "name": "@ua/menubar",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/main.cjs",
+  "scripts": {
+    "dev": "pnpm run build && electron .",
+    "build": "tsc -p tsconfig.json && node scripts/copy-renderer.mjs",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@ua/tokens": "workspace:*"
+  },
+  "devDependencies": {
+    "electron": "^33.3.1"
+  },
+  "productName": "UsageAccumulator"
+}

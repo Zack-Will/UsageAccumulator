@@ -1,0 +1,365 @@
+/* 面板样式。颜色一律取 @ua/tokens 的令牌，这里不定义任何新颜色。 */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 1.35;
+  cursor: default;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-font-smoothing: antialiased;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+/* 数字统一等宽 + tabular-nums：刷新时不跳动 */
+.num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+.label {
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+/* ---- 主面板 ---- */
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 12px;
+}
+
+.banner {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  font-size: 11px;
+}
+
+.banner.warn {
+  background: var(--warn-bg);
+  border-color: var(--warn-border);
+  color: var(--warn);
+}
+
+.banner.danger {
+  background: var(--danger-bg);
+  border-color: var(--danger-border);
+  color: var(--danger);
+}
+
+.head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.head-eta {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+#eta {
+  font-size: 34px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  color: var(--text);
+}
+
+/* 耗尽读数的颜色与下面进度条的严重度同源，保持一套语义 */
+.head-eta.sev-warn #eta {
+  color: var(--warn);
+}
+
+.head-eta.sev-danger #eta {
+  color: var(--danger);
+}
+
+.head-rate {
+  display: flex;
+  align-items: baseline;
+  gap: 3px;
+  white-space: nowrap;
+}
+
+#rate {
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+/* ---- 窗口行 ---- */
+
+.rows {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-y: auto;
+}
+
+.is-degraded .rows,
+.is-degraded .head {
+  opacity: 0.5;
+}
+
+/* 窗口少时均分高度把面板填满（max-height 兜住上限），窗口多或顶部有横幅时压回内容高度 */
+.row {
+  flex: 1 1 auto;
+  max-height: 76px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.row:last-child {
+  border-bottom: 0;
+}
+
+.row-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 5px;
+}
+
+.row-label {
+  font-size: 12px;
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.row-pct {
+  font-size: 16px;
+  color: var(--text);
+}
+
+.row-pct .unit {
+  font-size: 11px;
+  color: var(--text-3);
+  margin-left: 1px;
+}
+
+/* 8px 高的条同时表达「已用」（实色）与「预计」（半透明延伸段） */
+.bar {
+  position: relative;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--track);
+  overflow: hidden;
+}
+
+.bar-proj,
+.bar-used {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  border-radius: 4px;
+  transition: width 300ms ease;
+}
+
+.bar-proj {
+  background: color-mix(in srgb, var(--c) 32%, transparent);
+}
+
+.bar-used {
+  background: var(--c);
+}
+
+/* 预计超过 100%：右端补一道实色切口 */
+.bar.over::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 2px;
+  height: 100%;
+  background: var(--danger);
+}
+
+/* 左：本窗口的耗尽倒计时（打不满就留空）　右：重置时刻 */
+.row-foot {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--text-4);
+}
+
+.row-exhaust {
+  color: var(--c);
+}
+
+.row-reset {
+  margin-left: auto;
+}
+
+.empty {
+  padding: 24px 0;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-3);
+}
+
+/* ---- 按钮 ---- */
+
+.foot {
+  display: flex;
+  gap: 6px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-soft);
+}
+
+.btn {
+  flex: 1;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text-2);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  cursor: default;
+}
+
+.btn:hover {
+  background: var(--seg-active);
+  color: var(--text);
+}
+
+.btn:active {
+  transform: translateY(0.5px);
+}
+
+.btn-primary {
+  flex: 2;
+  background: var(--accent);
+  border-color: transparent;
+  color: #ffffff;
+}
+
+.btn-primary:hover {
+  background: var(--accent-active);
+  color: #ffffff;
+}
+
+.btn-ghost {
+  flex: 0 0 auto;
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-3);
+}
+
+/* ---- 设置 ---- */
+
+.settings {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 12px;
+  background: var(--bg);
+  overflow-y: auto;
+}
+
+.settings-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.settings-title {
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.field-row {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.field-label {
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+.input {
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12px;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+input[type="checkbox"] {
+  accent-color: var(--accent);
+}
+
+.settings-foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: auto;
+  padding-top: 8px;
+}

@@ -1,0 +1,30 @@
+/* 设计令牌 —— 看板与菜单栏共用，与画布设计稿一致。
+   图形色按 3:1 取值，文字色按 4.5:1 取值：这是两套不同的约束，
+   用同一套值会把日间模式压成浊色（实际踩过这个坑）。 */
+:root,
+.t-dark {
+  --bg: #141413;        --surface: #1E1E1C;   --border: #2E2E2A;
+  --border-soft: #242422; --ring-track: #252523; --track: #191917;
+  --text: #FAF9F5;      --text-2: #A3A198;    --text-3: #7A7870;   --text-4: #5A5852;
+  --seg-active: #34332F; --cut: #8C8981;
+  --ok: #6FA8A2;        --warn: #C2A24A;      --danger: #D9605A;   --info: #8390D6;
+  --ok-bg: rgba(111,168,162,0.13);   --warn-bg: rgba(194,162,74,0.12);
+  --warn-border: rgba(194,162,74,0.28);
+  --danger-bg: rgba(217,96,90,0.3);  --danger-border: rgba(217,96,90,0.6);
+  --accent: #D97757;    --accent-active: #D97757;
+  --cat1: #D97757; --cat2: #6FA8A2; --cat3: #8390D6; --cat4: #C2A24A; --empty: #242422;
+  --font-sans: "IBM Plex Sans", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+}
+.t-light {
+  --bg: #FAF9F5;        --surface: #FFFFFF;   --border: #E5E2DA;
+  --border-soft: #EDEBE4; --ring-track: #EDEBE4; --track: #F7F6F2;
+  --text: #1A1A18;      --text-2: #4F4E49;    --text-3: #6A6963;   --text-4: #76756E;
+  --seg-active: #E9E6DD; --cut: #A9A79E;
+  --ok: #0F7A6E;        --warn: #9A6100;      --danger: #C0392B;   --info: #4A52C4;
+  --ok-bg: rgba(15,122,110,0.10);    --warn-bg: rgba(154,97,0,0.10);
+  --warn-border: rgba(154,97,0,0.28);
+  --danger-bg: rgba(192,57,43,0.16); --danger-border: rgba(192,57,43,0.5);
+  --accent: #D97757;    --accent-active: #BE5027;
+  --cat1: #E0674A; --cat2: #1F9B90; --cat3: #6E72DB; --cat4: #C1820C; --empty: #EDEBE4;
+}

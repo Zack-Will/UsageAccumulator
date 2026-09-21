@@ -1,0 +1,19 @@
+# 内网明文 HTTP 部署（试跑用）。与 docker-compose.yml 叠加：
+#
+#   docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.lan.yml --env-file deploy/.env up -d
+#
+# 与生产部署的差别：
+#   1. server 直接把 8080 映射到宿主机，不经 Caddy
+#   2. caddy 挂到 tls profile 后面，默认不启动（需要时加 --profile tls）
+#   3. postgres 额外映射到 127.0.0.1:5433，便于「服务端用宿主机 Node 直接跑」这种
+#      轻量模式（home-nas-vm 上 compose 构建镜像不可用，见 docs/ARCHITECTURE.md §12）
+# 凭证仍然生效，只是传输不加密——仅限可信内网。
+services:
+  postgres:
+    ports:
+      - "127.0.0.1:${UA_PG_PORT:-5433}:5432"
+  server:
+    ports:
+      - "${UA_PORT:-8787}:8080"
+  caddy:
+    profiles: ["tls"]

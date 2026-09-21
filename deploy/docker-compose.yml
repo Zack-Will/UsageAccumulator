@@ -1,0 +1,77 @@
+# UsageAccumulator 部署（ARCHITECTURE §3：VPS + Docker Compose）
+#
+#   cp deploy/.env.example deploy/.env && 填好 token，然后
+#   docker compose -f deploy/docker-compose.yml up -d
+#
+# 凭证只走环境变量，绝不写进镜像。官方 sessionKey 只存探针本机，永远不会到这里。
+
+name: usage-accumulator
+
+services:
+  postgres:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-ua}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${POSTGRES_DB:-ua}
+      # 时间列统一 UTC（CONTRACT §4）
+      TZ: UTC
+      PGTZ: UTC
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ua} -d ${POSTGRES_DB:-ua}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    # 不对外暴露端口：只有 server 通过内部网络访问
+    expose:
+      - "5432"
+
+  server:
+    build:
+      context: ..
+      dockerfile: packages/ua-server/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-ua}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-ua}
+      UA_HOST: 0.0.0.0
+      PORT: "8080"
+      UA_DASHBOARD_TOKEN: ${UA_DASHBOARD_TOKEN:?UA_DASHBOARD_TOKEN is required}
+      UA_ENROLL_TOKEN: ${UA_ENROLL_TOKEN:?UA_ENROLL_TOKEN is required}
+      UA_DASHBOARD_URL: ${UA_DASHBOARD_URL:-}
+      # 定价表挂进来，模型缺价时成本字段是 null 而不是 0
+      UA_PRICING_FILE: /app/deploy/pricing.json
+      UA_LOG_LEVEL: ${UA_LOG_LEVEL:-info}
+      TZ: UTC
+    volumes:
+      # 改价格不用重建镜像；migrations 同理（服务启动时自动执行）
+      - ./pricing.json:/app/deploy/pricing.json:ro
+      - ./migrations:/app/deploy/migrations:ro
+    expose:
+      - "8080"
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on:
+      - server
+    environment:
+      UA_DOMAIN: ${UA_DOMAIN:?UA_DOMAIN is required}
+      UA_ACME_EMAIL: ${UA_ACME_EMAIL:-}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:

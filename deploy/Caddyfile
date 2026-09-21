@@ -1,0 +1,46 @@
+# Caddy：自动 HTTPS，反代 ua-server（ARCHITECTURE §3 / §9）
+{
+	email {$UA_ACME_EMAIL}
+}
+
+{$UA_DOMAIN} {
+	encode zstd gzip
+
+	# SSE 不能被缓冲，否则看板要等 flush 才动
+	@sse path /v1/stream
+	handle @sse {
+		reverse_proxy server:8080 {
+			flush_interval -1
+			transport http {
+				read_timeout 0
+			}
+		}
+	}
+
+	# ingest 是 gzip NDJSON，已经压过了，别再 encode 一遍
+	@ingest path /v1/ingest/*
+	handle @ingest {
+		request_body {
+			max_size 64MB
+		}
+		reverse_proxy server:8080
+	}
+
+	handle {
+		reverse_proxy server:8080
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+		-Server
+	}
+
+	# 访问日志刻意不记 query 与 body：契约规定正文不得进日志，
+	# 而 query 里可能带 profile_id 之类的维度，留 path 足够排障。
+	log {
+		output stdout
+		format json
+	}
+}

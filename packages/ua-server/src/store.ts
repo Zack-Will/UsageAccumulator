@@ -1,0 +1,84 @@
+import type { Profile, QuotaSample, QuotaSnapshot, UsageEvent } from "@ua/core";
+import type { CalibrationPoint } from "./aggregate.js";
+
+/**
+ * 数据访问层接口。
+ *
+ * 刻意只放「取行 / 写行」，不放算法 —— 聚合全在 aggregate.ts 的纯函数里。
+ * 于是测试可以换成内存实现，不需要真的起一个 Postgres。
+ */
+
+export interface EventRow {
+  event: UsageEvent;
+  /** null = 该模型没有报价，不是 0 */
+  costUsd: number | null;
+}
+
+export interface LatestQuotaWindow {
+  windowKind: string;
+  utilizationPct: number;
+  resetsAt: Date | null;
+  capturedAt: Date;
+}
+
+export interface CalibrationRecord {
+  profileId: string;
+  windowKind: string;
+  computedAt: Date;
+  limitWeightedTokens: number;
+  baseModel: string;
+  weights: Record<string, number>;
+  residual: number;
+  observations: number;
+  converged: boolean;
+  /** 逐观测点，供看板画拟合散点 */
+  points: CalibrationPoint[];
+}
+
+export interface MachineRecord {
+  id: string;
+  hostname: string | null;
+  os: string | null;
+  lastSeenAt: Date | null;
+  /** 非 null = 已吊销。查询层照样返回，好让鉴权区分 unauthorized 与 machine_revoked */
+  revokedAt: Date | null;
+}
+
+export interface Store {
+  ping(): Promise<boolean>;
+
+  listProfiles(): Promise<Profile[]>;
+  /** ingest 时为没见过的 profile 落一条占位行，写入路径绝不能因为陌生 profile 失败 */
+  ensureProfiles(ids: string[]): Promise<void>;
+
+  /** ON CONFLICT DO NOTHING 批量 upsert，返回**新插入**的条数 */
+  insertEvents(rows: EventRow[]): Promise<number>;
+
+  /** machineId = 采集机器（CONTRACT §1.3），仅供追溯，可为空 */
+  insertQuotaSnapshot(s: QuotaSnapshot, machineId?: string | null): Promise<void>;
+  latestQuotaWindows(profileId: string): Promise<LatestQuotaWindow[]>;
+  quotaSamples(profileId: string, windowKind: string, since: Date): Promise<QuotaSample[]>;
+
+  eventsInRange(profileId: string, from: Date, to: Date): Promise<EventRow[]>;
+
+  latestCalibration(profileId: string, windowKind?: string): Promise<CalibrationRecord[]>;
+  insertCalibration(rec: CalibrationRecord): Promise<void>;
+
+  createMachine(m: {
+    id: string;
+    provisionalMachineId: string | null;
+    hostname: string;
+    os: string;
+    tokenSha256: string;
+  }): Promise<void>;
+  /** 吊销的机器也要返回（带 revokedAt），否则无法回 machine_revoked */
+  findMachineByTokenSha256(hash: string): Promise<MachineRecord | null>;
+  /** 看板用：机器清单 + 可读名。吊销的也列出来，带 revoked 标记 */
+  listMachines(): Promise<MachineRecord[]>;
+  touchMachine(id: string): Promise<void>;
+
+  /** 刷新 usage_hourly 物化视图（ARCHITECTURE §6.2） */
+  refreshHourly(): Promise<void>;
+
+  close(): Promise<void>;
+}

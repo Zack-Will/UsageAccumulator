@@ -1,0 +1,12 @@
+{
+  "name": "@ua/probe", "version": "0.1.0", "private": true, "type": "module",
+  "bin": { "ua-probe": "./src/cli.ts" },
+  "scripts": {
+    "dev": "tsx src/cli.ts run", "typecheck": "tsc --noEmit", "test": "vitest run"
+  },
+  "dependencies": {
+    "@ua/core": "workspace:*",
+    "chokidar": "^4.0.3", "undici": "^7.2.0", "zod": "^3.24.1",
+    "pino": "^9.6.0", "smol-toml": "^1.3.1"
+  }
+}

@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="zh-CN" class="t-dark">
+  <head>
+    <meta charset="utf-8" />
+    <!-- 渲染层不联网：只允许加载本地文件，connect-src 直接关掉 -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src file: 'unsafe-inline'; script-src file:; img-src file: data:; font-src file:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none';"
+    />
+    <title>UsageAccumulator</title>
+    <link rel="stylesheet" href="./theme.css" />
+    <link rel="stylesheet" href="./panel.css" />
+  </head>
+  <body>
+    <main id="main" class="panel">
+      <div id="banner" class="banner" hidden></div>
+
+      <header class="head">
+        <div class="head-eta">
+          <span id="eta" class="num">—</span>
+          <span id="etaLabel" class="label">后耗尽</span>
+        </div>
+        <div class="head-rate">
+          <span id="rate" class="num">—</span>
+          <span class="label">%/分</span>
+        </div>
+      </header>
+
+      <ul id="rows" class="rows"></ul>
+
+      <footer class="foot">
+        <button id="dash" class="btn btn-primary" type="button">打开看板</button>
+        <button id="openSettings" class="btn" type="button">设置</button>
+        <button id="quit" class="btn" type="button">退出</button>
+      </footer>
+    </main>
+
+    <section id="settings" class="settings" hidden>
+      <header class="settings-head">
+        <span class="settings-title">设置</span>
+        <button id="closeSettings" class="btn btn-ghost" type="button">返回</button>
+      </header>
+
+      <label class="field">
+        <span class="field-label">服务器</span>
+        <input id="serverUrl" class="input num" type="url" spellcheck="false" placeholder="https://ua.example.com" />
+      </label>
+
+      <label class="field">
+        <span class="field-label">Token</span>
+        <input id="token" class="input num" type="password" spellcheck="false" autocomplete="off" />
+      </label>
+
+      <label class="field">
+        <span class="field-label">Profile</span>
+        <input id="profileId" class="input num" type="text" spellcheck="false" />
+      </label>
+
+      <label class="field">
+        <span class="field-label">轮询（秒）</span>
+        <input id="pollSeconds" class="input num" type="number" min="30" max="600" step="5" />
+      </label>
+
+      <label class="field field-row">
+        <span class="field-label">开机自启</span>
+        <input id="launchAtLogin" type="checkbox" />
+      </label>
+
+      <div class="settings-foot">
+        <button id="clearToken" class="btn btn-ghost" type="button">清除 Token</button>
+        <button id="save" class="btn btn-primary" type="button">保存</button>
+      </div>
+    </section>
+
+    <script src="./panel.js"></script>
+  </body>
+</html>
