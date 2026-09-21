@@ -779,11 +779,29 @@ describe("GET /v1/timeline and /v1/distribution", () => {
     expect(hourly.json().bucket).toBe("hour");
     const bucket = hourly.json().buckets[0];
     expect(bucket.series.length).toBeGreaterThan(0);
-    expect(Object.keys(bucket.series[0]).sort()).toEqual(["events", "total_tokens", "ts"]);
+    expect(Object.keys(bucket.series[0]).sort()).toEqual([
+      "cost_usd",
+      "events",
+      "total_tokens",
+      "ts",
+      "unpriced_events",
+    ]);
     // series 的事件数必须与桶总数对得上，否则堆叠柱和总量会打架
     expect(
       bucket.series.reduce((s: number, p: { events: number }) => s + p.events, 0),
     ).toBe(bucket.events);
+    // 成本同理：逐点求和必须等于桶成本，否则「费用趋势」与「总费用」会对不上。
+    // 缺价点的 cost_usd 是 null（不是 0），求和时跳过 —— 与桶的口径一致。
+    const seriesCost = bucket.series.reduce(
+      (s: number | null, p: { cost_usd: number | null }) =>
+        p.cost_usd === null ? s : (s ?? 0) + p.cost_usd,
+      null as number | null,
+    );
+    if (bucket.cost_usd === null) expect(seriesCost).toBeNull();
+    else expect(seriesCost).toBeCloseTo(bucket.cost_usd, 9);
+    expect(
+      bucket.series.reduce((s: number, p: { unpriced_events: number }) => s + p.unpriced_events, 0),
+    ).toBe(bucket.unpriced_events);
   });
 
   it("keys by=hour on the full RFC3339 hour, not a 0..23 index", async () => {

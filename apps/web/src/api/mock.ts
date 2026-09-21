@@ -389,6 +389,9 @@ function withSeries(
     ts: iso(start + i * step),
     total_tokens: Math.round((x / sum) * b.total_tokens),
     events: Math.round((x / sum) * b.events),
+    // 按与总量相同的比例摊开；桶成本为 null（整桶缺价）时每点也必须是 null
+    cost_usd: b.cost_usd === null ? null : (x / sum) * b.cost_usd,
+    unpriced_events: Math.round((x / sum) * b.unpriced_events),
   }));
   return { ...b, series };
 }
@@ -419,18 +422,30 @@ function buildDistribution(p: DistributionParams): Distribution {
     }
 
     case "model": {
+      // 按区间长度缩放：真接口是按时间切的，mock 若对任何区间都返回同一份，
+      // 「5h 窗口费用」和「7d 窗口费用」会显示成同一个数，把人误导到以为是 bug。
+      const scale = Math.max(0.02, Math.min(6, (to - from) / DAY));
       // key = 模型名，label 缺省（前端自己去掉 claude- 前缀显示）
       const buckets = MODELS.map((m, i) =>
         bucket(
           m,
-          [4210, 2680, 1340, 451, 318][i] ?? 500,
-          [28_400_000, 17_900_000, 8_600_000, 3_100_000, 1_700_000][i] ?? 2e6,
+          Math.round(([4210, 2680, 1340, 451, 318][i] ?? 500) * scale),
+          Math.round(([28_400_000, 17_900_000, 8_600_000, 3_100_000, 1_700_000][i] ?? 2e6) * scale),
           r,
           !UNPRICED_MODELS.has(m),
           true,
         ),
       );
-      return { ...base, buckets };
+      return {
+        ...base,
+        buckets: granularity
+          ? buckets.map((b, i) =>
+              withSeries(b, from, to, granularity, 3307 + i * 53, (k) =>
+                Math.max(0, 0.4 + Math.sin(k * Math.PI * 2 - 0.6 + i * 0.9) * 0.6),
+              ),
+            )
+          : buckets,
+      };
     }
 
     case "project":

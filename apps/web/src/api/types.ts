@@ -149,6 +149,9 @@ export interface BucketSeriesPoint {
   ts: Rfc3339;
   total_tokens: number;
   events: number;
+  /** null = 该时间点没有任何有报价的模型。不是 0 美元，两者必须分开显示。 */
+  cost_usd: number | null;
+  unpriced_events: number;
 }
 
 export interface DistributionBucket {

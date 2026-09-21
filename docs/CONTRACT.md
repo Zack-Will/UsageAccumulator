@@ -218,7 +218,8 @@ Idempotency-Key: <批次内容的 sha256 前 32 位>
                  "cache_write_5m_tokens": 0, "cache_write_1h_tokens": 0, "total_tokens": 0,
                  "cost_usd": null,             // null = 该桶无任何有报价的模型
                  "unpriced_events": 12,        // >0 = 成本不完整，前端必须与「成本为 0」区分开
-                 "series": [ { "ts": "2026-09-21T13:00:00Z", "total_tokens": 8123, "events": 12 } ] } ] }
+                 "series": [ { "ts": "2026-09-21T13:00:00Z", "total_tokens": 8123, "events": 12,
+                                "cost_usd": 0.4213, "unpriced_events": 0 } ] } ] }
 //   series 仅在 bucket=hour|day 时出现
 
 // GET /v1/calibration

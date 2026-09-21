@@ -60,9 +60,11 @@ describe("parseUsageResponse", () => {
     expect(windows.find((w) => w.windowKind === "extra_usage")).toBeUndefined();
   });
 
-  it("兼容 0..1 的 utilization 与 reset_at 旧字段名，统一成 0..100", () => {
+  // ★ 这条断言原本是 0.62 → 62，把「小于 1 就当成比例」的启发式写进了契约。
+  // 2026-09-21 实测：body 里的 utilization 本来就是 0..100，该启发式会把 1% 读成 100%。
+  it("utilization 原样保留量纲，不做 0..1 推断；兼容 reset_at 旧字段名", () => {
     const windows = parseUsageResponse({ five_hour: { utilization: 0.62, reset_at: "2026-09-21T10:30:00Z" } });
-    expect(windows[0]?.utilizationPct).toBeCloseTo(62, 6);
+    expect(windows[0]?.utilizationPct).toBeCloseTo(0.62, 6);
     expect(windows[0]?.resetsAt?.toISOString()).toBe("2026-09-21T10:30:00.000Z");
   });
 
@@ -252,5 +254,78 @@ describe("QuotaFetcher", () => {
     expect(f.lastOutcome).toMatchObject({ ok: false, kind: "error" });
     expect(f.nextDelayMs()).toBe(330_000);
     store.close();
+  });
+});
+
+/**
+ * 2026-09-21 实测的真实响应形状（组织 uuid 已换成占位符，百分比保留量纲特征）。
+ * 三个要点：老的 seven_day_* per-model 字段值是 null；per-model 改由 limits[] 承载；
+ * utilization 与 limits[].percent 量纲一致，都是 0..100。
+ */
+const REAL_USAGE_FIXTURE = {
+  five_hour: { utilization: 0, resets_at: "2026-09-21T17:39:59.943116+00:00" },
+  seven_day: { utilization: 80, resets_at: "2026-09-21T23:00:00.943141+00:00" },
+  seven_day_opus: null,
+  seven_day_sonnet: null,
+  extra_usage: { is_enabled: false, utilization: null },
+  limits: [
+    { group: "session", kind: "session", percent: 0, resets_at: "2026-09-21T17:39:59.943116+00:00", scope: null, severity: "normal" },
+    { group: "weekly", kind: "weekly_all", percent: 80, resets_at: "2026-09-21T23:00:00.943141+00:00", scope: null, severity: "warning" },
+    {
+      group: "weekly",
+      kind: "weekly_scoped",
+      percent: 98,
+      resets_at: "2026-09-21T22:59:59.943355+00:00",
+      scope: { model: { display_name: "Fable", id: null }, surface: null },
+      severity: "critical",
+    },
+  ],
+};
+
+describe("limits[] 与量纲", () => {
+  it("utilization 是 0..100，1 不能被当成比例放大成 100", () => {
+    const [w] = parseUsageResponse({ five_hour: { utilization: 1, resets_at: null } });
+    expect(w?.utilizationPct).toBe(1);
+  });
+
+  it("从 limits[] 取出按模型细分的窗口", () => {
+    const windows = parseUsageResponse(REAL_USAGE_FIXTURE);
+    const byKind = new Map(windows.map((w) => [w.windowKind, w]));
+    // 真正卡住用户的那一档：扁平 key 里完全没有
+    expect(byKind.get("seven_day_fable")?.utilizationPct).toBe(98);
+    expect(byKind.get("seven_day")?.utilizationPct).toBe(80);
+    expect(byKind.get("five_hour")?.utilizationPct).toBe(0);
+  });
+
+  it("扁平 key 与 limits[] 指向同一窗口时不重复入列", () => {
+    const windows = parseUsageResponse(REAL_USAGE_FIXTURE);
+    const kinds = windows.map((w) => w.windowKind);
+    expect(new Set(kinds).size).toBe(kinds.length);
+    expect(kinds.filter((k) => k === "seven_day")).toHaveLength(1);
+  });
+
+  it("值为 null 的老字段不产生窗口", () => {
+    const kinds = parseUsageResponse(REAL_USAGE_FIXTURE).map((w) => w.windowKind);
+    expect(kinds).not.toContain("seven_day_opus");
+  });
+
+  it("没见过的 kind 原样带出，不静默丢窗口", () => {
+    const windows = parseUsageResponse({ limits: [{ kind: "monthly_whatever", percent: 12 }] });
+    expect(windows[0]?.windowKind).toBe("monthly_whatever");
+    expect(windows[0]?.utilizationPct).toBe(12);
+  });
+});
+
+describe("多组织时选对 org", () => {
+  it("优先带 raven capability 的组织，而不是列表里的第一个", () => {
+    const orgs = [
+      { uuid: "org-personal", name: "personal", capabilities: ["chat"], rate_limit_tier: "default_claude_ai" },
+      { uuid: "org-code", name: "work", capabilities: ["chat", "raven"], rate_limit_tier: "default_raven" },
+    ];
+    expect(extractOrgId(orgs)).toBe("org-code");
+  });
+
+  it("没有 raven 时回退到第一个有 uuid 的", () => {
+    expect(extractOrgId([{ name: "no uuid" }, { uuid: "org-a" }, { uuid: "org-b" }])).toBe("org-a");
   });
 });

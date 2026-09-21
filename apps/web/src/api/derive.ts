@@ -162,6 +162,36 @@ export function stackFromBuckets(
   });
 }
 
+/** 费用时间序列上的一点。cost 为 null = 该点没有任何有报价的模型（不是 0 美元）。 */
+export interface CostPoint {
+  ts: number;
+  cost: number | null;
+  unpricedEvents: number;
+}
+
+/**
+ * 各桶的 series 按时间点汇总成一条费用曲线。
+ *
+ * ★ 缺价必须传播成 null 而不是塌成 0：定价表是刻意留空的，
+ * 把缺价渲染成 $0 会让"这段时间几乎没花钱"变成一个假结论。
+ */
+export function costSeries(buckets: DistributionBucket[]): CostPoint[] {
+  const at = new Map<number, { cost: number | null; unpriced: number }>();
+  for (const b of buckets) {
+    for (const p of b.series ?? []) {
+      const ts = Date.parse(p.ts);
+      if (!Number.isFinite(ts)) continue;
+      const cur = at.get(ts) ?? { cost: null, unpriced: 0 };
+      if (p.cost_usd !== null) cur.cost = (cur.cost ?? 0) + p.cost_usd;
+      cur.unpriced += p.unpriced_events;
+      at.set(ts, cur);
+    }
+  }
+  return [...at.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([ts, v]) => ({ ts, cost: v.cost, unpricedEvents: v.unpriced }));
+}
+
 // ── by=hour 桶 → 热力图 / 缓存趋势 ─────────────────────────────────────────
 /** by=hour 的 bucket.key 是小时起点的 RFC3339 时刻（UTC）。 */
 function parseHourKey(key: string): number | null {

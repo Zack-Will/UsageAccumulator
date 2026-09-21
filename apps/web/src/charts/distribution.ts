@@ -1,7 +1,7 @@
 import type { EChartsOption } from "./echarts";
-import { axisCommon, baseOption, fmtClock, fmtPct, fmtTokens, NUM_FONT, UI_FONT } from "./base";
+import { axisCommon, baseOption, fmtClock, fmtDay, fmtPct, fmtTokens, NUM_FONT, UI_FONT } from "./base";
 import { alpha, readLightTokens, sequential, type Tokens } from "./tokens";
-import type { CachePoint, HourCell, StackSeries } from "../api/derive";
+import type { CachePoint, CostPoint, HourCell, StackSeries } from "../api/derive";
 import type { DistributionBucket } from "../api/types";
 
 /** 成本未知与成本为 0 必须区分：桶缺价时 tooltip 里标出来，不显示成 $0.00。 */
@@ -10,13 +10,67 @@ function costCell(b: DistributionBucket): string {
   return b.unpriced_events > 0 ? `$${b.cost_usd.toFixed(4)} †` : `$${b.cost_usd.toFixed(4)}`;
 }
 
-// ── 机器分布：按小时堆叠柱（数据由 derive.machineHourly 从 /v1/timeline 还原） ──
+/**
+ * 费用趋势。纵轴是**按公开价目表折算的等价 API 费用**，不是实际扣费 ——
+ * 订阅制下实际扣的是固定月费，这条曲线回答的是「如果按 API 计价值多少钱」。
+ */
+export function costTrendOption(
+  t: Tokens,
+  points: CostPoint[],
+  bucket: "hour" | "day",
+): EChartsOption {
+  const fmtTick = bucket === "day" ? fmtDay : fmtClock;
+  return {
+    ...baseOption(t),
+    grid: { left: 52, right: 12, top: 16, bottom: 22 },
+    tooltip: {
+      ...baseOption(t).tooltip,
+      trigger: "axis",
+      axisPointer: { type: "shadow" },
+      valueFormatter: (v) => (v === null || v === undefined ? "成本未知" : `$${Number(v).toFixed(4)}`),
+    },
+    xAxis: {
+      type: "category",
+      data: points.map((p) => fmtTick(p.ts)),
+      ...axisCommon(t),
+      splitLine: { show: false },
+      axisLabel: { color: t["text-3"], fontFamily: NUM_FONT(t), fontSize: 10, hideOverlap: true },
+    },
+    yAxis: {
+      type: "value",
+      min: 0,
+      ...axisCommon(t),
+      axisLine: { show: false },
+      axisLabel: {
+        color: t["text-3"],
+        fontFamily: NUM_FONT(t),
+        fontSize: 10,
+        formatter: (v: number) => `$${v >= 10 ? v.toFixed(0) : v.toFixed(2)}`,
+      },
+    },
+    series: [
+      {
+        type: "bar",
+        name: "折算费用",
+        // 缺价的点给 null：ECharts 会留空，而不是画成 0 —— 两者含义完全不同
+        data: points.map((p) => p.cost),
+        itemStyle: { color: t["cat1"], borderRadius: [2, 2, 0, 0] },
+        barMaxWidth: 18,
+      },
+    ],
+  };
+}
+
+// ── 机器分布：堆叠柱。桶粒度随区间变化，刻度文案必须跟着变 ──
 export function machineStackOption(
   t: Tokens,
   series: StackSeries[],
   colors: Map<string, string>,
+  /** "hour" 时刻度是 HH:MM，"day" 时是 M/D —— 7d/30d 用小时刻度会有上百根柱，标签必然叠在一起 */
+  bucket: "hour" | "day" = "hour",
 ): EChartsOption {
-  const labels = (series[0]?.points ?? []).map((p) => fmtClock(p.ts));
+  const fmtTick = bucket === "day" ? fmtDay : fmtClock;
+  const labels = (series[0]?.points ?? []).map((p) => fmtTick(p.ts));
   return {
     ...baseOption(t),
     grid: { left: 46, right: 12, top: 28, bottom: 22 },
@@ -40,7 +94,14 @@ export function machineStackOption(
       data: labels,
       ...axisCommon(t),
       splitLine: { show: false },
-      axisLabel: { color: t["text-3"], fontFamily: NUM_FONT(t), fontSize: 10, interval: 3 },
+      // 不写死 interval：柱子数量随区间变（24 根 ~ 30 根），
+      // 交给 hideOverlap 按实际宽度取舍，比固定每 4 个显示一个稳
+      axisLabel: {
+        color: t["text-3"],
+        fontFamily: NUM_FONT(t),
+        fontSize: 10,
+        hideOverlap: true,
+      },
     },
     yAxis: {
       type: "value",

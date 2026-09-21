@@ -13,3 +13,6 @@ data/
 
 # 本地运行产物
 .claude/launch.json
+
+# Swift 外壳构建产物
+apps/menubar-mac/build/

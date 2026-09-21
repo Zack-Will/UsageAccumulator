@@ -59,7 +59,7 @@ export function Num({
 }
 
 /** 不参与补间的等宽文本（时间、比值等）。 */
-export function Mono({ children, tone }: { children: ReactNode; tone?: "muted" | "warn" }) {
+export function Mono({ children, tone }: { children: ReactNode; tone?: "muted" | "warn" | "danger" }) {
   return <span className={`mono${tone ? ` mono--${tone}` : ""}`}>{children}</span>;
 }
 

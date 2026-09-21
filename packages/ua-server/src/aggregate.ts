@@ -221,6 +221,10 @@ export interface SeriesPoint {
   ts: string;
   total_tokens: number;
   events: number;
+  /** 与 bucket 同一套语义：null = 该时间点没有任何有报价的模型，不是 0 美元。 */
+  cost_usd: number | null;
+  /** 缺价的事件数；> 0 表示这一点的成本不完整。 */
+  unpriced_events: number;
 }
 
 export interface DistributionBucket {
@@ -295,8 +299,17 @@ export function buildDistribution(
       if (p) {
         p.total_tokens += quotaTokens(event);
         p.events++;
+        // 与桶同一套口径：缺价只计数，绝不当成 0 美元累加
+        if (costUsd === null) p.unpriced_events++;
+        else p.cost_usd = (p.cost_usd ?? 0) + costUsd;
       } else {
-        inner.set(ts, { ts, total_tokens: quotaTokens(event), events: 1 });
+        inner.set(ts, {
+          ts,
+          total_tokens: quotaTokens(event),
+          events: 1,
+          cost_usd: costUsd,
+          unpriced_events: costUsd === null ? 1 : 0,
+        });
       }
     }
   }

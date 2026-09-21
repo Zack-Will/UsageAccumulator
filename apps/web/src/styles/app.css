@@ -342,6 +342,33 @@ button {
 .mono--warn {
   color: var(--warn);
 }
+.mono--danger {
+  color: var(--danger);
+}
+
+/* 折算费用行：金额在左，外推在右 */
+.ring__cost {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 6px;
+  font-size: 11px;
+}
+
+.ring__cost-main {
+  display: inline-flex;
+  align-items: baseline;
+  min-width: 0;
+}
+
+/* 耗尽倒计时：并进窗口卡的最后一行，不再单独占一张卡 */
+.ring__eta {
+  margin-top: 4px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border-soft);
+  font-size: 11px;
+}
 
 /* 成本缺价标记：† 走 warn 色，与「成本为 0」在视觉上分开 */
 .cost {

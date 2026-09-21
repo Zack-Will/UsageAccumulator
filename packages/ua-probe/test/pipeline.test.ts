@@ -6,7 +6,7 @@ import { parseConfig, ConfigError } from "../src/config.js";
 import { Attributor } from "../src/attributor.js";
 import { Ingestor, emptyStats } from "../src/ingest.js";
 import { ProbeStore } from "../src/store.js";
-import { backoffMs, buildNdjsonBody, classifyStatus } from "../src/shipper.js";
+import { backoffMs, buildNdjsonBody, classifyStatus, isServerErrorEnvelope } from "../src/shipper.js";
 import { hashProjectSlug, toWireEvent } from "../src/wire.js";
 import { launchdPlist, systemdUnit } from "../src/install.js";
 import { assistantLine, cleanup, makeConfig, silentLog, tmpDir } from "./helpers.js";
@@ -293,5 +293,25 @@ describe("服务单元", () => {
     expect(u).toContain("WantedBy=default.target");
     expect(u).toContain("Restart=always");
     expect(u).toContain("ExecStart=/bin/tsx /x/cli.ts run --config /c.toml");
+  });
+});
+
+describe("4xx 的裁决权归属", () => {
+  it("服务端自己回的 4xx 才丢弃", () => {
+    expect(classifyStatus(400, true)).toBe("drop");
+    expect(classifyStatus(422, true)).toBe("drop");
+    expect(classifyStatus(404, true)).toBe("drop");
+  });
+
+  it("中间链路回的 4xx 一律重试 —— frp 的 404 HTML 页曾导致整批丢失", () => {
+    expect(classifyStatus(404, false)).toBe("retry");
+    expect(classifyStatus(400, false)).toBe("retry");
+  });
+
+  it("只认服务端的错误信封", () => {
+    expect(isServerErrorEnvelope('{"error":{"code":"not_found","message":"no such route"}}')).toBe(true);
+    expect(isServerErrorEnvelope("<!DOCTYPE html><html><title>Not Found</title>")).toBe(false);
+    expect(isServerErrorEnvelope('{"accepted":3}')).toBe(false);
+    expect(isServerErrorEnvelope("")).toBe(false);
   });
 });

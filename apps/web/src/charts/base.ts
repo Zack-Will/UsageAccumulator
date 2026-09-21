@@ -48,6 +48,8 @@ const pad = (n: number): string => String(n).padStart(2, "0");
 
 /** 本地时区显示；服务端一律 UTC（CONTRACT §4）。 */
 export const fmtClock = (ms: number): string => {
+  // 无效时间要显式说"没有"，不能吐 NaN:NaN —— 那既不是时间也不是占位符
+  if (!Number.isFinite(ms)) return "—";
   const d = new Date(ms);
   return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
 };

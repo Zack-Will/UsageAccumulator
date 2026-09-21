@@ -7,7 +7,20 @@
   --border-soft: #242422; --ring-track: #252523; --track: #191917;
   --text: #FAF9F5;      --text-2: #A3A198;    --text-3: #7A7870;   --text-4: #5A5852;
   --seg-active: #34332F; --cut: #8C8981;
-  --ok: #6FA8A2;        --warn: #C2A24A;      --danger: #D9605A;   --info: #8390D6;
+  --ok: #6FA8A2;        --warn: #DFA23F;      --danger: #E4655E;   --info: #8390D6;
+  /* 图形级状态色：只用于填充（进度条、图元），对比度基准是 3:1 对轨道色，不是 4.5:1 对背景。
+     文字仍然用上面那组 —— 同一个语义两套值，是因为两者的对比度要求本来就不同。 */
+  --ok-g: #3FB39E;      --warn-g: #E8933C;    --danger-g: #E4594F;
+  /* 玻璃材质之上的叠加层：不能用实色 --surface，那会把材质盖死。
+     卡片比底材略亮一档，靠透明度分层而不是靠自己的颜色。 */
+  --glass-surface: rgba(255,255,255,0.07);
+  --glass-border: rgba(255,255,255,0.10);
+  --glass-track: rgba(255,255,255,0.13);
+  /* 覆盖层用：要挡住下面的卡片，所以不透明度更高，仍保留一点材质透色 */
+  --glass-sheet: rgba(24,24,22,0.74);
+  /* 玻璃上的次要文字：不能用 --text-3/4，那两个是按实色深背景选的，
+     材质把底色提亮后对比度会塌。按透明度定义才与底色无关。 */
+  --glass-text-muted: rgba(255,255,255,0.64);
   --ok-bg: rgba(111,168,162,0.13);   --warn-bg: rgba(194,162,74,0.12);
   --warn-border: rgba(194,162,74,0.28);
   --danger-bg: rgba(217,96,90,0.3);  --danger-border: rgba(217,96,90,0.6);
@@ -22,6 +35,14 @@
   --text: #1A1A18;      --text-2: #4F4E49;    --text-3: #6A6963;   --text-4: #76756E;
   --seg-active: #E9E6DD; --cut: #A9A79E;
   --ok: #0F7A6E;        --warn: #9A6100;      --danger: #C0392B;   --info: #4A52C4;
+  /* 浅色下这组尤其重要：#9A6100 铺满一整条会发闷（偏褐），
+     而它之所以这么深，是为了满足**文字**的 4.5:1 —— 填充没有这个约束。 */
+  --ok-g: #14A08F;      --warn-g: #E8883C;    --danger-g: #DE5347;
+  --glass-surface: rgba(255,255,255,0.50);
+  --glass-border: rgba(255,255,255,0.62);
+  --glass-track: rgba(0,0,0,0.10);
+  --glass-sheet: rgba(250,249,245,0.80);
+  --glass-text-muted: rgba(0,0,0,0.58);
   --ok-bg: rgba(15,122,110,0.10);    --warn-bg: rgba(154,97,0,0.10);
   --warn-border: rgba(154,97,0,0.28);
   --danger-bg: rgba(192,57,43,0.16); --danger-border: rgba(192,57,43,0.5);

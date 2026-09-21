@@ -11,9 +11,6 @@
     root: document.documentElement,
     main: document.getElementById("main"),
     banner: document.getElementById("banner"),
-    eta: document.getElementById("eta"),
-    etaLabel: document.getElementById("etaLabel"),
-    rate: document.getElementById("rate"),
     rows: document.getElementById("rows"),
     dash: document.getElementById("dash"),
     quit: document.getElementById("quit"),
@@ -40,28 +37,6 @@
     return Math.min(100, Math.max(0, v));
   }
 
-  /** ms → "1:48"；≥24h → "2d3h" */
-  function countdown(ms) {
-    if (!isFinite(ms) || ms <= 0) return "0:00";
-    var totalMin = Math.floor(ms / 60000);
-    if (totalMin >= 1440) {
-      var d = Math.floor(totalMin / 1440);
-      var dh = Math.floor((totalMin % 1440) / 60);
-      return dh > 0 ? d + "d" + dh + "h" : d + "d";
-    }
-    var h = Math.floor(totalMin / 60);
-    var m = totalMin % 60;
-    return h + ":" + (m < 10 ? "0" : "") + m;
-  }
-
-  /** RFC3339 → 距今的倒计时；解析不了返回 null */
-  function etaCountdown(iso) {
-    if (!iso) return null;
-    var ms = new Date(iso).getTime();
-    if (isNaN(ms)) return null;
-    return countdown(ms - Date.now());
-  }
-
   function pad2(n) {
     return (n < 10 ? "0" : "") + n;
   }
@@ -73,9 +48,11 @@
     if (isNaN(t.getTime())) return "—";
     var now = new Date();
     var hm = pad2(t.getHours()) + ":" + pad2(t.getMinutes());
-    var sameDay =
-      t.getFullYear() === now.getFullYear() && t.getMonth() === now.getMonth() && t.getDate() === now.getDate();
-    return sameDay ? hm : t.getMonth() + 1 + "/" + t.getDate() + " " + hm;
+    var midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    var days = Math.floor((new Date(t.getFullYear(), t.getMonth(), t.getDate()) - midnight) / 86400e3);
+    if (days === 0) return hm;
+    if (days === 1) return "明天 " + hm;
+    return t.getMonth() + 1 + "/" + t.getDate() + " " + hm;
   }
 
   /** 额度快照的年龄文案。参数来自 captured_at，不是本次请求时刻。 */
@@ -87,77 +64,142 @@
     return Math.round(min / 60) + " 小时前";
   }
 
-  function severity(pct, projected) {
-    var p = Math.max(pct || 0, projected || 0);
-    if (p >= 100) return "danger";
-    if (p >= 80) return "warn";
-    return "ok";
-  }
-
-  function tone(pct, projected) {
-    return "var(--" + severity(pct, projected) + ")";
-  }
-
-  /** 整体严重度 = 最吃紧的那个窗口，顶部读数与进度条共用这一套语义 */
-  function worstSeverity(windows) {
-    var worst = "ok";
-    for (var i = 0; i < (windows || []).length; i++) {
-      var s = severity(windows[i].pct, windows[i].projected_pct);
-      if (s === "danger") return "danger";
-      if (s === "warn") worst = "warn";
+  /**
+   * 百分比的颜色。复刻 UsageStatusCalculator.calculateStatus。
+   *
+   * ★ 关键是**配速感知**：时间过了 15% 之后，看的不是「已经用了多少」，
+   * 而是「按这个速度到期末会用到多少」。所以 5h 窗口刚开就用掉 30%
+   * 会是红的，而 7d 窗口第 6 天用到 85% 反而是安全的 —— 这比单看绝对值有用得多。
+   */
+  function statusColorVar(pct, elapsed) {
+    var u = (pct || 0) / 100;
+    if (elapsed !== null && elapsed >= 0.15 && elapsed < 1 && u > 0) {
+      var projected = u / elapsed;
+      if (projected < 0.7) return "--sys-green";
+      if (projected < 0.9) return "--sys-orange";
+      return "--sys-red";
     }
-    return worst;
+    if (pct < 70) return "--sys-green";
+    if (pct < 90) return "--sys-orange";
+    return "--sys-red";
+  }
+
+  /** 配速刻度自身的颜色。复刻 PaceStatus：六档，比状态色更细。 */
+  function paceColorVar(pct, elapsed) {
+    if (elapsed === null || elapsed < 0.03 || elapsed >= 1) return "--sys-label";
+    if (!(pct > 0)) return "--sys-green";
+    var projected = (pct / 100) / elapsed;
+    if (projected < 0.5) return "--sys-green";
+    if (projected < 0.75) return "--sys-teal";
+    if (projected < 0.9) return "--sys-yellow";
+    if (projected < 1.0) return "--sys-orange";
+    if (projected < 1.2) return "--sys-red";
+    return "--sys-purple";
   }
 
   // ---- 行 -----------------------------------------------------------------
+
+  /**
+   * window_kind → 展示用的标题 / 徽章 / 副标题。
+   *
+   * window_kind 是稳定 key（契约 §2.1a），展示文案属于展示层，所以映射放在这里；
+   * 没见过的 kind 回退到服务端给的 label，保证新窗口出现时不至于空白。
+   * 副标题只在徽章说不清楚时才给 —— 五小时窗口没有徽章，就靠它。
+   */
+  var WINDOW_META = {
+    five_hour: { title: "会话使用量", sub: "5 小时滚动窗口", len: 5 * 3600e3 },
+    seven_day: { title: "所有模型", badge: "每周", len: 7 * 86400e3 },
+  };
+
+  function metaOf(w) {
+    var m = WINDOW_META[w.window_kind];
+    if (m) return m;
+    // seven_day_fable / seven_day_opus… → 「Fable」+「每周」
+    var perModel = /^seven_day_(.+)$/.exec(w.window_kind || "");
+    if (perModel) {
+      var name = perModel[1].replace(/_/g, " ");
+      return { title: name.charAt(0).toUpperCase() + name.slice(1), badge: "每周", len: 7 * 86400e3 };
+    }
+    return { title: w.label || w.window_kind || "—" };
+  }
+
+  /**
+   * 窗口已经走过的时间比例，0..100 —— 即「按时间匀速消耗，此刻应该在的位置」。
+   * 只有知道窗口长度才算得出来；未知 kind 返回 null，那条就不画刻度：
+   * 宁可不画，也不要画一根位置是猜的线。
+   */
+  function paceFrac(w, meta) {
+    if (!meta || !meta.len) return null;
+    var end = new Date(w.resets_at);
+    if (isNaN(end.getTime())) return null;
+    var remain = end.getTime() - Date.now();
+    if (remain <= 0) return 1;
+    if (remain > meta.len) return null;
+    return Math.min(1, Math.max(0, (meta.len - remain) / meta.len));
+  }
 
   function makeRow() {
     var li = document.createElement("li");
     li.className = "row";
 
-    var top = document.createElement("div");
-    top.className = "row-top";
+    var head = document.createElement("div");
+    head.className = "row-head";
+    var name = document.createElement("div");
+    name.className = "row-name";
+    var nameTop = document.createElement("div");
+    nameTop.className = "row-name__top";
     var label = document.createElement("span");
     label.className = "row-label";
+    var badge = document.createElement("span");
+    badge.className = "badge";
+    badge.hidden = true;
+    nameTop.appendChild(label);
+    nameTop.appendChild(badge);
+    var sub = document.createElement("div");
+    sub.className = "row-sub";
+    sub.hidden = true;
+    name.appendChild(nameTop);
+    name.appendChild(sub);
+
+    // 不加 num：等宽字体是我们自己的习惯，参考实现用的是系统字体
     var pct = document.createElement("span");
-    pct.className = "row-pct num";
+    pct.className = "row-pct";
     var pctNum = document.createElement("span");
     var unit = document.createElement("span");
     unit.className = "unit";
     unit.textContent = "%";
     pct.appendChild(pctNum);
     pct.appendChild(unit);
-    top.appendChild(label);
-    top.appendChild(pct);
+    head.appendChild(name);
+    head.appendChild(pct);
 
     var bar = document.createElement("div");
     bar.className = "bar";
-    var proj = document.createElement("span");
-    proj.className = "bar-proj";
     var used = document.createElement("span");
     used.className = "bar-used";
-    bar.appendChild(proj);
+    var pace = document.createElement("span");
+    pace.className = "bar-pace";
+    pace.hidden = true;
     bar.appendChild(used);
+    bar.appendChild(pace);
 
     var foot = document.createElement("div");
-    foot.className = "row-foot num";
-    var exhaust = document.createElement("span");
-    exhaust.className = "row-exhaust";
+    foot.className = "row-foot";
     var reset = document.createElement("span");
     reset.className = "row-reset";
-    foot.appendChild(exhaust);
     foot.appendChild(reset);
 
-    li.appendChild(top);
+    li.appendChild(head);
     li.appendChild(bar);
     li.appendChild(foot);
     li.refs = {
       label: label,
+      badge: badge,
+      sub: sub,
       pctNum: pctNum,
       bar: bar,
-      proj: proj,
       used: used,
-      exhaust: exhaust,
+      pace: pace,
       reset: reset,
     };
     return li;
@@ -165,22 +207,46 @@
 
   function fillRow(li, w) {
     var r = li.refs;
+    var meta = metaOf(w);
     var used = clampPct(w.pct);
     var projected = Math.max(used, typeof w.projected_pct === "number" ? w.projected_pct : used);
-    // textContent 而非 innerHTML：label 是服务端数据
-    r.label.textContent = w.label;
+
+    // textContent 而非 innerHTML：这些都是服务端数据
+    r.label.textContent = meta.title;
+    r.badge.textContent = meta.badge || "";
+    r.badge.hidden = !meta.badge;
+    r.sub.textContent = meta.sub || "";
+    r.sub.hidden = !meta.sub;
+
     r.pctNum.textContent = String(Math.round(w.pct || 0));
-    li.style.setProperty("--c", tone(w.pct, w.projected_pct));
+
+    var elapsed = paceFrac(w, meta);
+    li.style.setProperty("--c", "var(" + statusColorVar(w.pct || 0, elapsed) + ")");
+    li.style.setProperty("--pace", "var(" + paceColorVar(w.pct || 0, elapsed) + ")");
+
     r.used.style.width = used + "%";
-    r.proj.style.width = clampPct(projected) + "%";
     r.bar.classList.toggle("over", projected > 100);
-    // 每行用各自的 exhaust_eta；null = 本窗口打不满，那一格就留空
-    var cd = etaCountdown(w.exhaust_eta);
-    r.exhaust.textContent = cd === null ? "" : "耗尽 " + cd;
-    r.reset.textContent = "重置 " + resetAt(w.resets_at);
+
+    r.pace.hidden = elapsed === null || elapsed >= 1;
+    if (!r.pace.hidden) r.pace.style.left = (elapsed * 100) + "%";
+
+    r.reset.textContent = w.resets_at ? "重置时间 " + resetAt(w.resets_at) : "";
   }
 
-  function renderRows(windows) {
+  /**
+   * 哪些窗口值得进 UI。
+   *
+   * 官方响应里有一批代号字段（nimbus_quill / amber_gauge / juniper_tide…），
+   * 多数是 null，少数带 utilization: 0。解析层刻意「不认识也原样带出」以防字段改名，
+   * 但那是**存储**的策略，不是展示的策略 —— 没有重置时刻又零用量的东西，
+   * 放进面板只会是噪音。两个条件同时成立才丢，避免误杀真窗口。
+   */
+  function isMeaningful(w) {
+    return Boolean(w.resets_at) || (w.pct || 0) > 0;
+  }
+
+  function renderRows(all) {
+    var windows = (all || []).filter(isMeaningful);
     var list = el.rows;
     if (!windows || windows.length === 0) {
       list.replaceChildren();
@@ -198,32 +264,6 @@
   }
 
   // ---- 顶部与横幅 ---------------------------------------------------------
-
-  /** soonest_exhaust 只给 window_kind，展示文案要去 windows 里找 label */
-  function labelOfKind(windows, kind) {
-    for (var i = 0; i < (windows || []).length; i++) {
-      if (windows[i].window_kind === kind) return windows[i].label;
-    }
-    return "";
-  }
-
-  function renderHead(s) {
-    var summary = s.summary;
-    var head = el.eta.parentElement;
-    var soonest = summary ? summary.soonest_exhaust : null;
-    var cd = soonest ? etaCountdown(soonest.eta) : null;
-
-    if (cd !== null) {
-      el.eta.textContent = cd;
-      var who = labelOfKind(summary.windows, soonest.window_kind);
-      el.etaLabel.textContent = who ? who + " 后耗尽" : "后耗尽";
-    } else {
-      el.eta.textContent = "—";
-      el.etaLabel.textContent = summary ? "不会耗尽" : "";
-    }
-    head.className = "head-eta sev-" + (summary ? worstSeverity(summary.windows) : "ok");
-    el.rate.textContent = summary ? summary.rate_pct_per_min.toFixed(2) : "—";
-  }
 
   /** 错误码 → 一句能指导动作的话。区分「凭证失效」与「服务端挂了」。 */
   function errorLine(s) {
@@ -320,7 +360,6 @@
       showSettings(true);
     }
     renderBanner(s);
-    renderHead(s);
     renderRows(s.summary ? s.summary.windows : []);
     if (!el.settings.hidden) {
       // 正在编辑时不覆盖输入框，只同步开机自启这种外部可变的状态
@@ -331,7 +370,6 @@
   /** 只重排与时间有关的部分，不动表单、不发请求 */
   function retick() {
     if (!state) return;
-    renderHead(state);
     renderBanner(state);
     if (state.summary) renderRows(state.summary.windows);
   }

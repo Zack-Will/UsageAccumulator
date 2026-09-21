@@ -21,15 +21,35 @@ export interface ShipFail {
 export type ShipResult = ShipOk | ShipFail;
 
 /**
+ * 服务端的错误信封（契约 §2）：`{"error":{"code":…,"message":…}}`。
+ * 只有回了这个形状，才说明**是我们的服务端**在表态；
+ * frp / nginx / 门户劫持的错误页不是这个形状，也就不该被当成裁决。
+ */
+export function isServerErrorEnvelope(text: string): boolean {
+  try {
+    const p = JSON.parse(text) as { error?: { code?: unknown } };
+    return typeof p?.error?.code === "string";
+  } catch {
+    return false;
+  }
+}
+
+/**
  * 什么该重试、什么该丢。
  * 4xx（除 408/429 与鉴权类）重试多少次都不会变好，而且会**堵住队列头**，
  * 让后面所有正常事件都发不出去 —— 所以直接丢并告警，宁可丢一批也不能卡死整条链路。
+ *
+ * ★ 但「丢」的前提是**服务端确实表了态**。中间链路也会给 4xx ——
+ * frp 隧道没注册时回的是 404 HTML 页 —— 那是基建抖动，重试就能好。
+ * 把它们一并丢掉等于静默丢数据，2026-09-21 实测发生过一次：
+ * 探针收到 frp 的 404 页面，一整批事件被判永久失败丢弃。
+ * 所以 fromServer 为 false 时一律重试，宁可堆在本地队列里也不丢。
  */
-export function classifyStatus(status: number): ShipVerdict {
+export function classifyStatus(status: number, fromServer = true): ShipVerdict {
   if (status >= 200 && status < 300) return "ok";
   if (status === 401 || status === 403 || status === 408 || status === 429) return "retry";
   if (status >= 500) return "retry";
-  return "drop";
+  return fromServer ? "drop" : "retry";
 }
 
 /** 指数退避：1s → 最长 5min（ARCHITECTURE §5.2），带 ±20% 抖动避免多机同步重试。 */
@@ -82,8 +102,9 @@ export class Shipper {
         headersTimeout: this.opts.timeoutMs ?? 30_000,
         bodyTimeout: this.opts.timeoutMs ?? 30_000,
       });
-      const verdict = classifyStatus(res.statusCode);
+      // 先读 body —— 是否出自我们的服务端，决定 4xx 该丢还是该重试
       const text = await res.body.text();
+      const verdict = classifyStatus(res.statusCode, isServerErrorEnvelope(text));
       if (verdict !== "ok") {
         return { ok: false, verdict, status: res.statusCode, message: text.slice(0, 500) };
       }
@@ -112,8 +133,8 @@ export class Shipper {
         headersTimeout: this.opts.timeoutMs ?? 30_000,
         bodyTimeout: this.opts.timeoutMs ?? 30_000,
       });
-      const verdict = classifyStatus(res.statusCode);
       const text = await res.body.text();
+      const verdict = classifyStatus(res.statusCode, isServerErrorEnvelope(text));
       if (verdict !== "ok") {
         return { ok: false, verdict, status: res.statusCode, message: text.slice(0, 500) };
       }

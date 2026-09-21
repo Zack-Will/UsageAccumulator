@@ -15,17 +15,6 @@
     <main id="main" class="panel">
       <div id="banner" class="banner" hidden></div>
 
-      <header class="head">
-        <div class="head-eta">
-          <span id="eta" class="num">—</span>
-          <span id="etaLabel" class="label">后耗尽</span>
-        </div>
-        <div class="head-rate">
-          <span id="rate" class="num">—</span>
-          <span class="label">%/分</span>
-        </div>
-      </header>
-
       <ul id="rows" class="rows"></ul>
 
       <footer class="foot">
@@ -43,23 +32,25 @@
 
       <label class="field">
         <span class="field-label">服务器</span>
-        <input id="serverUrl" class="input num" type="url" spellcheck="false" placeholder="https://ua.example.com" />
+        <input id="serverUrl" class="input" type="url" spellcheck="false" placeholder="https://ua.example.com" />
       </label>
 
       <label class="field">
         <span class="field-label">Token</span>
-        <input id="token" class="input num" type="password" spellcheck="false" autocomplete="off" />
+        <input id="token" class="input" type="password" spellcheck="false" autocomplete="off" />
       </label>
 
-      <label class="field">
-        <span class="field-label">Profile</span>
-        <input id="profileId" class="input num" type="text" spellcheck="false" />
-      </label>
+      <div class="field-pair">
+        <label class="field">
+          <span class="field-label">Profile</span>
+          <input id="profileId" class="input" type="text" spellcheck="false" />
+        </label>
 
-      <label class="field">
-        <span class="field-label">轮询（秒）</span>
-        <input id="pollSeconds" class="input num" type="number" min="30" max="600" step="5" />
-      </label>
+        <label class="field">
+          <span class="field-label">轮询（秒）</span>
+          <input id="pollSeconds" class="input" type="number" min="30" max="600" step="5" />
+        </label>
+      </div>
 
       <label class="field field-row">
         <span class="field-label">开机自启</span>

@@ -1,4 +1,37 @@
-/* 面板样式。颜色一律取 @ua/tokens 的令牌，这里不定义任何新颜色。 */
+/* 面板样式。
+ *
+ * ★ 这一层**不用** @ua/tokens 的品牌调色板，改用 macOS 系统语义色。
+ * 面板贴在系统材质上，用品牌色会显得是贴上去的外来物。
+ * 数值逐项复刻自 Claude-Usage-Tracker（MIT, Copyright (c) 2025
+ * Claude Usage Tracker Contributors）的 UsageRow / DesignTokens。
+ * 看板（apps/web）仍用品牌色，两者场景不同。
+ */
+
+.t-dark {
+  --sys-label: rgba(255, 255, 255, 0.85);
+  --sys-label-2: rgba(255, 255, 255, 0.55);
+  --sys-fill: rgba(255, 255, 255, 0.08);
+  --sys-stroke: rgba(255, 255, 255, 0.10);
+  --sys-green: #3CC75F;   /* 他们的 adaptiveGreen（深色） */
+  --sys-teal: #5AC8F5;
+  --sys-yellow: #FFD60A;
+  --sys-orange: #FF9F0A;
+  --sys-red: #FF453A;
+  --sys-purple: #BF5AF2;
+}
+
+.t-light {
+  --sys-label: rgba(0, 0, 0, 0.85);
+  --sys-label-2: rgba(0, 0, 0, 0.50);
+  --sys-fill: rgba(0, 0, 0, 0.08);
+  --sys-stroke: rgba(0, 0, 0, 0.10);
+  --sys-green: #1B6B34;   /* adaptiveGreen（浅色，刻意更深以保证可读） */
+  --sys-teal: #55BEF0;
+  --sys-yellow: #FFCC00;
+  --sys-orange: #FF9500;
+  --sys-red: #FF3B30;
+  --sys-purple: #AF52DE;
+}
 
 *,
 *::before,
@@ -9,14 +42,17 @@
 html,
 body {
   margin: 0;
-  height: 100%;
+  height: auto;
   overflow: hidden;
 }
 
 body {
-  background: var(--bg);
-  color: var(--text);
-  font-family: var(--font-sans);
+  /* ★ 背景必须透明：底下是 NSVisualEffectView 的玻璃材质。
+     这里一旦画不透明色，材质就整个被盖住了。 */
+  background: transparent;
+  color: var(--sys-label);
+  /* 系统字体。之前用 IBM Plex 是这套 UI 看着"不像 macOS 原生"的主因之一 */
+  font-family: -apple-system, "SF Pro Text", system-ui, sans-serif;
   font-size: 13px;
   line-height: 1.35;
   cursor: default;
@@ -46,7 +82,6 @@ body {
 .panel {
   display: flex;
   flex-direction: column;
-  height: 100%;
   padding: 12px;
 }
 
@@ -73,50 +108,8 @@ body {
   color: var(--danger);
 }
 
-.head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-  padding-bottom: 12px;
-  border-bottom: 1px solid var(--border-soft);
-}
-
-.head-eta {
-  display: flex;
-  align-items: baseline;
-  gap: 6px;
-  min-width: 0;
-}
-
-#eta {
-  font-size: 34px;
-  font-weight: 500;
-  letter-spacing: -0.01em;
-  color: var(--text);
-}
 
 /* 耗尽读数的颜色与下面进度条的严重度同源，保持一套语义 */
-.head-eta.sev-warn #eta {
-  color: var(--warn);
-}
-
-.head-eta.sev-danger #eta {
-  color: var(--danger);
-}
-
-.head-rate {
-  display: flex;
-  align-items: baseline;
-  gap: 3px;
-  white-space: nowrap;
-}
-
-#rate {
-  font-size: 13px;
-  color: var(--text-2);
-}
-
 /* ---- 窗口行 ---- */
 
 .rows {
@@ -127,63 +120,106 @@ body {
   margin: 0;
   padding: 0;
   list-style: none;
-  overflow-y: auto;
+  gap: 6px;
 }
 
-.is-degraded .rows,
-.is-degraded .head {
+.is-degraded .rows {
   opacity: 0.5;
 }
 
-/* 窗口少时均分高度把面板填满（max-height 兜住上限），窗口多或顶部有横幅时压回内容高度 */
+/* 每个窗口一张卡：标题 + 徽章 + 大号百分比 / 条 / 脚注。
+   卡片不再均分高度（flex: 0 0 auto），面板高度由内容决定。 */
 .row {
-  flex: 1 1 auto;
-  max-height: 76px;
+  flex: 0 0 auto;
   display: flex;
   flex-direction: column;
-  justify-content: center;
-  padding: 6px 0;
-  border-bottom: 1px solid var(--border-soft);
+  /* 只描边、不填充 —— 卡片靠 0.5px 的细线从材质里"浮"出来，
+     填了底色反而会把材质压住（这是我之前做错的地方）。 */
+  padding: 8px 10px;
+  border: 0.5px solid var(--sys-stroke);
+  border-radius: 8px;
+  background: transparent;
 }
 
-.row:last-child {
-  border-bottom: 0;
-}
-
-.row-top {
+.row-head {
   display: flex;
-  align-items: baseline;
+  align-items: first baseline;
   justify-content: space-between;
   gap: 8px;
-  margin-bottom: 5px;
+}
+
+.row-name {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  min-width: 0;
+}
+
+.row-name__top {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
 }
 
 .row-label {
-  font-size: 12px;
-  color: var(--text-2);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--sys-label);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
+/* 「每周」这类限定词：是标题的一部分，不是说明文字 */
+.badge {
+  flex: none;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: var(--sys-fill);
+  color: var(--sys-label-2);
+  font-size: 9px;
+  font-weight: 500;
+  line-height: 13px;
+}
+
+.badge[hidden] {
+  display: none;
+}
+
+/* 百分比：SF Rounded，与标题同号 —— 靠颜色而不是字号来吸引注意 */
 .row-pct {
-  font-size: 16px;
-  color: var(--text);
+  flex: none;
+  font-family: ui-rounded, "SF Pro Rounded", -apple-system, system-ui, sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--c);
+  line-height: 1.2;
 }
 
 .row-pct .unit {
-  font-size: 11px;
-  color: var(--text-3);
-  margin-left: 1px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.row-sub {
+  font-size: 10px;
+  color: var(--sys-label-2);
+}
+
+.row-sub[hidden] {
+  display: none;
 }
 
 /* 8px 高的条同时表达「已用」（实色）与「预计」（半透明延伸段） */
 .bar {
   position: relative;
-  height: 8px;
-  border-radius: 4px;
-  background: var(--track);
-  overflow: hidden;
+  height: 4px;
+  margin-top: 5px;
+  border-radius: 2.5px;
+  background: var(--sys-fill);
+  overflow: visible;
 }
 
 .bar-proj,
@@ -196,12 +232,32 @@ body {
   transition: width 300ms ease;
 }
 
-.bar-proj {
-  background: color-mix(in srgb, var(--c) 32%, transparent);
+/* 填充用 --cg（图形色），不是 --c（文字色）：铺满一整条时，
+   为文字对比度选的深色会发闷 —— 浅色模式下尤其明显。 */
+.bar-used {
+  border-radius: 2.5px;
+  background: var(--c);
 }
 
-.bar-used {
-  background: var(--c);
+/**
+ * 配速刻度：如果按时间匀速消耗，此刻**应该**在的位置。
+ * 实色填充越过它 = 烧得比时间快。这是「我是不是超前了」最快的一眼判断，
+ * 比 projected 更直接 —— projected 回答的是另一个问题（最后会不会打满），
+ * 那个由脚注的「耗尽 X」承担。
+ */
+.bar-pace {
+  position: absolute;
+  top: -2px;
+  width: 2.5px;
+  height: 8px;
+  border-radius: 1px;
+  background: var(--pace);
+  transform: translateX(-0.75px);
+  transition: left 300ms ease;
+}
+
+.bar-pace[hidden] {
+  display: none;
 }
 
 /* 预计超过 100%：右端补一道实色切口 */
@@ -215,23 +271,10 @@ body {
   background: var(--danger);
 }
 
-/* 左：本窗口的耗尽倒计时（打不满就留空）　右：重置时刻 */
 .row-foot {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-  margin-top: 4px;
-  font-size: 11px;
-  color: var(--text-4);
-}
-
-.row-exhaust {
-  color: var(--c);
-}
-
-.row-reset {
-  margin-left: auto;
+  margin-top: 5px;
+  font-size: 9px;
+  color: var(--sys-label-2);
 }
 
 .empty {
@@ -252,36 +295,30 @@ body {
 
 .btn {
   flex: 1;
-  height: 28px;
+  height: 24px;
   padding: 0 8px;
-  border: 1px solid var(--border);
+  border: 0.5px solid var(--sys-stroke);
   border-radius: 6px;
-  background: var(--surface);
-  color: var(--text-2);
-  font-family: var(--font-sans);
-  font-size: 12px;
+  background: var(--sys-fill);
+  color: var(--sys-label);
+  font-family: inherit;
+  font-size: 11px;
   cursor: default;
 }
 
 .btn:hover {
-  background: var(--seg-active);
-  color: var(--text);
+  background: var(--sys-stroke);
 }
 
 .btn:active {
   transform: translateY(0.5px);
 }
 
+/* 不用品牌强调色：它和「82% 橙」同色相，并排出现会让人以为是同一套语义。
+   主次靠字重区分就够。 */
 .btn-primary {
-  flex: 2;
-  background: var(--accent);
-  border-color: transparent;
-  color: #ffffff;
-}
-
-.btn-primary:hover {
-  background: var(--accent-active);
-  color: #ffffff;
+  flex: 1.6;
+  font-weight: 600;
 }
 
 .btn-ghost {
@@ -293,34 +330,45 @@ body {
 
 /* ---- 设置 ---- */
 
+/* ★ 不用 position:absolute —— 那会把高度钉成面板高度，内容只能内部滚动，
+   而外壳量到的自然也是被钉住的那个值。main 在显示设置时本来就隐藏了，
+   覆盖层从一开始就是多余的。 */
 .settings {
-  position: absolute;
-  inset: 0;
   display: flex;
   flex-direction: column;
-  gap: 9px;
+  gap: 7px;
   padding: 12px;
-  background: var(--bg);
-  overflow-y: auto;
 }
 
 .settings-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding-bottom: 8px;
-  border-bottom: 1px solid var(--border-soft);
+  padding-bottom: 6px;
+  border-bottom: 0.5px solid var(--sys-stroke);
 }
 
 .settings-title {
   font-size: 12px;
-  color: var(--text-2);
+  font-weight: 600;
+  color: var(--sys-label);
 }
 
 .field {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
+}
+
+/* Profile 与轮询并排，省一行高度 */
+.field-pair {
+  display: flex;
+  gap: 8px;
+}
+
+.field-pair .field {
+  flex: 1;
+  min-width: 0;
 }
 
 .field-row {
@@ -330,36 +378,39 @@ body {
 }
 
 .field-label {
-  font-size: 11px;
-  color: var(--text-3);
+  font-size: 10px;
+  color: var(--sys-label-2);
 }
 
 .input {
-  height: 26px;
-  padding: 0 8px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--surface);
-  color: var(--text);
-  font-size: 12px;
+  width: 100%;
+  height: 22px;
+  padding: 0 7px;
+  border: 0.5px solid var(--sys-stroke);
+  border-radius: 5px;
+  background: var(--sys-fill);
+  color: var(--sys-label);
+  font-family: inherit;
+  font-size: 11px;
   -webkit-user-select: text;
   user-select: text;
 }
 
 .input:focus {
   outline: none;
-  border-color: var(--accent);
-}
-
-input[type="checkbox"] {
-  accent-color: var(--accent);
+  border-color: var(--sys-label-2);
 }
 
 .settings-foot {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: space-between;
   gap: 6px;
-  margin-top: auto;
-  padding-top: 8px;
+  padding-top: 6px;
+}
+
+/* 底部两个按钮不参与等分：主按钮被拉成一大条会显得整页都在喊"保存" */
+.settings-foot .btn {
+  flex: 0 0 auto;
+  padding: 0 14px;
 }
