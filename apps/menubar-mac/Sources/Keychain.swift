@@ -25,15 +25,41 @@ enum Keychain {
     }
 
     /// 读不到返回 nil，不抛。失败原因只记类型码，绝不记内容。
+    /**
+     * 读 sessionKey。
+     *
+     * ★ 必须 `kSecUseAuthenticationUISkip`：条目的 ACL 绑定应用的代码签名，
+     * 而本地 ad-hoc 构建**每次重新签名都会变身份**，于是系统要求重新授权。
+     * 不加这个标志时 `SecItemCopyMatching` 会**同步阻塞直到有人点掉弹窗**，
+     * 而这个 App 是 LSUIElement，弹窗未必浮得到用户面前 —— 2026-09-22 就是这样
+     * 把启动流程整个卡死，托盘只剩初始态的「—」，排查了四轮才定位到。
+     *
+     * 现在改为拿不到就立刻返回 nil，由调用方去提示重新登录。
+     */
     static func readSessionKey() -> String? {
         var q = baseQuery()
         q[kSecReturnData as String] = true
         q[kSecMatchLimit as String] = kSecMatchLimitOne
+        /*
+         * ★ 这里**不能**只靠 kSecUseAuthenticationUISkip。
+         * 该条目落在**旧版文件钥匙串**上（调用栈是 SecItemCopyMatching_osx →
+         * SecKeychainItemCopyContent），那个标志只对现代 data-protection 钥匙串有效，
+         * 管不住旧版的 ACL 授权弹窗 —— 实测加了依然同步阻塞。
+         * 旧版要用 SecKeychainSetUserInteractionAllowed(false)：拿不到就返回
+         * errSecInteractionNotAllowed，而不是干等。
+         */
+        q[kSecUseAuthenticationUI as String] = kSecUseAuthenticationUISkip
+        SecKeychainSetUserInteractionAllowed(false)
+        defer { SecKeychainSetUserInteractionAllowed(true) }
 
         var item: CFTypeRef?
         let status = SecItemCopyMatching(q as CFDictionary, &item)
         guard status == errSecSuccess, let data = item as? Data else {
-            if status != errSecItemNotFound { Log.warn("keychain read failed: OSStatus \(status)") }
+            if status == errSecInteractionNotAllowed {
+                Log.warn("keychain 条目需要重新授权（本地构建重新签名后 ACL 失效）；请从菜单重新登录")
+            } else if status != errSecItemNotFound {
+                Log.warn("keychain read failed: OSStatus \(status)")
+            }
             return nil
         }
         let v = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)

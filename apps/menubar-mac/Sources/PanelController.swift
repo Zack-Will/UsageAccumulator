@@ -193,6 +193,13 @@ final class PanelController: NSObject, WKScriptMessageHandlerWithReply, WKNaviga
         let drawable = (state.status == .ok || state.status == .stale)
             && !TrayIcon.meaningful(windows).isEmpty
         statusItem.button?.image = nil
+        // 一行说清「现在菜单栏上是什么」：条 还是 文字，文字的话是哪一句。
+        // 面板的错误占位符与这里的兜底文案都是「—」，光看外观分不出是哪一种。
+        Log.info(
+            "托盘：\(drawable ? "条" : "文字[\(tray.title)]")"
+            + " · status=\(state.status.rawValue)"
+            + " · windows=\(windows.count) 有效=\(TrayIcon.meaningful(windows).count)"
+        )
         if drawable {
             bars.windows = windows
             bars.showsBars = true

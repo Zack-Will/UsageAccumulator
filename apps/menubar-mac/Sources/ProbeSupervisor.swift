@@ -90,11 +90,24 @@ final class ProbeSupervisor {
 
     // ---- 生命周期 ----------------------------------------------------------
 
+    /**
+     * ★ 拉起动作必须离开主线程。
+     *
+     * spawn() 里要读 Keychain 取 sessionKey，而 `SecItemCopyMatching` 在需要
+     * 用户授权时会**同步阻塞直到有人点掉弹窗**。App 是 LSUIElement（不进 Dock），
+     * 弹窗未必浮得到用户面前，于是主线程就一直卡在
+     * applicationDidFinishLaunching 里 —— 托盘画不出内容，只剩初始态的一根短横线。
+     * 2026-09-22 排查了四轮才定位到这里：每次 ad-hoc 重新签名都会让钥匙串条目的
+     * 授权失效，所以现象时有时无。
+     */
     func start() {
         wantRunning = true
         failures = 0
-        spawn()
+        Self.work.async { [weak self] in self?.spawn() }
     }
+
+    /// 监管相关的阻塞调用（读钥匙串、起进程）都放这条队列
+    private static let work = DispatchQueue(label: "space.zackwill.ua.probe-supervisor")
 
     /// 凭证变了（刚登录完）要让子进程带着新 env 重来一次。
     func restartForNewCredential() {
@@ -102,7 +115,7 @@ final class ProbeSupervisor {
         Log.info("restarting probe with refreshed credential")
         failures = 0
         killCurrent()
-        spawn()
+        Self.work.async { [weak self] in self?.spawn() }
     }
 
     func stop() {
@@ -186,7 +199,7 @@ final class ProbeSupervisor {
         state = .backoff
         restartTimer?.invalidate()
         restartTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
-            self?.spawn()
+            Self.work.async { [weak self] in self?.spawn() }
         }
         Log.info("probe restart in \(Int(delay))s")
     }

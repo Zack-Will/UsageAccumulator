@@ -57,9 +57,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 首次运行还没有凭证时直接把登录窗摆出来。
         // 没有 sessionKey 就没有额度数据，面板会是空的 —— 与其让人对着空面板
         // 猜该点哪里，不如把唯一该做的动作直接呈上。
-        if !Keychain.hasSessionKey {
-            Log.info("Keychain 中没有 sessionKey，打开登录窗")
-            startLogin()
+        //
+        // ★ 读钥匙串要放到后台：需要用户授权时 SecItemCopyMatching 会同步阻塞，
+        // 放在主线程会把整个启动流程卡死（托盘只剩初始态的一根横线）。
+        DispatchQueue.global(qos: .utility).async {
+            let has = Keychain.hasSessionKey
+            DispatchQueue.main.async {
+                guard !has else { return }
+                Log.info("Keychain 中没有 sessionKey，打开登录窗")
+                self.startLogin()
+            }
         }
     }
 
