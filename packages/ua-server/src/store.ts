@@ -61,6 +61,14 @@ export interface Store {
 
   eventsInRange(profileId: string, from: Date, to: Date): Promise<EventRow[]>;
 
+  /**
+   * 只取计额度事件的时间戳。
+   *
+   * 归因（attributeQuota）只关心「这段时间本地有没有动静」，不需要 token 和费用；
+   * 7d 窗口里 eventsInRange 会拉回上万行完整事件，而这里一列就够。
+   */
+  quotaEventTimestamps(profileId: string, from: Date, to: Date): Promise<Date[]>;
+
   latestCalibration(profileId: string, windowKind?: string): Promise<CalibrationRecord[]>;
   insertCalibration(rec: CalibrationRecord): Promise<void>;
 

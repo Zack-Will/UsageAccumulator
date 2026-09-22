@@ -224,6 +224,22 @@ export class PgStore implements Store {
     return rows.map((r) => ({ ts: r["captured_at"] as Date, pct: n(r["utilization_pct"]) }));
   }
 
+  /**
+   * ★ 模型过滤必须与 pricing.ts 的 countsTowardQuota 同口径：
+   * 生成列 counts_toward_quota 只挡掉 `<synthetic>`，挡不住套壳客户端路由过去的
+   * 非 Anthropic 模型（公司 Mac 上实测到 qwen3.7-plus）。那些 token 不吃 Claude 额度，
+   * 算进来会让「这段时间本地有动静」在实际没动静时也成立，把别处的消耗吞掉。
+   */
+  async quotaEventTimestamps(profileId: string, from: Date, to: Date): Promise<Date[]> {
+    const rows = await this.sql<Record<string, unknown>[]>`
+      SELECT ts FROM usage_events
+      WHERE profile_id = ${profileId} AND ts >= ${from} AND ts < ${to}
+        AND counts_toward_quota
+        AND (model LIKE 'claude%' OR model ~ '^(opus|sonnet|haiku|fable)([-.]|$)')
+      ORDER BY ts`;
+    return rows.map((r) => r["ts"] as Date);
+  }
+
   async eventsInRange(profileId: string, from: Date, to: Date): Promise<EventRow[]> {
     const rows = await this.sql<Record<string, unknown>[]>`
       SELECT * FROM usage_events

@@ -259,6 +259,16 @@ function makeWindow(
     captured_at: iso(nowMs - 2 * MIN),
     stale: spec.stale ?? false,
     metrics: { ...MOCK_METRICS },
+    // 演示数据里给一份「有别处的消耗」的归因，好让那条提示在 mock 下也看得见
+    attribution: {
+      other_pct_lower_bound: Math.round(spec.used * 0.12 * 10) / 10,
+      ambiguous_pct: Math.round(spec.used * 0.88 * 10) / 10,
+      unobserved_pct: 0,
+      quiet_spans: 3,
+      has_sampling_gap: false,
+      usable: true,
+      local_utilization_pct: Math.round(spec.used * 0.88 * 10) / 10,
+    },
   };
 }
 

@@ -106,6 +106,29 @@ export interface WindowState {
   /** 超过 15 分钟没有新快照。 */
   stale: boolean;
   metrics: OverlapMetrics;
+  attribution: Attribution;
+}
+
+/**
+ * 这个窗口里有多少额度不是本地 Claude Code 吃的（网页/App 聊天、手机端、
+ * 没装探针的机器）。口径与局限见服务端 @ua/core 的 attribution.ts。
+ */
+export interface Attribution {
+  /** 确定属于非本地来源的百分点，是**下界**：只会少认，不会错认 */
+  other_pct_lower_bound: Pct;
+  /** 判不了的百分点（本地当时有活动，或落在滞后护栏内） */
+  ambiguous_pct: Pct;
+  /** 窗口开头没采到的百分点 */
+  unobserved_pct: Pct;
+  quiet_spans: number;
+  has_sampling_gap: boolean;
+  /**
+   * 覆盖是否完整。不是「能不能用」的开关 —— 下界在任何覆盖下都合法，
+   * 它只回答「other=0 是量过了确实没有，还是压根没量到」。
+   */
+  usable: boolean;
+  /** 本地占掉的百分比（上界）= utilization_pct − other 下界 */
+  local_utilization_pct: Pct;
 }
 
 export interface WindowsCurrent {

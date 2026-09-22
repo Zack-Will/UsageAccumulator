@@ -108,9 +108,19 @@ export function WindowCard({
   const tokens = buckets ? buckets.reduce((a, b) => a + b.total_tokens, 0) : 0;
 
   /**
-   * 这个窗口**打满**值多少钱：$已花 ÷ (已用 pct/100)。
+   * 这个窗口**打满**值多少钱：$已花 ÷ (本地吃掉的 pct/100)。
    * 7d 上就是周限额的美元等价 —— 回答「这个订阅一周能换多少 API 额度」，
    * 而不是「按当前速率我会花多少」（那是燃尽曲线的问题）。
+   *
+   * ★ 分母必须是**本地 Claude Code 吃掉的百分比**，不是官方的总百分比。
+   * 官方计的是整个账号：网页/App 的聊天窗、手机端、没装探针的机器都算在里面，
+   * 而分子（$已花）只有本地事件。分母混进别处的消耗就会把结果系统性压低 ——
+   * 2026-09-22 实测有 8 个百分点是在「两小时以上没碰过 Claude Code」时涨的。
+   * attribution.local_utilization_pct 已经扣掉了那部分；扣掉的是下界，
+   * 所以这个金额仍然是下界，只是比原来紧得多。
+   *
+   * 归因覆盖不全时**照样扣**：被判定为安静的区间确实没有本地活动，这件事不因为
+   * 别处有洞而改变，扣掉它只会让下界更紧。覆盖不全只意味着还有没看见的部分。
    *
    * 不设百分比下限：刚重置时外推倍数大、误差也大，但那是使用者知情的取舍。
    * 与其显示「—」让人什么都看不到，不如给出数字由人自己判断。
@@ -118,10 +128,12 @@ export function WindowCard({
    * ★ 但花费为 0 时必须给「—」而不是 $0：那不是「误差大」，是根本没有可外推的
    * 东西（比如本周还没用过 Fable）。算出来的 0 会被读成「周限额是零美元」。
    */
+  const attr = w.attribution;
+  const localPct = attr ? attr.local_utilization_pct : w.utilization_pct;
   const fullWindowCost =
-    cost?.usd != null && cost.usd > 0 && w.utilization_pct > 0
-      ? cost.usd / (w.utilization_pct / 100)
-      : null;
+    cost?.usd != null && cost.usd > 0 && localPct > 0 ? cost.usd / (localPct / 100) : null;
+  /** 只在真的测到别处的消耗时才占一行字；测到 0 就什么都不说 */
+  const otherPct = attr?.other_pct_lower_bound ?? 0;
 
   return (
     <Card title={label} span={4} tone={tone === "ok" ? "plain" : tone}>
@@ -163,6 +175,7 @@ export function WindowCard({
         </span>
         <Mono tone="muted">
           满额约 {fullWindowCost !== null ? `$${fullWindowCost.toFixed(0)}` : "—"}
+          {otherPct > 0 && ` · ${otherPct.toFixed(0)}% 非 Code`}
         </Mono>
       </div>
 

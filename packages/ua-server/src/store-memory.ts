@@ -6,6 +6,7 @@ import type {
   MachineRecord,
   Store,
 } from "./store.js";
+import { countsTowardQuota } from "./pricing.js";
 
 /**
  * 内存假数据层。测试与本地干跑用。
@@ -106,6 +107,11 @@ export class MemoryStore implements Store {
     return [...this.events.values()]
       .filter((r) => r.event.profileId === profileId && r.event.ts >= from && r.event.ts < to)
       .sort((a, b) => a.event.ts.getTime() - b.event.ts.getTime());
+  }
+
+  async quotaEventTimestamps(profileId: string, from: Date, to: Date): Promise<Date[]> {
+    const rows = await this.eventsInRange(profileId, from, to);
+    return rows.filter((r) => countsTowardQuota(r.event.model)).map((r) => r.event.ts);
   }
 
   async latestCalibration(profileId: string, windowKind?: string): Promise<CalibrationRecord[]> {

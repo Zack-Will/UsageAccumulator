@@ -387,6 +387,47 @@ describe("GET /v1/windows/current", () => {
     expect(five.stale).toBe(false);
   });
 
+  it("把「本地没动静时涨的额度」单独归因出来，并给出扣掉它之后的本地占比", async () => {
+    // seedQuota 的 five_hour 是 50→62，每 5 分钟 +2，一个本地事件都没有
+    const res = await app.fastify.inject({
+      method: "GET",
+      url: "/v1/windows/current?profile_id=claude-official",
+      headers: AUTH,
+    });
+    const five = res.json().windows.find((w: { window_kind: string }) => w.window_kind === "five_hour");
+    // 窗口开头没采到（第一个采样点已经是 50%）→ 覆盖不完整
+    expect(five.attribution.unobserved_pct).toBe(50);
+    expect(five.attribution.usable).toBe(false);
+    // 但下界照样合法、照样用来修分母：12 个点全是在无本地活动时涨的
+    expect(five.attribution.other_pct_lower_bound).toBe(12);
+    expect(five.attribution.quiet_spans).toBe(6);
+    expect(five.attribution.local_utilization_pct).toBe(62 - 12);
+  });
+
+  it("窗口内有本地事件时，那段上升算「判不了」而不是算到别处头上", async () => {
+    // 在每个采样区间里都塞一条事件，护栏内一律 ambiguous
+    for (let i = 6; i >= 0; i--) {
+      await store.insertEvents([
+        {
+          event: makeEvent({
+            messageId: `m-attr-${i}`,
+            ts: new Date(NOW.getTime() - i * 5 * 60_000 - 60_000),
+            model: "claude-opus-5",
+          }),
+          costUsd: null,
+        },
+      ]);
+    }
+    const res = await app.fastify.inject({
+      method: "GET",
+      url: "/v1/windows/current?profile_id=claude-official",
+      headers: AUTH,
+    });
+    const five = res.json().windows.find((w: { window_kind: string }) => w.window_kind === "five_hour");
+    expect(five.attribution.other_pct_lower_bound).toBe(0);
+    expect(five.attribution.ambiguous_pct).toBe(12);
+  });
+
   it("tags every burn_curve point with its source so nothing passes as official by accident", () => {
     return app.fastify
       .inject({

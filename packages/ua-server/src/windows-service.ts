@@ -1,4 +1,11 @@
-import { FIVE_HOURS_MS, projectWindow, type UsageEvent } from "@ua/core";
+import {
+  FIVE_HOURS_MS,
+  attributeQuota,
+  attributionIsUsable,
+  localPctUpperBound,
+  projectWindow,
+  type UsageEvent,
+} from "@ua/core";
 import {
   SEVEN_DAYS_MS,
   buildProjectedCurve,
@@ -60,6 +67,42 @@ export interface CurrentWindowDto {
   } | null;
   /** 从 now 到窗口结束的预测曲线；前端不得自行外推（CONTRACT §2.1） */
   projected_curve: ProjectedCurvePoint[];
+  /**
+   * 这个窗口里有多少额度**不是**本地 Claude Code 吃的
+   * —— 网页/App 的聊天窗、手机端、没装探针的机器都算在这里。
+   * 判定口径与局限见 @ua/core 的 attribution.ts。
+   */
+  attribution: AttributionDto;
+}
+
+export interface AttributionDto {
+  /** 确定属于非本地来源的百分点（**下界**，只会少认不会错认） */
+  other_pct_lower_bound: number;
+  /** 判不了的百分点：本地当时有活动，或落在滞后护栏内 */
+  ambiguous_pct: number;
+  /** 窗口开头没采到的百分点（探针那会儿没在跑） */
+  unobserved_pct: number;
+  quiet_spans: number;
+  has_sampling_gap: boolean;
+  /**
+   * 覆盖是否完整（从窗口第一秒起连续采样、中间没洞）。
+   *
+   * ★ 这**不是**「能不能用」的开关 —— `other_pct_lower_bound` 在任何覆盖下都是
+   * 合法下界：被判定为安静的那些区间确实没有本地活动，这件事不因为别处有洞而改变。
+   * 覆盖不全只意味着下界更松（漏掉的那部分没人看见），不意味着它是错的。
+   *
+   * 它真正回答的是另一个问题：`other_pct_lower_bound = 0` 到底是
+   * 「量过了，确实没有」还是「压根没量到」。前者 usable=true。
+   */
+  usable: boolean;
+  /**
+   * 本地 Claude Code 占掉的百分比（**上界**）= utilization_pct − other 下界。
+   *
+   * 「满额约」一类的外推该用它当分母，而不是 utilization_pct：后者把别处的消耗
+   * 也算进分母，会把金额系统性压低。用上界当分母，算出来的金额就还是下界，
+   * 方向一致，不会反过来高估。
+   */
+  local_utilization_pct: number;
 }
 
 export interface CurrentWindowsResult {
@@ -169,6 +212,11 @@ export async function computeCurrentWindows(
           : () => 0;
     }
 
+    // 归因：这个窗口里哪些上升发生在「本地确定没动静」的时候
+    const evTs = await store.quotaEventTimestamps(profileId, windowStart, now);
+    const attr = attributeQuota(samples, evTs.map((ts) => ({ ts })));
+    const usable = attributionIsUsable(attr);
+
     const burnCurve = downsample(samples, maxBurnPoints).map((s) => ({
       ts: s.ts.toISOString(),
       pct: s.pct,
@@ -199,6 +247,15 @@ export async function computeCurrentWindows(
             tokens: metrics.tokens,
           }
         : null,
+      attribution: {
+        other_pct_lower_bound: attr.otherPctLowerBound,
+        ambiguous_pct: attr.ambiguousPct,
+        unobserved_pct: attr.unobservedPct,
+        quiet_spans: attr.quietSpans,
+        has_sampling_gap: attr.hasSamplingGap,
+        usable,
+        local_utilization_pct: localPctUpperBound(w.utilizationPct, attr),
+      },
       projected_curve: buildProjectedCurve({
         now,
         windowEnd,
