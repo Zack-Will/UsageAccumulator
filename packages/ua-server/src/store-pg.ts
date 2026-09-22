@@ -206,13 +206,20 @@ export class PgStore implements Store {
     since: Date,
     until?: Date,
   ): Promise<QuotaSample[]> {
-    // 上界可选：标定只需要「最近若干天」，而按周回看需要一个闭区间
-    const upper = until ?? new Date(8640000000000000);
+    /*
+     * 上界可选：标定只需要「最近若干天」，按周回看需要闭区间。
+     *
+     * ★ 不能用「JS 最大日期」当哨兵：new Date(8640000000000000) 是公元 275760 年，
+     * Postgres 直接报 `time zone displacement out of range` 并让整个请求 500。
+     * 2026-09-22 就是这么把 /v1/summary 和 /v1/ingest/quota 一起打挂的。
+     * 没有上界时就不要那个条件。
+     */
+    const upperClause = until ? this.sql`AND captured_at < ${until}` : this.sql``;
     const rows = await this.sql<Record<string, unknown>[]>`
       SELECT captured_at, utilization_pct
       FROM quota_snapshots
       WHERE profile_id = ${profileId} AND window_kind = ${windowKind}
-        AND captured_at >= ${since} AND captured_at < ${upper}
+        AND captured_at >= ${since} ${upperClause}
       ORDER BY captured_at`;
     return rows.map((r) => ({ ts: r["captured_at"] as Date, pct: n(r["utilization_pct"]) }));
   }

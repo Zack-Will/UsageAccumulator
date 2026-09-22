@@ -13,6 +13,7 @@ import { fileURLToPath } from "node:url";
 import postgres from "postgres";
 import { afterAll, describe, expect, it } from "vitest";
 import { runMigrations } from "../src/migrate.js";
+import { PgStore } from "../src/store-pg.js";
 
 const url = process.env["UA_TEST_DATABASE_URL"];
 const dir = fileURLToPath(new URL("../../../deploy/migrations", import.meta.url));
@@ -57,5 +58,38 @@ describe.skipIf(!url)("migrations against a real Postgres", () => {
       SELECT count(*)::int AS n FROM information_schema.columns
       WHERE table_schema = 'public' AND data_type = 'timestamp without time zone'`;
     expect(bad[0]!.n).toBe(0);
+  });
+});
+
+/**
+ * quotaSamples 的上界。
+ *
+ * 为什么必须打真库：不带上界时曾经用「JS 最大日期」当哨兵，Postgres 直接报
+ * `time zone displacement out of range` 让请求 500 —— 内存 store 里这一句
+ * 根本不执行 SQL，类型检查也看不出问题。2026-09-22 线上炸过一次：
+ * /v1/summary 与 /v1/ingest/quota 一起挂掉。
+ */
+describe.skipIf(!url)("quotaSamples 的时间上界", () => {
+  const sql = postgres(url ?? "", { max: 5, onnotice: () => {} });
+  afterAll(async () => { await sql.end({ timeout: 5 }); });
+
+  it("不带上界时不会构造出 Postgres 存不下的时间戳", async () => {
+    await runMigrations(sql, dir, silent);
+    await sql`INSERT INTO profiles (id, kind) VALUES ('p-quota', 'oauth') ON CONFLICT DO NOTHING`;
+    await sql`
+      INSERT INTO quota_snapshots (profile_id, captured_at, window_kind, utilization_pct)
+      VALUES ('p-quota', now(), 'seven_day', 42)
+      ON CONFLICT DO NOTHING`;
+
+    const store = new PgStore(sql);
+    const since = new Date(Date.now() - 86_400_000);
+    await expect(store.quotaSamples("p-quota", "seven_day", since)).resolves.toHaveLength(1);
+  });
+
+  it("带上界时按闭区间过滤", async () => {
+    const store = new PgStore(sql);
+    const since = new Date(Date.now() - 86_400_000);
+    const past = new Date(Date.now() - 3_600_000);
+    await expect(store.quotaSamples("p-quota", "seven_day", since, past)).resolves.toHaveLength(0);
   });
 });
