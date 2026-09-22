@@ -79,16 +79,19 @@ export function WindowCard({
   const events = spend.data ? spend.data.buckets.reduce((a, b) => a + b.events, 0) : 0;
   const tokens = spend.data ? spend.data.buckets.reduce((a, b) => a + b.total_tokens, 0) : 0;
 
-  // 窗口已过去的比例 —— 用它把已发生的费用线性外推到窗口结束
-  const startMs = Date.parse(w.starts_at);
-  const endMs = Date.parse(w.resets_at);
-  const elapsed =
-    Number.isFinite(startMs) && Number.isFinite(endMs) && endMs > startMs
-      ? Math.min(1, Math.max(0, (nowMs - startMs) / (endMs - startMs)))
-      : null;
-  const projectedCost =
-    cost?.usd !== null && cost !== null && elapsed !== null && elapsed > 0.02
-      ? cost.usd / elapsed
+  /**
+   * 这个窗口**打满**值多少钱。
+   *
+   * 把已花的钱按「已用百分比」外推到 100%：$已花 ÷ (pct/100)。
+   * 7d 窗口上这个数就是周限额的美元等价 —— 它回答「我这个订阅一周能换多少 API 额度」，
+   * 而不是「按当前速率我会花多少」。后者是另一个问题，由燃尽曲线回答。
+   *
+   * 用量太低时不给：1% 意味着放大 100 倍，几条请求的抖动就能让结果差出一个数量级。
+   */
+  const MIN_PCT_FOR_FULL = 5;
+  const fullWindowCost =
+    cost?.usd != null && w.utilization_pct >= MIN_PCT_FOR_FULL
+      ? cost.usd / (w.utilization_pct / 100)
       : null;
 
   return (
@@ -117,15 +120,16 @@ export function WindowCard({
       {/* 折算费用：官方只给百分比，金额是按价目表折的等价成本，不是实际扣费 */}
       <div className="ring__cost">
         <span className="ring__cost-main">
+          <Mono tone="muted">已用 </Mono>
           {cost ? <Cost usd={cost.usd} unpriced={cost.unpricedEvents} /> : <Mono tone="muted">—</Mono>}
           <Mono tone="muted">
             {" "}
-            · {events.toLocaleString("en-US")} 次 · {fmtTokens(tokens)}
+            · {events.toLocaleString("en-US")} 次请求 · {fmtTokens(tokens)} tokens
           </Mono>
         </span>
-        {projectedCost !== null && (
-          <Mono tone="muted">重置时预计 ${projectedCost.toFixed(2)}</Mono>
-        )}
+        <Mono tone="muted">
+          满额约 {fullWindowCost !== null ? `$${fullWindowCost.toFixed(0)}` : "—"}
+        </Mono>
       </div>
 
       {/* 耗尽倒计时并进本卡，不再单独占一张 —— 它本来就是某个窗口的属性 */}

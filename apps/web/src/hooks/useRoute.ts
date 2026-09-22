@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-export const ROUTES = ["overview", "windows", "distribution"] as const;
+export const ROUTES = ["overview", "weeks", "windows", "distribution"] as const;
 export type RouteId = (typeof ROUTES)[number];
 
 function parse(): RouteId {

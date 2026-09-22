@@ -15,6 +15,7 @@ import { useTheme } from "./hooks/useTheme";
 import { useTokens } from "./hooks/useTokens";
 import { Distribution } from "./pages/Distribution";
 import { Overview } from "./pages/Overview";
+import { Weeks } from "./pages/Weeks";
 import { Windows } from "./pages/Windows";
 
 /** 走动的“现在”，用于 ETA 倒计时与燃尽曲线游标。 */
@@ -138,6 +139,9 @@ export function App() {
             windows={windows}
             windowsError={initialWindows.error}
           />
+        )}
+        {route === "weeks" && (
+          <Weeks api={api} t={tokens} profileId={profileId} nonce={nonce} windows={windows} />
         )}
         {route === "windows" && (
           <Windows

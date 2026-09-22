@@ -1,6 +1,7 @@
 import type {
   Calibration,
   Distribution,
+  QuotaHistory,
   MachinesResponse,
   ProfilesResponse,
   StreamEvent,
@@ -99,6 +100,7 @@ export function createLiveApi(opts: { base: string; token?: string | undefined }
     },
     calibration: (profileId, signal) =>
       get<Calibration>("/v1/calibration", { profile_id: profileId }, signal),
+    quotaHistory: (p, signal) => get<QuotaHistory>("/v1/quota/history", { ...p }, signal),
     stream(profileId, handlers) {
       handlers.onStatus("connecting");
       const src = new EventSource(joinUrl(base, "/v1/stream", { profile_id: profileId }), {

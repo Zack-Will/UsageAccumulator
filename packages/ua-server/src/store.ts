@@ -57,7 +57,7 @@ export interface Store {
   /** machineId = 采集机器（CONTRACT §1.3），仅供追溯，可为空 */
   insertQuotaSnapshot(s: QuotaSnapshot, machineId?: string | null): Promise<void>;
   latestQuotaWindows(profileId: string): Promise<LatestQuotaWindow[]>;
-  quotaSamples(profileId: string, windowKind: string, since: Date): Promise<QuotaSample[]>;
+  quotaSamples(profileId: string, windowKind: string, since: Date, until?: Date): Promise<QuotaSample[]>;
 
   eventsInRange(profileId: string, from: Date, to: Date): Promise<EventRow[]>;
 

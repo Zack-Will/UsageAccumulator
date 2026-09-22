@@ -200,11 +200,19 @@ export class PgStore implements Store {
     }));
   }
 
-  async quotaSamples(profileId: string, windowKind: string, since: Date): Promise<QuotaSample[]> {
+  async quotaSamples(
+    profileId: string,
+    windowKind: string,
+    since: Date,
+    until?: Date,
+  ): Promise<QuotaSample[]> {
+    // 上界可选：标定只需要「最近若干天」，而按周回看需要一个闭区间
+    const upper = until ?? new Date(8640000000000000);
     const rows = await this.sql<Record<string, unknown>[]>`
       SELECT captured_at, utilization_pct
       FROM quota_snapshots
-      WHERE profile_id = ${profileId} AND window_kind = ${windowKind} AND captured_at >= ${since}
+      WHERE profile_id = ${profileId} AND window_kind = ${windowKind}
+        AND captured_at >= ${since} AND captured_at < ${upper}
       ORDER BY captured_at`;
     return rows.map((r) => ({ ts: r["captured_at"] as Date, pct: n(r["utilization_pct"]) }));
   }

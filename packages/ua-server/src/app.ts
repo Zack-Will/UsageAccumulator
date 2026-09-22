@@ -93,6 +93,11 @@ const rangeSchema = z.object({
   to: z.string().optional(),
 });
 
+const quotaHistorySchema = rangeSchema.extend({
+  // window_kind 是自由字符串（CONTRACT §1.3），不做枚举约束
+  window_kind: z.string().min(1).default("seven_day"),
+});
+
 const distributionSchema = rangeSchema.extend({
   by: z.enum(["machine", "model", "project", "hour", "attribution"]).default("machine"),
   bucket: z.enum(["none", "hour", "day"]).default("none"),
@@ -494,6 +499,26 @@ export function buildApp(opts: BuildAppOptions) {
         // series 只在 bucket=hour|day 时出现
         ...(b.series ? { series: b.series } : {}),
       })),
+    });
+  });
+
+  /**
+   * GET /v1/quota/history —— 历史额度快照。
+   *
+   * `/v1/windows/current` 只给当前窗口。按周回看需要任意区间的原始百分比序列，
+   * 而这些快照本来就在 quota_snapshots 里，只是之前没有出口。
+   */
+  app.get("/v1/quota/history", async (req, reply) => {
+    const q = parseQuery(quotaHistorySchema, req.query);
+    const profileId = await resolveProfileId(q.profile_id);
+    const { from, to } = parseRange(q, now(), 7 * 24 * 60 * 60 * 1000);
+    const samples = await store.quotaSamples(profileId, q.window_kind, from, to);
+    return reply.send({
+      profile_id: profileId,
+      window_kind: q.window_kind,
+      from: from.toISOString(),
+      to: to.toISOString(),
+      samples: samples.map((x) => ({ ts: x.ts.toISOString(), utilization_pct: x.pct })),
     });
   });
 

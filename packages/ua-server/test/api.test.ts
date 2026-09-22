@@ -2,7 +2,7 @@ import { gzipSync } from "node:zlib";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { buildApp, type UaApp } from "../src/app.js";
 import { MemoryStore } from "../src/store-memory.js";
-import { parsePricingFile } from "../src/pricing.js";
+import { countsTowardQuota, parsePricingFile } from "../src/pricing.js";
 import { AUTH, makeEvent, ndjson, testConfig, toWire } from "./helpers.js";
 
 const NOW = new Date("2026-09-21T08:42:00.000Z");
@@ -1019,5 +1019,57 @@ describe("看板静态托管（ARCHITECTURE §3：与 API 同源）", () => {
     const r = await bad.fastify.inject({ method: "GET", url: "/healthz" });
     expect(r.statusCode).toBe(200);
     await bad.fastify.close();
+  });
+});
+
+describe("非 Anthropic 模型不计入额度", () => {
+  it("Claude 家族全部计入，包括裸家族名与将来的新型号", () => {
+    for (const m of [
+      "claude-opus-5", "claude-fable-5-1", "claude-sonnet-5", "claude-haiku-4-5-20251001",
+      "opus", "fable-9", "sonnet-7-pro", "claude-未来型号",
+    ]) {
+      expect(countsTowardQuota(m), m).toBe(true);
+    }
+  });
+
+  it("套壳路由到的第三方模型不计入", () => {
+    // 公司 Mac 上实测到 qwen3.7-plus：那些 token 不消耗 Claude 额度
+    for (const m of ["qwen3.7-plus", "gpt-5", "gemini-3-pro", "deepseek-v4", ""]) {
+      expect(countsTowardQuota(m), m).toBe(false);
+    }
+  });
+
+  it("<synthetic> 仍然排除", () => {
+    expect(countsTowardQuota("<synthetic>")).toBe(false);
+  });
+});
+
+describe("GET /v1/quota/history", () => {
+  it("按区间返回原始百分比序列，用于按周回看", async () => {
+    const res = await app.fastify.inject({
+      method: "GET",
+      url: "/v1/quota/history?profile_id=claude-official&window_kind=seven_day",
+      headers: AUTH,
+    });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.window_kind).toBe("seven_day");
+    expect(Array.isArray(body.samples)).toBe(true);
+    for (const x of body.samples) {
+      expect(Object.keys(x).sort()).toEqual(["ts", "utilization_pct"]);
+      // 契约 §4：百分比一律 0..100
+      expect(x.utilization_pct).toBeGreaterThanOrEqual(0);
+      expect(x.utilization_pct).toBeLessThanOrEqual(100);
+    }
+  });
+
+  it("区间颠倒时是 400，不是 5xx", async () => {
+    const res = await app.fastify.inject({
+      method: "GET",
+      url: "/v1/quota/history?profile_id=claude-official&from=2026-09-10T00:00:00Z&to=2026-09-01T00:00:00Z",
+      headers: AUTH,
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe("bad_request");
   });
 });

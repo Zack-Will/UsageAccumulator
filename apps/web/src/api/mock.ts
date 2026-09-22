@@ -11,8 +11,8 @@
  *   · calibration 只对 five_hour 收敛，七天窗口观测点不够（不出现在数组里）
  */
 import type {
-  BucketSeriesPoint,
   BucketGranularity,
+  BucketSeriesPoint,
   Calibration,
   CalibrationEntry,
   CalibrationPoint,
@@ -22,6 +22,9 @@ import type {
   Machine,
   Profile,
   ProjectedCurvePoint,
+  QuotaHistory,
+  QuotaHistoryParams,
+  QuotaSample,
   StreamEvent,
   TimeRangeParams,
   Timeline,
@@ -502,6 +505,33 @@ function buildDistribution(p: DistributionParams): Distribution {
   }
 }
 
+// ── /v1/quota/history ───────────────────────────────────────────────────────
+/**
+ * 历史额度快照。真接口来自 quota_snapshots，是**离散采样**（5 分钟一次），
+ * 不是连续函数 —— mock 也按固定间隔出点，免得前端误以为可以随意插值。
+ */
+function buildQuotaHistory(p: QuotaHistoryParams): QuotaHistory {
+  const from = Date.parse(p.from);
+  const to = Date.parse(p.to);
+  const step = 15 * 60_000;
+  const n = Math.max(2, Math.min(700, Math.floor((to - from) / step)));
+  const r = rng(7717 + p.window_kind.length);
+  const samples: QuotaSample[] = [];
+  let pct = 0;
+  for (let i = 0; i < n; i++) {
+    // 周窗口内百分比只增不减（窗口内不回落），重置由窗口边界本身表达
+    pct = Math.min(100, pct + r() * (100 / n) * 1.6);
+    samples.push({ ts: iso(from + i * step), utilization_pct: Math.round(pct * 10) / 10 });
+  }
+  return {
+    profile_id: p.profile_id ?? "claude-official",
+    window_kind: p.window_kind,
+    from: iso(from),
+    to: iso(to),
+    samples,
+  };
+}
+
 // ── /v1/calibration ─────────────────────────────────────────────────────────
 function buildCalibration(profileId: string, nowMs: number): Calibration {
   const r = rng(9901);
@@ -561,6 +591,7 @@ export function createMockApi(opts?: { latencyMs?: number }): UaApi {
     timeline: (p, signal) => wait(buildTimeline(p, Date.now()), signal),
     distribution: (p, signal) => wait(buildDistribution(p), signal),
     calibration: (profileId, signal) => wait(buildCalibration(profileId, Date.now()), signal),
+    quotaHistory: (p, signal) => wait(buildQuotaHistory(p), signal),
     stream(profileId, handlers) {
       handlers.onStatus("connecting");
       let drift = 0;

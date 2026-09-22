@@ -346,6 +346,28 @@ button {
   color: var(--danger);
 }
 
+/* 周历史的四行统计：标签在左、值在右 */
+.weekstat {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 4px 0;
+}
+
+.weekstat__row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.weekstat__row:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
 /* 折算费用行：金额在左，外推在右 */
 .ring__cost {
   display: flex;

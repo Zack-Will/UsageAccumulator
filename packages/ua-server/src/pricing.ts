@@ -72,8 +72,29 @@ export function loadPricingTable(path: string): { table: PricingTable; errors: s
 /** 合成标记，实测 43 条。必须排除在计费与限额统计之外。 */
 export const SYNTHETIC_MODEL = "<synthetic>";
 
+/**
+ * 是否 Anthropic 家族的模型。
+ *
+ * 套壳客户端会把请求路由到非 Anthropic 的后端（公司 Mac 上实测到 `qwen3.7-plus`）。
+ * 那些 token 不消耗 Claude 的额度，计进来会让「用量 ↔ 百分比」的关系失真，
+ * §7.0 的限额标定也会跟着被带偏。
+ *
+ * ★ 按**家族前缀**判断，不枚举具体型号：Anthropic 的命名一直是 `claude-*`
+ * 或裸家族名（opus / sonnet / haiku / fable），新型号能自动命中；
+ * 写死型号清单会在下次发新模型那天静默丢掉它的用量 —— 那种错不会报警，
+ * 只会让数字慢慢对不上。
+ */
+const ANTHROPIC_FAMILIES = ["opus", "sonnet", "haiku", "fable"];
+
+export function isAnthropicModel(model: string): boolean {
+  const m = model.trim().toLowerCase();
+  if (!m) return false;
+  if (m.startsWith("claude")) return true;
+  return ANTHROPIC_FAMILIES.some((f) => m === f || m.startsWith(`${f}-`) || m.startsWith(`${f}.`));
+}
+
 export function countsTowardQuota(model: string): boolean {
-  return model !== SYNTHETIC_MODEL;
+  return model !== SYNTHETIC_MODEL && isAnthropicModel(model);
 }
 
 /**

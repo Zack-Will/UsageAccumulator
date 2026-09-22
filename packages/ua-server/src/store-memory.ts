@@ -83,11 +83,17 @@ export class MemoryStore implements Store {
     return [...latest.values()].sort((a, b) => a.windowKind.localeCompare(b.windowKind));
   }
 
-  async quotaSamples(profileId: string, windowKind: string, since: Date): Promise<QuotaSample[]> {
+  async quotaSamples(
+    profileId: string,
+    windowKind: string,
+    since: Date,
+    until?: Date,
+  ): Promise<QuotaSample[]> {
     const out: QuotaSample[] = [];
     for (const { snapshot } of this.quota) {
       if (snapshot.profileId !== profileId) continue;
       if (snapshot.capturedAt < since) continue;
+      if (until && snapshot.capturedAt >= until) continue;
       for (const w of snapshot.windows) {
         if (w.windowKind !== windowKind) continue;
         out.push({ ts: snapshot.capturedAt, pct: w.utilizationPct });

@@ -15,6 +15,7 @@ export type RangeId = (typeof RANGES)[number]["value"];
 
 const ROUTE_LABEL: Record<RouteId, string> = {
   overview: "总览",
+  weeks: "周历史",
   windows: "窗口分析",
   distribution: "用量分布",
 };

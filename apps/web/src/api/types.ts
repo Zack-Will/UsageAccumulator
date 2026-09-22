@@ -249,6 +249,24 @@ export interface DistributionParams extends TimeRangeParams {
   bucket?: BucketGranularity;
 }
 
+/** GET /v1/quota/history 的一条样本。 */
+export interface QuotaSample {
+  ts: Rfc3339;
+  utilization_pct: Pct;
+}
+
+export interface QuotaHistory {
+  profile_id: string;
+  window_kind: WindowKind;
+  from: Rfc3339;
+  to: Rfc3339;
+  samples: QuotaSample[];
+}
+
+export interface QuotaHistoryParams extends TimeRangeParams {
+  window_kind: string;
+}
+
 export interface UaApi {
   readonly kind: "mock" | "live";
   profiles(signal?: AbortSignal): Promise<Profile[]>;
@@ -257,6 +275,7 @@ export interface UaApi {
   timeline(p: TimeRangeParams, signal?: AbortSignal): Promise<Timeline>;
   distribution(p: DistributionParams, signal?: AbortSignal): Promise<Distribution>;
   calibration(profileId: string, signal?: AbortSignal): Promise<Calibration>;
+  quotaHistory(p: QuotaHistoryParams, signal?: AbortSignal): Promise<QuotaHistory>;
   /** 返回 unsubscribe。连接状态通过 onStatus 上报，供顶栏「同步状态」使用。 */
   stream(
     profileId: string,
