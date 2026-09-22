@@ -115,3 +115,38 @@ export function serializeCookie(name: string, value: string, o: CookieOptions = 
 export function clearCookie(name: string, secure: boolean): string {
   return serializeCookie(name, "", { maxAgeSec: 0, secure });
 }
+
+/**
+ * 这次请求算不算「走在 TLS 上」—— 决定会话 Cookie 要不要加 Secure。
+ *
+ * ★ 判不出来时**默认加**。两种猜错的后果不对称：
+ *   · 该加没加 → 会话票在明文里裸奔，而且悄无声息；
+ *   · 不该加却加了 → 浏览器干脆不存这张 Cookie，登录当场失败，一眼看得见。
+ *   所以只有在明确认出是本地明文调试时才不加。
+ *
+ * 线上入口实测是 nginx 容器（不是仓库里那份 Caddyfile，部署有偏离），
+ * 不确定它有没有设 X-Forwarded-Proto，所以不能把安全性押在那个头上。
+ */
+export function requestIsSecure(input: {
+  forwardedProto?: string | string[] | undefined;
+  protocol?: string | undefined;
+  host?: string | undefined;
+}): boolean {
+  const xf = Array.isArray(input.forwardedProto) ? input.forwardedProto[0] : input.forwardedProto;
+  const proto = xf?.split(",")[0]?.trim().toLowerCase();
+  if (proto === "https") return true;
+  if (proto === "http") return false;
+  if (input.protocol === "https") return true;
+  return !isLocalHost(input.host);
+}
+
+/** localhost / 127.x / ::1 才当成本地明文调试。 */
+export function isLocalHost(host: string | undefined): boolean {
+  if (!host) return false;
+  // 去掉端口；IPv6 是 [::1]:8787 的形状
+  const h = host.startsWith("[")
+    ? host.slice(1, host.indexOf("]"))
+    : (host.split(":")[0] ?? "");
+  const l = h.toLowerCase();
+  return l === "localhost" || l === "::1" || /^127\./.test(l);
+}

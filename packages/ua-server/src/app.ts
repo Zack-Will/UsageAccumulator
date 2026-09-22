@@ -30,6 +30,7 @@ import {
   constantTimeEqualsStr,
   mintSession,
   parseCookies,
+  requestIsSecure,
   serializeCookie,
   verifySession,
 } from "./session.js";
@@ -265,12 +266,13 @@ export function buildApp(opts: BuildAppOptions) {
   const loginGuard = new LoginGuard();
   const globalLoginGuard = new LoginGuard({ baseDelayMs: 500, maxDelayMs: 30_000 });
 
-  /** Caddy 终止 TLS，所以协议要看 X-Forwarded-Proto，不能信 req.protocol。 */
+  /** 反代终止 TLS，所以协议要看 X-Forwarded-Proto；判不出来时按 https 算（见 session.ts）。 */
   function isSecure(req: FastifyRequest): boolean {
-    const xf = req.headers["x-forwarded-proto"];
-    const proto = Array.isArray(xf) ? xf[0] : xf;
-    if (proto) return proto.split(",")[0]!.trim() === "https";
-    return req.protocol === "https";
+    return requestIsSecure({
+      forwardedProto: req.headers["x-forwarded-proto"],
+      protocol: req.protocol,
+      host: req.headers.host,
+    });
   }
 
   /**

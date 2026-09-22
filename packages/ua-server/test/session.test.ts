@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { LoginGuard } from "../src/login-guard.js";
 import {
   SESSION_COOKIE,
+  requestIsSecure,
   clearCookie,
   constantTimeEqualsStr,
   mintSession,
@@ -153,5 +154,32 @@ describe("LoginGuard / 限速", () => {
     expect(g.size).toBe(1);
     g.fail("b", NOW + 5000); // 触发 prune
     expect(g.size).toBe(1);
+  });
+});
+
+describe("requestIsSecure / Secure 标志要 fail-closed", () => {
+  it("X-Forwarded-Proto: https → 加", () => {
+    expect(requestIsSecure({ forwardedProto: "https" })).toBe(true);
+  });
+
+  it("多级代理时只看第一跳", () => {
+    expect(requestIsSecure({ forwardedProto: "https, http" })).toBe(true);
+    expect(requestIsSecure({ forwardedProto: "http, https" })).toBe(false);
+  });
+
+  it("★ 反代没设这个头、域名又不是本地 → 仍然加 Secure", () => {
+    // 线上入口是 nginx 容器，不确定它设不设 XFP：该加没加是悄无声息的降级，
+    // 不该加却加了只会登录失败 —— 后者一眼看得见，所以往这边错。
+    expect(requestIsSecure({ host: "ccusage.zackwill.space" })).toBe(true);
+  });
+
+  it("本地明文调试不加，否则浏览器根本不存这张 Cookie", () => {
+    expect(requestIsSecure({ host: "localhost:5177" })).toBe(false);
+    expect(requestIsSecure({ host: "127.0.0.1:8787" })).toBe(false);
+    expect(requestIsSecure({ host: "[::1]:8787" })).toBe(false);
+  });
+
+  it("显式 http 头压过一切", () => {
+    expect(requestIsSecure({ forwardedProto: "http", host: "ua.example.com" })).toBe(false);
   });
 });
