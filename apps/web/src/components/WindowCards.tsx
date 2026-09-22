@@ -108,17 +108,18 @@ export function WindowCard({
   const tokens = buckets ? buckets.reduce((a, b) => a + b.total_tokens, 0) : 0;
 
   /**
-   * 这个窗口**打满**值多少钱。
+   * 这个窗口**打满**值多少钱：$已花 ÷ (已用 pct/100)。
+   * 7d 上就是周限额的美元等价 —— 回答「这个订阅一周能换多少 API 额度」，
+   * 而不是「按当前速率我会花多少」（那是燃尽曲线的问题）。
    *
-   * 把已花的钱按「已用百分比」外推到 100%：$已花 ÷ (pct/100)。
-   * 7d 窗口上这个数就是周限额的美元等价 —— 它回答「我这个订阅一周能换多少 API 额度」，
-   * 而不是「按当前速率我会花多少」。后者是另一个问题，由燃尽曲线回答。
+   * 不设百分比下限：刚重置时外推倍数大、误差也大，但那是使用者知情的取舍。
+   * 与其显示「—」让人什么都看不到，不如给出数字由人自己判断。
    *
-   * 用量太低时不给：1% 意味着放大 100 倍，几条请求的抖动就能让结果差出一个数量级。
+   * ★ 但花费为 0 时必须给「—」而不是 $0：那不是「误差大」，是根本没有可外推的
+   * 东西（比如本周还没用过 Fable）。算出来的 0 会被读成「周限额是零美元」。
    */
-  const MIN_PCT_FOR_FULL = 5;
   const fullWindowCost =
-    cost?.usd != null && w.utilization_pct >= MIN_PCT_FOR_FULL
+    cost?.usd != null && cost.usd > 0 && w.utilization_pct > 0
       ? cost.usd / (w.utilization_pct / 100)
       : null;
 
