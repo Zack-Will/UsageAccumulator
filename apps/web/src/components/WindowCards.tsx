@@ -35,6 +35,26 @@ export const labelOf = (kind: string): string => WINDOW_LABEL[kind] ?? kind;
 export const isMeaningfulWindow = (w: WindowState): boolean =>
   Number.isFinite(Date.parse(w.resets_at)) || w.utilization_pct > 0;
 
+/**
+ * window_kind 里编码的模型家族；null = 该窗口覆盖所有模型。
+ *
+ * `seven_day_fable` 是**只约束 Fable** 的独立周限额，它的用量与费用必须只算
+ * Fable —— 否则这张卡会和「7d 全部模型」显示完全相同的数字，等于白占一张卡。
+ * `seven_day_scoped` 是拿不到模型名时的兜底 kind，没有家族可依，不做过滤。
+ */
+export function windowModelFamily(kind: string): string | null {
+  const m = /^seven_day_(.+)$/.exec(kind);
+  if (!m?.[1]) return null;
+  const fam = m[1].toLowerCase();
+  return fam === "scoped" ? null : fam;
+}
+
+/** 模型名是否属于某家族。先剥掉 `claude-` 前缀，再比家族名。 */
+function modelInFamily(model: string, family: string): boolean {
+  const m = model.trim().toLowerCase().replace(/^claude[-.]/, "");
+  return m === family || m.startsWith(`${family}-`) || m.startsWith(`${family}.`);
+}
+
 export function WindowCard({
   t,
   w,
@@ -75,9 +95,17 @@ export function WindowCard({
     (sig) => api.distribution({ profile_id: profileId, from: w.starts_at, to, by: "model" }, sig),
     [api, profileId, w.starts_at, to, nonce],
   );
-  const cost = spend.data ? costSummary(spend.data.buckets) : null;
-  const events = spend.data ? spend.data.buckets.reduce((a, b) => a + b.events, 0) : 0;
-  const tokens = spend.data ? spend.data.buckets.reduce((a, b) => a + b.total_tokens, 0) : 0;
+  // 按模型分桶后再按窗口的家族过滤：7d Fable 只该算 Fable 的量
+  const family = windowModelFamily(w.window_kind);
+  const buckets = useMemo(() => {
+    const all = spend.data?.buckets ?? null;
+    if (!all) return null;
+    return family ? all.filter((b) => modelInFamily(b.key, family)) : all;
+  }, [spend.data, family]);
+
+  const cost = buckets ? costSummary(buckets) : null;
+  const events = buckets ? buckets.reduce((a, b) => a + b.events, 0) : 0;
+  const tokens = buckets ? buckets.reduce((a, b) => a + b.total_tokens, 0) : 0;
 
   /**
    * 这个窗口**打满**值多少钱。
@@ -121,7 +149,12 @@ export function WindowCard({
       <div className="ring__cost">
         <span className="ring__cost-main">
           <Mono tone="muted">已用 </Mono>
-          {cost ? <Cost usd={cost.usd} unpriced={cost.unpricedEvents} /> : <Mono tone="muted">—</Mono>}
+          {/* 过滤后一个桶都不剩 = 这个家族本窗口确实没用过，是 $0 而不是「未知」 */}
+          {buckets === null ? (
+            <Mono tone="muted">—</Mono>
+          ) : (
+            <Cost usd={buckets.length === 0 ? 0 : cost!.usd} unpriced={cost?.unpricedEvents ?? 0} />
+          )}
           <Mono tone="muted">
             {" "}
             · {events.toLocaleString("en-US")} 次请求 · {fmtTokens(tokens)} tokens
