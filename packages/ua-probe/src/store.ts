@@ -52,6 +52,10 @@ export class ProbeStore {
     this.db = new DatabaseSync(path);
     this.db.exec("PRAGMA journal_mode = WAL");
     this.db.exec("PRAGMA synchronous = NORMAL");
+    // ★ 撞锁要等，不要抛。node:sqlite 把 SQLITE_BUSY 抛成未捕获异常，进程当场崩；
+    //   真正的单实例保证在 lock.ts，这里只是兜住瞬时重叠（旧实例正在收尾、
+    //   status 子命令顺手建表之类）。默认的 0ms 意味着任何重叠都是死刑。
+    this.db.exec("PRAGMA busy_timeout = 5000");
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS cursors (
         path        TEXT PRIMARY KEY,

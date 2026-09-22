@@ -24,6 +24,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     )
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // ★ 必须在任何一次钥匙串访问之前。LSUIElement 没有能承载授权弹窗的窗口，
+        //   允许交互只会让 SecItemCopyMatching 静默挂起，见 Keychain.swift 开头。
+        Keychain.disableInteractivePrompts()
+
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         panel = PanelController(statusItem: statusItem)
         panel.stateProvider = { [weak self] in self?.state ?? PanelState(

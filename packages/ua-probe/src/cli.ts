@@ -6,6 +6,7 @@ import { dirname, join } from "node:path";
 import { parseArgs } from "node:util";
 import { ConfigError, loadConfig, renderConfigToml } from "./config.js";
 import { installService } from "./install.js";
+import { LockBusyError, acquireForRun, lockPathFor, tryAcquire } from "./lock.js";
 import { createLogger } from "./logger.js";
 import { DEFAULT_CONFIG_PATH, expandHome } from "./paths.js";
 import { Probe } from "./probe.js";
@@ -148,6 +149,24 @@ async function cmdInstall(
 async function cmdRun(configPath: string): Promise<number> {
   const cfg = loadConfig(configPath);
   const log = createLogger(cfg.log_level);
+
+  // ★ 先拿单实例锁，再碰状态库。两个探针同时写 state.db 会让后来者直接崩溃
+  //   （node:sqlite 把 SQLITE_BUSY 抛成未捕获异常），见 lock.ts 的注释。
+  const lockPath = lockPathFor(cfg.state_db);
+  let lock;
+  try {
+    lock = await acquireForRun(lockPath);
+  } catch (err) {
+    if (err instanceof LockBusyError) {
+      log.error({ holderPid: err.holderPid }, "状态库被另一个探针占着且不肯退出，本次不启动");
+      return 69; // EX_UNAVAILABLE
+    }
+    throw err;
+  }
+  if (lock.tookOverFrom !== null) {
+    log.warn({ previousPid: lock.tookOverFrom }, "接管了上一个探针实例（多半是菜单栏重启后遗留的孤儿）");
+  }
+
   const probe = new Probe(cfg, { logger: log });
   await probe.start();
 
@@ -156,7 +175,10 @@ async function cmdRun(configPath: string): Promise<number> {
     if (stopping) return;
     stopping = true;
     log.info({ sig }, "收到信号，退出中（队列已持久化，不会丢）");
-    void probe.stop().then(() => process.exit(0));
+    void probe.stop().then(() => {
+      lock.release();
+      process.exit(0);
+    });
   };
   process.on("SIGINT", () => shutdown("SIGINT"));
   process.on("SIGTERM", () => shutdown("SIGTERM"));
@@ -170,11 +192,20 @@ async function cmdRun(configPath: string): Promise<number> {
 async function cmdBackfill(configPath: string): Promise<number> {
   const cfg = loadConfig(configPath);
   const log = createLogger(cfg.log_level);
+
+  // backfill 不接管：它是一次性任务，为它抢掉常驻探针不值得。直接说清楚谁占着。
+  const lock = tryAcquire(lockPathFor(cfg.state_db));
+  if (!lock.ok) {
+    log.error({ holderPid: lock.holderPid }, "探针正在运行，先停掉它再 backfill");
+    return 69; // EX_UNAVAILABLE
+  }
+
   const probe = new Probe(cfg, { logger: log });
   try {
     await probe.runBackfill();
   } finally {
     await probe.stop();
+    lock.release();
   }
   return 0;
 }

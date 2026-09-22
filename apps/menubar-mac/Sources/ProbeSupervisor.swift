@@ -91,22 +91,25 @@ final class ProbeSupervisor {
     // ---- 生命周期 ----------------------------------------------------------
 
     /**
-     * ★ 拉起动作必须离开主线程。
+     * 线程约定：**所有状态只在主线程上读写**（wantRunning / failures / process /
+     * startedAt / state / restartTimer）。work 队列只负责一件事 —— 读钥匙串这个
+     * 可能阻塞的调用 —— 读完立刻回主线程落账。
      *
-     * spawn() 里要读 Keychain 取 sessionKey，而 `SecItemCopyMatching` 在需要
-     * 用户授权时会**同步阻塞直到有人点掉弹窗**。App 是 LSUIElement（不进 Dock），
-     * 弹窗未必浮得到用户面前，于是主线程就一直卡在
-     * applicationDidFinishLaunching 里 —— 托盘画不出内容，只剩初始态的一根短横线。
-     * 2026-09-22 排查了四轮才定位到这里：每次 ad-hoc 重新签名都会让钥匙串条目的
-     * 授权失效，所以现象时有时无。
+     * 为什么要这么死板：
+     *   · `Timer.scheduledTimer` 挂在**调用线程的 run loop** 上。work 队列的线程
+     *     没有跑 run loop，在那儿排的重启定时器永远不会触发，监管就此静默。
+     *   · `state` 的 didSet 会回调 UI，必须在主线程。
+     *   · 2026-09-22 的事故里 spawn() 卡在 Keychain 上两个半小时，正是因为
+     *     阻塞段和状态机混在同一个队列里，一卡就整条链路全停。
+     *     现在钥匙串那侧有硬超时（Keychain.timeout），这侧即使它返回 nil 也照常推进。
      */
     func start() {
         wantRunning = true
         failures = 0
-        Self.work.async { [weak self] in self?.spawn() }
+        spawn()
     }
 
-    /// 监管相关的阻塞调用（读钥匙串、起进程）都放这条队列
+    /// 只放「可能阻塞」的调用，不放任何状态
     private static let work = DispatchQueue(label: "space.zackwill.ua.probe-supervisor")
 
     /// 凭证变了（刚登录完）要让子进程带着新 env 重来一次。
@@ -115,7 +118,7 @@ final class ProbeSupervisor {
         Log.info("restarting probe with refreshed credential")
         failures = 0
         killCurrent()
-        Self.work.async { [weak self] in self?.spawn() }
+        spawn()
     }
 
     func stop() {
@@ -137,13 +140,23 @@ final class ProbeSupervisor {
         process = nil
     }
 
+    /// 主线程。把唯一可能阻塞的一步（读钥匙串）丢出去，回来再真正拉起。
     private func spawn() {
-        guard wantRunning else { return }
+        guard wantRunning, process == nil else { return }
         guard let spec = loadSpec() else {
             Log.warn("no usable probe-launch.json; probe supervision is off")
             state = .missing
             return
         }
+        Self.work.async {
+            let key = Keychain.readSessionKey()
+            DispatchQueue.main.async { [weak self] in self?.launch(spec, credential: key) }
+        }
+    }
+
+    /// 主线程。
+    private func launch(_ spec: ProbeLaunchSpec, credential: String?) {
+        guard wantRunning, process == nil else { return }
 
         let p = Process()
         p.executableURL = URL(fileURLWithPath: spec.command[0])
@@ -155,10 +168,11 @@ final class ProbeSupervisor {
         var env = ProcessInfo.processInfo.environment
         for (k, v) in spec.env ?? [:] { env[k] = v }
         // ★ 凭证只在这里出现一次：父进程内存 → 子进程 environ。不落盘、不进 argv、不进日志。
-        if let key = Keychain.readSessionKey() {
+        if let key = credential {
             env["UA_PROBE_CLAUDE_SESSION_KEY"] = key
         } else {
             env.removeValue(forKey: "UA_PROBE_CLAUDE_SESSION_KEY")
+            Log.warn("没有可用的 sessionKey，探针照常启动但额度采集会 401；请从菜单重新登录")
         }
         p.environment = env
 
@@ -193,13 +207,14 @@ final class ProbeSupervisor {
         scheduleRestart()
     }
 
+    /// 主线程。定时器必须挂在主 run loop 上，别的队列排的定时器不会触发。
     private func scheduleRestart() {
         let delay = ProbeSupervisor.backoffSteps[min(failures, ProbeSupervisor.backoffSteps.count - 1)]
         failures += 1
         state = .backoff
         restartTimer?.invalidate()
         restartTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
-            Self.work.async { [weak self] in self?.spawn() }
+            self?.spawn()
         }
         Log.info("probe restart in \(Int(delay))s")
     }
