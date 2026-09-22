@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   createApi,
+  fetchSessionStatus,
   readToken,
   persistDataSource,
   resolveDataSource,
@@ -28,7 +29,7 @@ function useNow(intervalMs: number): number {
   return now;
 }
 
-import { TokenGate } from "./components/TokenGate";
+import { LoginGate } from "./components/LoginGate";
 
 export function App() {
   const [theme, setTheme] = useTheme();
@@ -38,12 +39,44 @@ export function App() {
 
   const [source, setSource] = useState<DataSource>(resolveDataSource);
   const [token, setToken] = useState(readToken);
+  /**
+   * 门口的状态。null = 还没问出结果，先什么都别画 ——
+   * 先渲染看板再弹登录框会让人看见一屏 401 的空壳。
+   */
+  const [gate, setGate] = useState<{ authed: boolean; passwordLogin: boolean } | null>(null);
+  const [authNonce, setAuthNonce] = useState(0);
   const [profileId, setProfileId] = useState("claude-official");
   const [range, setRange] = useState<RangeId>("24h");
   const [nonce, setNonce] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
 
   const api = useMemo(() => createApi(source), [source, token]);
+
+  /**
+   * 只在生产构建的 live 模式下探会话：开发时 Vite 代理会在代理层注入 Authorization，
+   * 客户端本来就不需要凭证，再挡一道只会碍事。
+   */
+  const needGate = import.meta.env.PROD && source === "live";
+  useEffect(() => {
+    if (!needGate) {
+      setGate({ authed: true, passwordLogin: false });
+      return;
+    }
+    let alive = true;
+    setGate(null);
+    void fetchSessionStatus()
+      .then((s) => {
+        if (!alive) return;
+        // 已有可用 token 的老用户直接放行，不必为了这次改动重新登一遍
+        setGate({ authed: s.authenticated || readToken() !== "", passwordLogin: s.password_login });
+      })
+      .catch(() => {
+        if (alive) setGate({ authed: readToken() !== "", passwordLogin: false });
+      });
+    return () => {
+      alive = false;
+    };
+  }, [needGate, authNonce]);
 
   const onSource = useCallback((s: DataSource) => {
     persistDataSource(s);
@@ -99,10 +132,17 @@ export function App() {
     }
   }, [profileList, profileId]);
 
-  // 只在生产构建里挡：开发时 Vite 代理会在代理层注入 Authorization，
-  // 客户端本来就不需要 token，再弹输入框只会挡住开发流程。
-  if (import.meta.env.PROD && source === "live" && !token) {
-    return <TokenGate onSaved={() => setToken(readToken())} />;
+  if (gate === null) return <div className="gate" />;
+  if (!gate.authed) {
+    return (
+      <LoginGate
+        passwordLogin={gate.passwordLogin}
+        onSuccess={() => {
+          setToken(readToken());
+          setAuthNonce((n) => n + 1);
+        }}
+      />
+    );
   }
 
   return (

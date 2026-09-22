@@ -75,6 +75,57 @@ export function clearToken(): void {
   }
 }
 
+// ── 会话（密码登录）────────────────────────────────────────────────────────
+//
+// 为什么从 token 改成密码：token 是一串随机值，换台设备就得去翻 deploy/.env。
+// 密码记得住，而且服务端把它换成一张 HttpOnly 的会话 Cookie ——
+// 比存在 localStorage 里的 token 抗 XSS，SSE 也终于有凭证可带了。
+
+export interface SessionStatus {
+  authenticated: boolean;
+  /** false = 这台服务端没配 UA_DASHBOARD_PASSWORD，只能退回 token */
+  password_login: boolean;
+}
+
+function apiBase(): string {
+  return import.meta.env.VITE_UA_API_BASE ?? "";
+}
+
+/** 问一句「我还登着吗」。网络不通时当作未登录，让门口把话说清楚。 */
+export async function fetchSessionStatus(): Promise<SessionStatus> {
+  const res = await fetch(`${apiBase()}/v1/auth/session`, {
+    headers: { Accept: "application/json" },
+    credentials: "same-origin",
+  });
+  if (!res.ok) return { authenticated: false, password_login: false };
+  return (await res.json()) as SessionStatus;
+}
+
+/** 登录成功返回 true；密码错返回 false；被限速则抛出带秒数的错误。 */
+export async function login(password: string): Promise<boolean> {
+  const res = await fetch(`${apiBase()}/v1/auth/login`, {
+    method: "POST",
+    headers: { "content-type": "application/json", Accept: "application/json" },
+    credentials: "same-origin",
+    body: JSON.stringify({ password }),
+  });
+  if (res.ok) return true;
+  if (res.status === 429) {
+    const retry = res.headers.get("retry-after");
+    throw new Error(retry ? `尝试太频繁，${retry} 秒后再试` : "尝试太频繁，稍后再试");
+  }
+  if (res.status === 404) throw new Error("这台服务端没有开启密码登录");
+  return false;
+}
+
+export async function logout(): Promise<void> {
+  await fetch(`${apiBase()}/v1/auth/logout`, {
+    method: "POST",
+    credentials: "same-origin",
+  }).catch(() => undefined);
+  clearToken();
+}
+
 export function createApi(source: DataSource): UaApi {
   if (source === "live") {
     return createLiveApi({

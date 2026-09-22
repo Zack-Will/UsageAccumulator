@@ -42,6 +42,9 @@ services:
       UA_HOST: 0.0.0.0
       PORT: "8080"
       UA_DASHBOARD_TOKEN: ${UA_DASHBOARD_TOKEN:?UA_DASHBOARD_TOKEN is required}
+      # 浏览器用的密码登录；留空则只剩 token 那条路
+      UA_DASHBOARD_PASSWORD: ${UA_DASHBOARD_PASSWORD:-}
+      UA_SESSION_TTL_MS: ${UA_SESSION_TTL_MS:-}
       UA_ENROLL_TOKEN: ${UA_ENROLL_TOKEN:?UA_ENROLL_TOKEN is required}
       UA_DASHBOARD_URL: ${UA_DASHBOARD_URL:-}
       # 定价表挂进来，模型缺价时成本字段是 null 而不是 0

@@ -8,8 +8,18 @@ const schema = z.object({
   host: z.string().default("0.0.0.0"),
   port: z.coerce.number().int().positive().default(8080),
   databaseUrl: z.string().default(""),
-  /** 看板 / 菜单栏用的单一 Bearer token（ARCHITECTURE §9，v1 不做用户体系） */
+  /**
+   * 看板 / 菜单栏用的单一 Bearer token（ARCHITECTURE §9，v1 不做用户体系）。
+   * 菜单栏与脚本仍然走它；浏览器改走密码 + 会话 Cookie。
+   */
   dashboardToken: z.string().default(""),
+  /**
+   * 看板登录密码。设了它浏览器就能用密码登录，换设备不必再去翻 .env 里的随机串。
+   * 空 = 不开放密码登录，只剩 token 那条路。
+   */
+  dashboardPassword: z.string().default(""),
+  /** 会话 Cookie 有效期 */
+  sessionTtlMs: z.coerce.number().int().positive().default(30 * 24 * 60 * 60_000),
   /** 探针 enroll 用的一次性口令，换取长期 machine token */
   enrollToken: z.string().default(""),
   /** 定价表快照路径。代码里不写死任何价格。 */
@@ -40,6 +50,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     port: env["PORT"] ?? env["UA_PORT"],
     databaseUrl: env["DATABASE_URL"],
     dashboardToken: env["UA_DASHBOARD_TOKEN"],
+    dashboardPassword: env["UA_DASHBOARD_PASSWORD"],
+    sessionTtlMs: env["UA_SESSION_TTL_MS"],
     enrollToken: env["UA_ENROLL_TOKEN"],
     pricingFile: env["UA_PRICING_FILE"],
     dashboardUrl: env["UA_DASHBOARD_URL"],

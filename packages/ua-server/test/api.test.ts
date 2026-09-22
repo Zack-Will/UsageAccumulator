@@ -69,7 +69,7 @@ describe("auth", () => {
     const none = await app.fastify.inject({ method: "GET", url: "/v1/profiles" });
     expect(none.statusCode).toBe(401);
     expect(none.json()).toEqual({
-      error: { code: "unauthorized", message: "missing bearer token" },
+      error: { code: "unauthorized", message: "missing credentials" },
     });
 
     const wrong = await app.fastify.inject({

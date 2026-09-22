@@ -709,3 +709,17 @@ button {
 }
 .gate-submit:disabled { opacity: 0.45; cursor: not-allowed; }
 .gate-hint { margin: 2px 0 0; font-size: 11.5px; color: var(--text-3); line-height: 1.45; }
+.gate-error { margin: 0; font-size: 12.5px; color: var(--danger); }
+/* 退路入口：看得见但不抢戏，密码才是主路径 */
+.gate-alt {
+  align-self: flex-start;
+  padding: 0;
+  font-family: inherit;
+  font-size: 11.5px;
+  color: var(--text-3);
+  background: none;
+  border: none;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.gate-alt:hover { color: var(--text-2); }

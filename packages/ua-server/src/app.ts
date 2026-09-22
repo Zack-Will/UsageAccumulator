@@ -22,6 +22,17 @@ import type { DistributionBy, SeriesBucket } from "./aggregate.js";
 import { buildSummary, computeCurrentWindows } from "./windows-service.js";
 import { decodeEventBatch, enrollWireSchema, quotaSnapshotWireSchema, quotaWireToSnapshot } from "./wire.js";
 import type { EventRow, Store } from "./store.js";
+import { LoginGuard } from "./login-guard.js";
+import {
+  DEFAULT_SESSION_MS,
+  SESSION_COOKIE,
+  clearCookie,
+  constantTimeEqualsStr,
+  mintSession,
+  parseCookies,
+  serializeCookie,
+  verifySession,
+} from "./session.js";
 
 const NDJSON_CONTENT_TYPES = [
   "application/x-ndjson",
@@ -192,11 +203,21 @@ export function buildApp(opts: BuildAppOptions) {
     void reply.status(404).send({ error: { code: "not_found", message: "no such route" } });
   });
 
-  // ── 鉴权：Bearer machine_token（探针）或单一看板 token（ARCHITECTURE §9）
+  // ── 鉴权：会话 Cookie（浏览器）、Bearer machine_token（探针）、单一看板 token（脚本）
   async function authenticate(req: FastifyRequest): Promise<void> {
+    // 浏览器优先走 Cookie。它比 localStorage 里的 token 抗 XSS（HttpOnly），
+    // 而且 SSE 不用再把凭证塞进 query string。
+    if (config.dashboardPassword) {
+      const cookie = parseCookies(req.headers.cookie)[SESSION_COOKIE];
+      if (verifySession(cookie, config.dashboardPassword, now().getTime())) {
+        (req as FastifyRequest & { auth?: unknown }).auth = { kind: "dashboard" };
+        return;
+      }
+    }
+
     const header = req.headers.authorization ?? "";
     const m = /^Bearer\s+(.+)$/i.exec(header.trim());
-    if (!m?.[1]) throw new HttpError(401, "unauthorized", "missing bearer token");
+    if (!m?.[1]) throw new HttpError(401, "unauthorized", "missing credentials");
     const token = m[1].trim();
 
     if (config.dashboardToken && constantTimeEquals(token, config.dashboardToken)) {
@@ -214,7 +235,14 @@ export function buildApp(opts: BuildAppOptions) {
     void store.touchMachine(machine.id).catch(() => {});
   }
 
-  const PUBLIC_PATHS = new Set(["/healthz", "/v1/enroll"]);
+  const PUBLIC_PATHS = new Set([
+    "/healthz",
+    "/v1/enroll",
+    // 登录三兄弟必须公开，否则没有任何办法拿到第一张 Cookie
+    "/v1/auth/login",
+    "/v1/auth/logout",
+    "/v1/auth/session",
+  ]);
   app.addHook("onRequest", async (req) => {
     const path = req.url.split("?")[0] ?? "";
     if (PUBLIC_PATHS.has(path)) return;
@@ -230,6 +258,89 @@ export function buildApp(opts: BuildAppOptions) {
   }
 
   // ── GET /healthz
+  // ── 看板登录（密码 → 会话 Cookie）────────────────────────────────────────
+  //
+  // ★ 密码是「记得住」的，熵比随机 token 低得多，所以限速不是可选项。
+  //   两道闸：按来源一道（正常人不会连错十次），全局一道（挡住伪造 XFF 换桶）。
+  const loginGuard = new LoginGuard();
+  const globalLoginGuard = new LoginGuard({ baseDelayMs: 500, maxDelayMs: 30_000 });
+
+  /** Caddy 终止 TLS，所以协议要看 X-Forwarded-Proto，不能信 req.protocol。 */
+  function isSecure(req: FastifyRequest): boolean {
+    const xf = req.headers["x-forwarded-proto"];
+    const proto = Array.isArray(xf) ? xf[0] : xf;
+    if (proto) return proto.split(",")[0]!.trim() === "https";
+    return req.protocol === "https";
+  }
+
+  /**
+   * 限速分桶的来源标识。
+   * XFF 可伪造，所以它只用来「让正常用户不被别人连累」，真正的兜底是全局那道闸。
+   */
+  function loginSource(req: FastifyRequest): string {
+    const xf = req.headers["x-forwarded-for"];
+    const raw = Array.isArray(xf) ? xf[0] : xf;
+    return (raw?.split(",")[0] ?? "").trim() || req.ip || "unknown";
+  }
+
+  const loginSchema = z.object({ password: z.string().min(1).max(512) });
+
+  app.post("/v1/auth/login", async (req, reply) => {
+    if (!config.dashboardPassword) {
+      throw new HttpError(404, "not_found", "password login is not enabled on this server");
+    }
+    const nowMs = now().getTime();
+    const src = loginSource(req);
+    for (const [guard, key] of [
+      [loginGuard, src],
+      [globalLoginGuard, "global"],
+    ] as const) {
+      const v = guard.check(key, nowMs);
+      if (!v.allowed) {
+        void reply.header("retry-after", String(v.retryAfterSec));
+        throw new HttpError(429, "rate_limited", `too many attempts, retry in ${v.retryAfterSec}s`);
+      }
+    }
+
+    const parsed = loginSchema.safeParse(req.body ?? {});
+    if (!parsed.success) throw new HttpError(400, "bad_request", "password is required");
+
+    if (!constantTimeEqualsStr(parsed.data.password, config.dashboardPassword)) {
+      loginGuard.fail(src, nowMs);
+      globalLoginGuard.fail("global", nowMs);
+      // 失败原因不细分：说「密码错了」和说「没这个用户」一样，只会帮到猜的人
+      throw new HttpError(401, "unauthorized", "invalid password");
+    }
+    loginGuard.succeed(src);
+    globalLoginGuard.succeed("global");
+
+    const ttlMs = config.sessionTtlMs || DEFAULT_SESSION_MS;
+    const cookie = serializeCookie(
+      SESSION_COOKIE,
+      mintSession(config.dashboardPassword, nowMs + ttlMs),
+      { maxAgeSec: Math.floor(ttlMs / 1000), secure: isSecure(req) },
+    );
+    return reply.header("set-cookie", cookie).send({ authenticated: true, expires_in: Math.floor(ttlMs / 1000) });
+  });
+
+  app.post("/v1/auth/logout", async (req, reply) => {
+    return reply
+      .header("set-cookie", clearCookie(SESSION_COOKIE, isSecure(req)))
+      .send({ authenticated: false });
+  });
+
+  /** 前端开屏问一句：我还登着吗？决定显示看板还是登录框。 */
+  app.get("/v1/auth/session", async (req, reply) => {
+    const cookie = parseCookies(req.headers.cookie)[SESSION_COOKIE];
+    const authenticated =
+      !!config.dashboardPassword && verifySession(cookie, config.dashboardPassword, now().getTime());
+    return reply.send({
+      authenticated,
+      /** false 时前端该退回 token 输入框 —— 这台服务端没配密码 */
+      password_login: !!config.dashboardPassword,
+    });
+  });
+
   app.get("/healthz", async (_req, reply) => {
     const ok = await store.ping().catch(() => false);
     if (!ok) throw new HttpError(503, "internal", "database unavailable");

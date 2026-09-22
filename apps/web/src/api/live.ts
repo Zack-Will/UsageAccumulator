@@ -44,7 +44,11 @@ function joinUrl(base: string, path: string, query?: Record<string, string>): st
   return url.toString();
 }
 
-/** CONTRACT §2：Base `/v1`，认证 Authorization: Bearer <machine_token>。 */
+/**
+ * CONTRACT §2：Base `/v1`。认证两条路：
+ *   · 同源部署（生产就是这样，看板由服务端 @fastify/static 托管）→ 会话 Cookie
+ *   · 跨源 / 脚本 → Authorization: Bearer <token>
+ */
 export function createLiveApi(opts: { base: string; token?: string | undefined }): UaApi {
   const base = opts.base;
   const headers: Record<string, string> = { Accept: "application/json" };
@@ -54,12 +58,13 @@ export function createLiveApi(opts: { base: string; token?: string | undefined }
     const res = await fetch(joinUrl(base, path, query), {
       headers,
       signal: signal ?? null,
-      // 刻意用 "omit"：认证走 Authorization: Bearer（CONTRACT §2），不用 cookie。
-      // 用 "include" 会切到带凭据的 CORS 模式，强制要求服务端回
+      // ★ "same-origin" 而不是 "include"：同源时带上会话 Cookie，跨源时自动退化成
+      // 不带凭据 —— 于是不会触发带凭据的 CORS 模式（那会强制要求服务端回
       // Access-Control-Allow-Credentials: true 且 Allow-Origin 不得为 *，
-      // 于是所有跨源请求在预检就被浏览器挡下（实际踩过：看板连真服务端时整页空白，
+      // 所有跨源请求在预检就被浏览器挡下；实际踩过：看板连真服务端时整页空白，
       // 而 fastify .inject() 的契约检查完全绕过 CORS，测不出来）。
-      credentials: "omit",
+      // 跨源那条路仍然靠 Authorization: Bearer。
+      credentials: "same-origin",
     });
     if (!res.ok) {
       // CONTRACT §2：错误统一 {"error": {"code","message"}}，客户端看 code 不看状态码
@@ -104,9 +109,12 @@ export function createLiveApi(opts: { base: string; token?: string | undefined }
     stream(profileId, handlers) {
       handlers.onStatus("connecting");
       const src = new EventSource(joinUrl(base, "/v1/stream", { profile_id: profileId }), {
-        // 同 get()：认证不靠 cookie，withCredentials: true 只会让跨源 SSE 被 CORS 挡掉。
-        // 注意 EventSource 无法自定义请求头，所以 SSE 的 token 只能走 query string——
-        // 这是与 REST 端点不同的一点，服务端两种都接受。
+        // ★ EventSource 不能自定义请求头，所以 SSE **没有**办法带 Bearer token。
+        // 在会话 Cookie 之前这条路在生产环境其实一直是 401 的（服务端从未从
+        // query string 读过 token，那句「两种都接受」的旧注释是错的），
+        // 看板只能靠首屏那一次 /v1/windows/current，拿不到推送。
+        // withCredentials=false 时凭据模式是 same-origin：同源照样带 Cookie，
+        // 跨源不带 —— 正是我们要的，跨源 SSE 也不会被 CORS 挡掉。
         withCredentials: false,
       });
       const relay = (type: StreamEvent["type"]) => (ev: MessageEvent<string>) => {

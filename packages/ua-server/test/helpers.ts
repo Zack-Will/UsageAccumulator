@@ -5,6 +5,7 @@ export function testConfig(over: Partial<Config> = {}): Config {
   return {
     ...loadConfig({
       UA_DASHBOARD_TOKEN: "dash-token",
+      UA_DASHBOARD_PASSWORD: "open-sesame",
       UA_ENROLL_TOKEN: "enroll-token",
       UA_DASHBOARD_URL: "https://ua.example.com",
       UA_LOG_LEVEL: "silent",
