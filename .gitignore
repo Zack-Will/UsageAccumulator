@@ -16,3 +16,6 @@ data/
 
 # Swift 外壳构建产物
 apps/menubar-mac/build/
+
+# 探针单文件产物（由 pnpm -F @ua/probe bundle 生成）
+apps/web/public/dl/

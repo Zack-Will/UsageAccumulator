@@ -19,6 +19,8 @@ final class PanelController: NSObject, WKScriptMessageHandlerWithReply, WKNaviga
     private var web: WKWebView!
     /// 压在材质之上的一层色调：材质单独用太透，压一层才够"厚"
     private let tint = NSView()
+    /// 菜单栏里的迷你条，自绘 —— 不走 NSImage（见 TrayBarsView 的注释）
+    private let bars = TrayBarsView()
     private var ready = false
     /// 页面就绪前推来的状态先存着，就绪后补发 —— 否则首帧是空的
     private var pending: PanelState?
@@ -69,6 +71,18 @@ final class PanelController: NSObject, WKScriptMessageHandlerWithReply, WKNaviga
         statusItem.button?.target = self
         statusItem.button?.action = #selector(togglePopover)
         statusItem.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
+
+        if let button = statusItem.button {
+            bars.translatesAutoresizingMaskIntoConstraints = false
+            button.addSubview(bars)
+            NSLayoutConstraint.activate([
+                bars.leadingAnchor.constraint(equalTo: button.leadingAnchor),
+                bars.trailingAnchor.constraint(equalTo: button.trailingAnchor),
+                bars.topAnchor.constraint(equalTo: button.topAnchor),
+                bars.bottomAnchor.constraint(equalTo: button.bottomAnchor),
+            ])
+            bars.showsBars = false
+        }
     }
 
     // ---- WKWebView ---------------------------------------------------------
@@ -175,17 +189,20 @@ final class PanelController: NSObject, WKScriptMessageHandlerWithReply, WKNaviga
         statusItem.button?.toolTip = tray.tooltip
         // 正常有数据时画迷你条；异常态（未配置 / 凭证失效 / 还没拉到）回落成文字，
         // 因为那几种情况要传达的是「出事了」，不是某个百分比。
-        if state.status == .ok || state.status == .stale,
-           let img = TrayIcon.image(for: state.summary?.windows ?? []) {
-            statusItem.button?.image = img
-            statusItem.button?.imagePosition = .imageOnly
+        let windows = state.summary?.windows ?? []
+        let drawable = (state.status == .ok || state.status == .stale)
+            && !TrayIcon.meaningful(windows).isEmpty
+        statusItem.button?.image = nil
+        if drawable {
+            bars.windows = windows
+            bars.showsBars = true
             statusItem.button?.title = ""
-            Log.info("托盘：图标模式 \(Int(img.size.width))x\(Int(img.size.height)) · 条数 \(TrayIcon.meaningful(state.summary?.windows ?? []).count)")
+            statusItem.length = TrayBarsView.preferredWidth
         } else {
-            statusItem.button?.image = nil
-            statusItem.button?.imagePosition = .noImage
+            // 异常态要传达的是「出事了」，不是某个百分比；画几根空条会让人以为用量为 0
+            bars.showsBars = false
             statusItem.button?.title = tray.title
-            Log.info("托盘：文字模式 \"\(tray.title)\" · status=\(state.status.rawValue)")
+            statusItem.length = NSStatusItem.variableLength
         }
         guard ready else { pending = state; return }
         let json = state.jsonString()

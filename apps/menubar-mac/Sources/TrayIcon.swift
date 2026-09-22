@@ -12,7 +12,7 @@ import AppKit
 
 enum TrayIcon {
     private static let barWidth: CGFloat = 24
-    private static let barHeight: CGFloat = 3.5
+    private static let barHeight: CGFloat = 3
     private static let gap: CGFloat = 3
     private static let maxBars = 3
 
@@ -24,7 +24,7 @@ enum TrayIcon {
     }
 
     /// 已经走过的时间比例 0..1；算不出返回 nil。
-    private static func elapsedFraction(_ w: SummaryWindow) -> Double? {
+    static func elapsed(_ w: SummaryWindow) -> Double? {
         guard let period = periodSeconds(w.window_kind),
               let reset = RFC3339.parse(w.resets_at) else { return nil }
         let remaining = reset.timeIntervalSinceNow
@@ -37,9 +37,9 @@ enum TrayIcon {
      * 颜色。★ 关键是**配速感知**：时间过了 15% 之后看的不是「已经用了多少」，
      * 而是「按这个速度到期末会用到多少」。
      */
-    private static func color(_ w: SummaryWindow) -> NSColor {
+    static func statusColor(_ w: SummaryWindow) -> NSColor {
         let u = w.pct / 100
-        if let t = elapsedFraction(w), t >= 0.15, t < 1, u > 0 {
+        if let t = elapsed(w), t >= 0.15, t < 1, u > 0 {
             let projected = u / t
             if projected < 0.70 { return .adaptiveGreen }
             if projected < 0.90 { return .systemOrange }
@@ -54,7 +54,7 @@ enum TrayIcon {
      * 配速刻度自身的颜色。与面板的 paceColorVar 同一套六档
      * （复刻自 Claude-Usage-Tracker 的 PaceStatus，MIT）。
      */
-    private static func paceColor(_ w: SummaryWindow, _ t: Double) -> NSColor {
+    static func paceTint(_ w: SummaryWindow, _ t: Double) -> NSColor {
         guard t >= 0.03, t < 1 else { return .labelColor }
         guard w.pct > 0 else { return .systemGreen }
         let projected = (w.pct / 100) / t
@@ -83,7 +83,26 @@ enum TrayIcon {
         let size = NSSize(width: barWidth, height: h)
         let r = barHeight / 2
 
-        let image = NSImage(size: size, flipped: false) { _ in
+        /*
+         * ★ 用 lockFocus 一次性栅格化，不用 NSImage(size:flipped:drawingHandler:)。
+         * 那个 API 的 handler 由系统按它给的 dstRect 反复调用，而这里的绘制是
+         * 按绝对坐标从 (0,0) 画的 —— 落盘（整块重绘）时正常，状态栏按局部 rect
+         * 调用时就只画得出一部分，表现为「三根条只剩一根」。
+         * 顺便按 2x 出位图，Retina 下才不糊。
+         */
+        let scale: CGFloat = 2
+        guard let rep = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: Int(size.width * scale), pixelsHigh: Int(size.height * scale),
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
+        ) else { return nil }
+        rep.size = size
+
+        let image = NSImage(size: size)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+        do {
             for (i, w) in rows.enumerated() {
                 let y = h - CGFloat(i + 1) * barHeight - CGFloat(i) * gap
                 // 轨道要够明显：菜单栏是半透明的，太淡的灰会直接消失，
@@ -96,23 +115,24 @@ enum TrayIcon {
                 if pct > 0 {
                     // 至少给 barHeight 宽，否则 1% 会画成看不见的一条缝，等同于「没有数据」
                     let fillW = max(barHeight, barWidth * CGFloat(pct) / 100)
-                    color(w).setFill()
+                    statusColor(w).setFill()
                     NSBezierPath(roundedRect: NSRect(x: 0, y: y, width: fillW, height: barHeight),
                                  xRadius: r, yRadius: r).fill()
                 }
 
                 // 配速刻度：按时间匀速消耗此刻应该在的位置。
                 // 填充越过它 = 烧得比时间快。与面板上那根竖线是同一个含义。
-                if let t = elapsedFraction(w), t > 0, t < 1 {
+                if let t = elapsed(w), t > 0, t < 1 {
                     let tickW: CGFloat = 1.5
                     let x = min(barWidth - tickW, max(0, round(barWidth * CGFloat(t)) - tickW / 2))
-                    paceColor(w, t).setFill()
+                    paceTint(w, t).setFill()
                     NSBezierPath(roundedRect: NSRect(x: x, y: y - 1, width: tickW, height: barHeight + 2),
                                  xRadius: 0.75, yRadius: 0.75).fill()
                 }
             }
-            return true
         }
+        NSGraphicsContext.restoreGraphicsState()
+        image.addRepresentation(rep)
         // 带颜色，不能让系统按模板图重新着色
         image.isTemplate = false
         return image

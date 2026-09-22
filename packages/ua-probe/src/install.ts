@@ -16,11 +16,15 @@ export interface Launcher {
 }
 
 /**
- * 找一个能跑 TypeScript 入口的启动器。
+ * 找一个能跑入口文件的启动器。
  * 优先用仓库里装好的 tsx（它能把 `./x.js` 解析到 `./x.ts`），
- * 没有则退回 node（要求已经有编译产物或 Node 自带类型剥离）。
+ * 没有则退回 node。
  */
 export function resolveLauncher(cliPath = defaultCliPath()): Launcher {
+  // 入口已经是 JS（单文件打包产物）时直接用 node：那种场景下附近可能恰好有个
+  // 无关仓库的 node_modules/.bin/tsx，用它去跑打包产物是错的。
+  if (/\.(mjs|cjs|js)$/.test(cliPath)) return { program: process.execPath, args: [cliPath, "run"] };
+
   let dir = dirname(cliPath);
   for (let i = 0; i < 8; i++) {
     const bin = join(dir, "node_modules", ".bin", "tsx");
@@ -33,6 +37,10 @@ export function resolveLauncher(cliPath = defaultCliPath()): Launcher {
 }
 
 export function defaultCliPath(): string {
+  // 打包成单文件后，入口就是正在运行的这个文件；按 import.meta.url 找同目录的
+  // cli.ts 会指向一个不存在的路径，写出来的 launchd plist 直接是坏的。
+  const entry = process.argv[1];
+  if (entry && existsSync(entry)) return resolve(entry);
   return resolve(fileURLToPath(new URL("./cli.ts", import.meta.url)));
 }
 

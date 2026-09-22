@@ -8,7 +8,7 @@ import { Ingestor, emptyStats } from "../src/ingest.js";
 import { ProbeStore } from "../src/store.js";
 import { backoffMs, buildNdjsonBody, classifyStatus, isServerErrorEnvelope } from "../src/shipper.js";
 import { hashProjectSlug, toWireEvent } from "../src/wire.js";
-import { launchdPlist, systemdUnit } from "../src/install.js";
+import { launchdPlist, resolveLauncher, systemdUnit } from "../src/install.js";
 import { assistantLine, cleanup, makeConfig, silentLog, tmpDir } from "./helpers.js";
 import type { UsageEvent } from "@ua/core";
 
@@ -313,5 +313,19 @@ describe("4xx 的裁决权归属", () => {
     expect(isServerErrorEnvelope("<!DOCTYPE html><html><title>Not Found</title>")).toBe(false);
     expect(isServerErrorEnvelope('{"accepted":3}')).toBe(false);
     expect(isServerErrorEnvelope("")).toBe(false);
+  });
+});
+
+describe("单文件打包产物的启动器", () => {
+  it("入口是 .mjs 时用 node，不去找 tsx", () => {
+    const l = resolveLauncher("/opt/ua/ua-probe.mjs");
+    expect(l.program).toBe(process.execPath);
+    expect(l.args).toEqual(["/opt/ua/ua-probe.mjs", "run"]);
+  });
+
+  it("入口是 .ts 时仍然允许走 tsx 查找", () => {
+    // 这里只断言不会被上面的 JS 分支提前截胡；具体找不找得到 tsx 取决于目录
+    const l = resolveLauncher("/nowhere/cli.ts");
+    expect(l.args).toEqual(["/nowhere/cli.ts", "run"]);
   });
 });
