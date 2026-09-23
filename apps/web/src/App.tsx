@@ -173,6 +173,7 @@ export function App() {
             profileId={profileId}
             from={from}
             to={to}
+            rangeLabel={RANGES.find((r) => r.value === range)?.label ?? range}
             nonce={nonce}
             nowMs={nowMs}
             machines={machines.data ?? []}

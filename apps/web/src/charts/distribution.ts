@@ -1,180 +1,13 @@
 import type { EChartsOption } from "./echarts";
 import { axisCommon, baseOption, fmtClock, fmtDay, fmtPct, fmtTokens, NUM_FONT, UI_FONT } from "./base";
 import { alpha, readLightTokens, sequential, type Tokens } from "./tokens";
-import type { CachePoint, CostPoint, HourCell, StackSeries } from "../api/derive";
+import type { CachePoint, HourCell, MetricSeries, UsageMetric } from "../api/derive";
 import type { DistributionBucket } from "../api/types";
 
 /** 成本未知与成本为 0 必须区分：桶缺价时 tooltip 里标出来，不显示成 $0.00。 */
 function costCell(b: DistributionBucket): string {
   if (b.cost_usd === null) return "成本未知";
   return b.unpriced_events > 0 ? `$${b.cost_usd.toFixed(4)} †` : `$${b.cost_usd.toFixed(4)}`;
-}
-
-/**
- * 费用趋势。纵轴是**按公开价目表折算的等价 API 费用**，不是实际扣费 ——
- * 订阅制下实际扣的是固定月费，这条曲线回答的是「如果按 API 计价值多少钱」。
- */
-export function costTrendOption(
-  t: Tokens,
-  points: CostPoint[],
-  bucket: "hour" | "day",
-): EChartsOption {
-  const fmtTick = bucket === "day" ? fmtDay : fmtClock;
-  return {
-    ...baseOption(t),
-    grid: { left: 52, right: 12, top: 16, bottom: 22 },
-    tooltip: {
-      ...baseOption(t).tooltip,
-      trigger: "axis",
-      axisPointer: { type: "shadow" },
-      valueFormatter: (v) => (v === null || v === undefined ? "成本未知" : `$${Number(v).toFixed(4)}`),
-    },
-    xAxis: {
-      type: "category",
-      data: points.map((p) => fmtTick(p.ts)),
-      ...axisCommon(t),
-      splitLine: { show: false },
-      axisLabel: { color: t["text-3"], fontFamily: NUM_FONT(t), fontSize: 10, hideOverlap: true },
-    },
-    yAxis: {
-      type: "value",
-      min: 0,
-      ...axisCommon(t),
-      axisLine: { show: false },
-      axisLabel: {
-        color: t["text-3"],
-        fontFamily: NUM_FONT(t),
-        fontSize: 10,
-        formatter: (v: number) => `$${v >= 10 ? v.toFixed(0) : v.toFixed(2)}`,
-      },
-    },
-    series: [
-      {
-        type: "bar",
-        name: "折算费用",
-        // 缺价的点给 null：ECharts 会留空，而不是画成 0 —— 两者含义完全不同
-        data: points.map((p) => p.cost),
-        itemStyle: { color: t["cat1"], borderRadius: [2, 2, 0, 0] },
-        barMaxWidth: 18,
-      },
-    ],
-  };
-}
-
-// ── 机器分布：堆叠柱。桶粒度随区间变化，刻度文案必须跟着变 ──
-export function machineStackOption(
-  t: Tokens,
-  series: StackSeries[],
-  colors: Map<string, string>,
-  /** "hour" 时刻度是 HH:MM，"day" 时是 M/D —— 7d/30d 用小时刻度会有上百根柱，标签必然叠在一起 */
-  bucket: "hour" | "day" = "hour",
-): EChartsOption {
-  const fmtTick = bucket === "day" ? fmtDay : fmtClock;
-  const labels = (series[0]?.points ?? []).map((p) => fmtTick(p.ts));
-  return {
-    ...baseOption(t),
-    grid: { left: 46, right: 12, top: 28, bottom: 22 },
-    legend: {
-      top: 0,
-      left: 0,
-      itemWidth: 8,
-      itemHeight: 8,
-      itemGap: 14,
-      icon: "roundRect",
-      textStyle: { color: t["text-2"], fontFamily: NUM_FONT(t), fontSize: 10 },
-    },
-    tooltip: {
-      ...baseOption(t).tooltip,
-      trigger: "axis",
-      axisPointer: { type: "shadow" },
-      valueFormatter: (v) => fmtTokens(Number(v)),
-    },
-    xAxis: {
-      type: "category",
-      data: labels,
-      ...axisCommon(t),
-      splitLine: { show: false },
-      // 不写死 interval：柱子数量随区间变（24 根 ~ 30 根），
-      // 交给 hideOverlap 按实际宽度取舍，比固定每 4 个显示一个稳
-      axisLabel: {
-        color: t["text-3"],
-        fontFamily: NUM_FONT(t),
-        fontSize: 10,
-        hideOverlap: true,
-      },
-    },
-    yAxis: {
-      type: "value",
-      min: 0,
-      ...axisCommon(t),
-      axisLine: { show: false },
-      axisLabel: {
-        color: t["text-3"],
-        fontFamily: NUM_FONT(t),
-        fontSize: 10,
-        formatter: (v: number) => fmtTokens(v),
-      },
-    },
-    series: series.map((s, i) => ({
-      name: s.label,
-      type: "bar" as const,
-      stack: "machines",
-      barMaxWidth: 16,
-      itemStyle: {
-        color: colors.get(s.key) ?? t.cat1,
-        borderRadius: i === series.length - 1 ? [2, 2, 0, 0] : 0,
-      },
-      data: s.points.map((p) => p.tokens),
-    })),
-  };
-}
-
-// ── 模型占比：环形 + 图例 ──────────────────────────────────────────────────
-export function modelDonutOption(
-  t: Tokens,
-  buckets: DistributionBucket[],
-  /** 按 bucket.key 取色（CONTRACT §2.1a），不按 label。 */
-  colors: Map<string, string>,
-  labelOf: (b: DistributionBucket) => string,
-): EChartsOption {
-  const byName = new Map(buckets.map((b) => [labelOf(b), b]));
-  return {
-    ...baseOption(t),
-    tooltip: {
-      ...baseOption(t).tooltip,
-      trigger: "item",
-      formatter: (p: unknown) => {
-        const d = p as { name: string; value: number; percent: number };
-        const b = byName.get(d.name);
-        return `${d.name}　${fmtTokens(d.value)}　${d.percent.toFixed(1)}%${b ? `\n${costCell(b)}` : ""}`;
-      },
-    },
-    legend: {
-      orient: "vertical",
-      right: 4,
-      top: "middle",
-      itemWidth: 8,
-      itemHeight: 8,
-      itemGap: 10,
-      icon: "roundRect",
-      textStyle: { color: t["text-2"], fontFamily: NUM_FONT(t), fontSize: 10 },
-    },
-    series: [
-      {
-        type: "pie",
-        radius: ["55%", "78%"],
-        center: ["32%", "50%"],
-        label: { show: false },
-        labelLine: { show: false },
-        itemStyle: { borderColor: t.surface, borderWidth: 2 },
-        data: buckets.map((b) => ({
-          name: labelOf(b),
-          value: b.total_tokens,
-          itemStyle: { color: colors.get(b.key) ?? t.cat1 },
-        })),
-      },
-    ],
-  };
 }
 
 // ── 项目 treemap ───────────────────────────────────────────────────────────
@@ -340,5 +173,106 @@ export function cacheTrendOption(t: Tokens, points: CachePoint[]): EChartsOption
         },
       },
     ],
+  };
+}
+
+// ── 用量时间线：按机器堆叠，费用 / token 两种口径 ───────────────────────────
+/**
+ * 把原来的「折算 API 费用」和「机器分布」合成一张。
+ * 两张图画的是同一条时间轴、同一批事件，只是一个看钱、一个看 token 按机器拆 ——
+ * 分开放各占一整行，两行加起来大半是空白。合成一张堆叠柱，高度 = 总量，颜色 = 机器。
+ *
+ * 横轴用**补齐后的完整刻度**（derive.bucketTicks），空着的小时是真空档，不再被挤掉。
+ */
+export function usageTimelineOption(
+  t: Tokens,
+  ticks: number[],
+  series: MetricSeries[],
+  colors: Map<string, string>,
+  bucket: "hour" | "day",
+  metric: UsageMetric,
+): EChartsOption {
+  // 小时桶跨零点时把 00:00 换成日期：一眼看出哪几根柱子是昨天的
+  const fmtTick = (ms: number): string =>
+    bucket === "day" ? fmtDay(ms) : new Date(ms).getHours() === 0 ? fmtDay(ms) : fmtClock(ms);
+
+  // 纵轴刻度的小数位由**整轴**的量级决定，不再一格一个样（以前是 $18 / $15 / $9.00 / $6.00）
+  const stackMax = ticks.reduce((mx, _, i) => {
+    const sum = series.reduce((a, s) => a + (s.values[i] ?? 0), 0);
+    return Math.max(mx, sum);
+  }, 0);
+  const costDigits = stackMax >= 10 ? 0 : 2;
+  const fmtValue = (v: number): string =>
+    metric === "cost" ? `$${v.toFixed(costDigits)}` : fmtTokens(v);
+
+  return {
+    ...baseOption(t),
+    grid: { left: 50, right: 12, top: 30, bottom: 22 },
+    legend: {
+      top: 0,
+      left: 0,
+      itemWidth: 8,
+      itemHeight: 8,
+      itemGap: 14,
+      icon: "roundRect",
+      textStyle: { color: t["text-2"], fontFamily: NUM_FONT(t), fontSize: 10 },
+    },
+    tooltip: {
+      ...baseOption(t).tooltip,
+      trigger: "axis",
+      axisPointer: { type: "shadow" },
+      formatter: (params: unknown) => {
+        const ps = params as Array<{ seriesName: string; value: number | null; marker: string; dataIndex: number }>;
+        const idx = ps[0]?.dataIndex ?? 0;
+        const head = bucket === "day" ? fmtDay(ticks[idx] ?? 0) : `${fmtDay(ticks[idx] ?? 0)} ${fmtClock(ticks[idx] ?? 0)}`;
+        let total = 0;
+        let unknown = false;
+        const rows = ps
+          .filter((p) => p.value !== 0)
+          .map((p) => {
+            if (p.value === null) {
+              unknown = true;
+              return `${p.marker}${p.seriesName}　${metric === "cost" ? "成本未知" : "—"}`;
+            }
+            total += p.value;
+            return `${p.marker}${p.seriesName}　${metric === "cost" ? `$${p.value.toFixed(2)}` : fmtTokens(p.value)}`;
+          });
+        if (rows.length === 0) return `${head}<br/>无用量`;
+        const sum = metric === "cost" ? `$${total.toFixed(2)}${unknown ? " †" : ""}` : fmtTokens(total);
+        return [`${head}　合计 ${sum}`, ...rows].join("<br/>");
+      },
+    },
+    xAxis: {
+      type: "category",
+      data: ticks.map(fmtTick),
+      ...axisCommon(t),
+      splitLine: { show: false },
+      axisLabel: { color: t["text-3"], fontFamily: NUM_FONT(t), fontSize: 10, hideOverlap: true },
+    },
+    yAxis: {
+      type: "value",
+      min: 0,
+      ...axisCommon(t),
+      axisLine: { show: false },
+      axisLabel: {
+        color: t["text-3"],
+        fontFamily: NUM_FONT(t),
+        fontSize: 10,
+        formatter: (v: number) => fmtValue(v),
+      },
+    },
+    series: series.map((s, i) => ({
+      name: s.label,
+      type: "bar" as const,
+      stack: "usage",
+      barMaxWidth: 18,
+      barCategoryGap: "32%",
+      itemStyle: {
+        color: colors.get(s.key) ?? t.cat1,
+        borderRadius: i === series.length - 1 ? [2, 2, 0, 0] : 0,
+      },
+      emphasis: { focus: "series" as const },
+      data: s.values,
+    })),
   };
 }

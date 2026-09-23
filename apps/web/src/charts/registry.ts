@@ -29,10 +29,18 @@ export function colorFor(domain: ColorDomain, key: string, t: Tokens): string {
   return p[i] ?? t.cat1;
 }
 
+/**
+ * ★ 同一批里没见过的 key **按字典序**登记，而不是按调用方给的顺序。
+ *
+ * 调用方给的顺序通常是「按 token 降序」—— 排名一变，刷新页面后谁先登记就变了，
+ * 两个模型的颜色会互换（实测：Opus 5.5 的用量刚超过 Opus 5，两者颜色当场对调）。
+ * 字典序与数据无关，同一组 key 每次刷新都落在同一个色位上。
+ */
 export function colorMapFor(
   domain: ColorDomain,
   keys: readonly string[],
   t: Tokens,
 ): Map<string, string> {
+  for (const k of [...new Set(keys)].sort()) slot(domain, k);
   return new Map(keys.map((k) => [k, colorFor(domain, k, t)]));
 }

@@ -67,3 +67,53 @@ export function fmtDuration(ms: number): string {
   if (d >= 1) return `${d}d ${pad(Math.floor((totalMin % 1440) / 60))}h`;
   return `${Math.floor(totalMin / 60)}:${pad(totalMin % 60)}`;
 }
+
+const WEEKDAY = ["日", "一", "二", "三", "四", "五", "六"];
+
+/**
+ * 还有多久：`55 分钟后` / `1 小时 45 分后` / `5 天 16 小时后`。
+ * 窗口重置、耗尽预测都用它 —— 人读「还剩多久」比读一个钟点快。
+ */
+export function fmtUntil(ms: number): string {
+  if (!Number.isFinite(ms)) return "—";
+  if (ms <= 60_000) return "即将";
+  const totalMin = Math.round(ms / 60_000);
+  if (totalMin < 60) return `${totalMin} 分钟后`;
+  const d = Math.floor(totalMin / 1440);
+  const h = Math.floor((totalMin % 1440) / 60);
+  const m = totalMin % 60;
+  if (d >= 1) return h > 0 ? `${d} 天 ${h} 小时后` : `${d} 天后`;
+  return m > 0 ? `${h} 小时 ${m} 分后` : `${h} 小时后`;
+}
+
+/**
+ * 一个未来时刻的钟点表达，按离现在多远决定带多少日期信息：
+ *   今天 → `16:10`；明天 → `明天 07:00`；更远 → `09-29 周二 07:00`。
+ *
+ * ★ 周窗口以前只显示 `07:00 重置`，读起来像明早 7 点，实际是 6 天后的周二。
+ *   超过一天的时刻不带日期，就是在给错误的信息。
+ */
+export function fmtWhen(targetMs: number, nowMs: number): string {
+  if (!Number.isFinite(targetMs)) return "—";
+  const t = new Date(targetMs);
+  const n = new Date(nowMs);
+  const dayOf = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const diffDays = Math.round((dayOf(t) - dayOf(n)) / 86_400_000);
+  const clock = `${pad(t.getHours())}:${pad(t.getMinutes())}`;
+  if (diffDays === 0) return clock;
+  if (diffDays === 1) return `明天 ${clock}`;
+  return `${pad(t.getMonth() + 1)}-${pad(t.getDate())} 周${WEEKDAY[t.getDay()]} ${clock}`;
+}
+
+/**
+ * 燃尽曲线的纵轴上限：贴着数据取一个整齐的刻度。
+ *
+ * 以前固定 0–110%。用了 5% 的窗口就是一条贴地的线，整张图 90% 是空白 ——
+ * 「离上限还远」这件事由额度卡上的进度条表达，这张图的职责是看**轨迹的形状**，
+ * 就该把形状放大到看得清。一旦预测逼近上限，自动回到 110%，100% 线重新出现。
+ */
+export function niceMaxPct(peak: number): number {
+  const need = Math.max(0, peak) * 1.15;
+  for (const c of [10, 25, 50, 75, 100]) if (need <= c) return c;
+  return 110;
+}

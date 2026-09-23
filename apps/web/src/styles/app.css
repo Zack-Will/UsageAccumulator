@@ -58,7 +58,7 @@ button {
     grid-template-columns: repeat(6, minmax(0, 1fr));
   }
   .grid > .card {
-    grid-column: span 6 !important;
+    grid-column: span var(--md-span, 6) !important;
   }
 }
 
@@ -256,9 +256,10 @@ button {
 
 .card__head {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
   justify-content: space-between;
-  gap: 10px;
+  gap: 4px 10px;
   margin-bottom: 10px;
 }
 
@@ -268,6 +269,8 @@ button {
   font-weight: 600;
   color: var(--text-2);
   letter-spacing: 0.02em;
+  /* 标题永远不拆行：放不下时让右侧的 aside 整体换到下一行，而不是把「7d 窗口」拆成「7d 窗 / 口」 */
+  white-space: nowrap;
 }
 
 .card__aside {
@@ -275,6 +278,7 @@ button {
   font-size: 11px;
   font-variant-numeric: tabular-nums;
   color: var(--text-3);
+  white-space: nowrap;
 }
 
 .aside-row {
@@ -368,30 +372,6 @@ button {
   padding-bottom: 0;
 }
 
-/* 折算费用行：金额在左，外推在右 */
-.ring__cost {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-  margin-top: 6px;
-  font-size: 11px;
-}
-
-.ring__cost-main {
-  display: inline-flex;
-  align-items: baseline;
-  min-width: 0;
-}
-
-/* 耗尽倒计时：并进窗口卡的最后一行，不再单独占一张卡 */
-.ring__eta {
-  margin-top: 4px;
-  padding-top: 6px;
-  border-top: 1px solid var(--border-soft);
-  font-size: 11px;
-}
-
 /* 成本缺价标记：† 走 warn 色，与「成本为 0」在视觉上分开 */
 .cost {
   display: inline-flex;
@@ -407,23 +387,7 @@ button {
   transform: translateY(1px);
 }
 
-/* ── 环形窗口卡 ───────────────────────────────────────────────────────── */
-.ring {
-  position: relative;
-  height: 132px;
-}
-
-.ring__center {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  pointer-events: none;
-  gap: 1px;
-}
-
+/* 卡片底部的合计行（用量分布页的归属卡在用） */
 .ring__foot {
   display: flex;
   justify-content: space-between;
@@ -431,16 +395,6 @@ button {
   margin-top: 8px;
   padding-top: 8px;
   border-top: 1px solid var(--border-soft);
-}
-
-/* ── ETA 卡 ───────────────────────────────────────────────────────────── */
-.eta {
-  height: 132px;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  align-items: flex-start;
-  gap: 2px;
 }
 
 /* ── 指标小卡 ─────────────────────────────────────────────────────────── */
@@ -723,3 +677,302 @@ button {
   cursor: pointer;
 }
 .gate-alt:hover { color: var(--text-2); }
+
+/* ── 额度卡 ─────────────────────────────────────────────────────────────
+   层级从上到下：已用（最大）→ 额度条 → 会不会耗尽 → 钱。
+   以前五行 11px 灰字平铺，最要紧的「几点耗尽」压在最底下。 */
+.quota {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.quota__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.quota__proj {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.qbar {
+  position: relative;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--ring-track);
+}
+
+.qbar__used,
+.qbar__proj {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: 4px;
+  transition: width 300ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.qbar--ok .qbar__used { background: var(--ok-g); }
+.qbar--warn .qbar__used { background: var(--warn-g); }
+.qbar--danger .qbar__used { background: var(--danger-g); }
+.qbar--ok .qbar__proj { background: color-mix(in srgb, var(--ok-g) 32%, transparent); }
+.qbar--warn .qbar__proj { background: color-mix(in srgb, var(--warn-g) 32%, transparent); }
+.qbar--danger .qbar__proj { background: color-mix(in srgb, var(--danger-g) 32%, transparent); }
+
+/* 时间进度：比条高出一截，压在条上也看得见 */
+.qbar__pace {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 2px;
+  margin-left: -1px;
+  border-radius: 1px;
+  background: var(--text-2);
+}
+
+.quota__eta {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.quota__eta--muted { color: var(--text-3); font-size: 11px; }
+.quota__eta--warn { color: var(--warn); font-weight: 600; }
+.quota__eta--danger { color: var(--danger); font-weight: 600; }
+
+.quota__money {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-soft);
+}
+
+.quota__money-col {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.quota__money-col--end {
+  align-items: flex-end;
+  text-align: right;
+}
+
+.quota__k {
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+.quota__v {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.quota__v .mono {
+  font-size: 16px;
+  color: var(--text);
+}
+
+.quota__v--strong {
+  font-weight: 600;
+}
+
+/* ── 区间用量（图二那块面板） ───────────────────────────────────────── */
+.usum {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.usum__hero {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.usum__big {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.usum__unit {
+  font-size: 12px;
+  color: var(--text-3);
+}
+
+.usum__cost .mono {
+  font-size: 26px;
+  font-weight: 500;
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+
+.usum__grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-soft);
+}
+
+.usum__stat {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.usum__k {
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+.usum__v {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+/* 缓存命中小环：conic-gradient 画弧，mask 挖心 */
+.hitring {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  flex: none;
+  background: conic-gradient(var(--ok-g) calc(var(--p) * 1%), var(--ring-track) 0);
+  -webkit-mask: radial-gradient(circle, transparent 3.5px, #000 4px);
+  mask: radial-gradient(circle, transparent 3.5px, #000 4px);
+}
+
+/* ── 按模型 / 按机器 明细表 ─────────────────────────────────────────── */
+.btable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.btable th,
+.btable td {
+  padding: 7px 0 7px 12px;
+  text-align: right;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-2);
+  white-space: nowrap;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.btable tbody tr:last-child th,
+.btable tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.btable thead th {
+  padding-top: 0;
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-3);
+}
+
+.btable .btable__name {
+  padding-left: 0;
+  text-align: left;
+  font-family: var(--font-sans);
+  font-weight: 500;
+  color: var(--text);
+  max-width: 0;
+  width: 34%;
+}
+
+.btable__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.btable__swatch {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  margin-right: 8px;
+  vertical-align: 0;
+}
+
+.btable__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.btable .btable__barcol {
+  width: 30%;
+  text-align: left;
+}
+
+.btable__track {
+  display: inline-block;
+  vertical-align: middle;
+  width: calc(100% - 40px);
+  height: 6px;
+  border-radius: 3px;
+  background: var(--ring-track);
+  overflow: hidden;
+}
+
+.btable__fill {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  transition: width 300ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.btable__pct {
+  display: inline-block;
+  width: 36px;
+  text-align: right;
+  color: var(--text-3);
+  font-size: 11px;
+}
+
+.btable .btable__cost {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.btable__cost .mono {
+  font-size: 12px;
+  color: var(--text);
+}
+
+.btable__empty {
+  height: 120px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* 窄屏：占比条让位，别的列一个不少 */
+@media (max-width: 720px) {
+  .btable .btable__barcol {
+    display: none;
+  }
+}

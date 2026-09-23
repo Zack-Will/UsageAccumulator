@@ -1,13 +1,21 @@
 import { useMemo, useState } from "react";
 import type { Machine, UaApi, WindowsCurrent } from "../api";
-import { bucketLabel, costSeries, costSummary, machineIndex, stackFromBuckets } from "../api/derive";
-import { fmtPct } from "../charts/base";
+import {
+  alignedSeries,
+  bucketLabel,
+  bucketTicks,
+  machineIndex,
+  modelDisplayName,
+  usageTotals,
+  type UsageMetric,
+} from "../api/derive";
 import { burndownOption } from "../charts/burndown";
-import { costTrendOption, machineStackOption, modelDonutOption } from "../charts/distribution";
+import { usageTimelineOption } from "../charts/distribution";
 import { colorMapFor } from "../charts/registry";
 import type { Tokens } from "../charts/tokens";
 import { Chart } from "../components/Chart";
-import { Card, Cost, Mono, Placeholder, Segmented } from "../components/primitives";
+import { Card, Placeholder, Segmented } from "../components/primitives";
+import { BreakdownTable, UsageSummary } from "../components/UsagePanels";
 import { isMeaningfulWindow, labelOf, WindowCard } from "../components/WindowCards";
 import { useAsync } from "../hooks/useAsync";
 
@@ -17,6 +25,8 @@ interface Props {
   profileId: string;
   from: string;
   to: string;
+  /** 顶栏所选区间的文案（5h / 24h / 7d / 30d），给「区间用量」当标题 */
+  rangeLabel: string;
   nonce: number;
   nowMs: number;
   machines: Machine[];
@@ -24,14 +34,22 @@ interface Props {
   windowsError: Error | null;
 }
 
-const stripClaude = (key: string): string => key.replace(/^claude-/, "");
-
+/**
+ * 总览的阅读顺序就是重要性顺序：
+ *   1. 额度 —— 会不会撞墙、什么时候重置（三张额度卡）
+ *   2. 区间内用了多少、值多少钱、花在哪个模型上（图二那块面板的内容）
+ *   3. 什么时候用的、在哪台机器上用的
+ *   4. 当前窗口的轨迹细节（燃尽曲线）
+ * 以前 2 几乎不存在，3 拆成两张大半空白的整行图，4 固定 0–110% 纵轴，
+ * 用了 5% 的时候整张图只有一条贴地的线。
+ */
 export function Overview({
   api,
   t,
   profileId,
   from,
   to,
+  rangeLabel,
   nonce,
   nowMs,
   machines,
@@ -45,14 +63,14 @@ export function Overview({
   const bucket: "hour" | "day" =
     Date.parse(to) - Date.parse(from) > 48 * 3600_000 ? "day" : "hour";
 
-  // 二维分桶：by=machine + bucket 直接给出堆叠柱需要的 series[]
+  // 二维分桶：by=machine + bucket 同时喂时间线（series）和机器表（桶合计）
   const machineDist = useAsync(
     (s) => api.distribution({ profile_id: profileId, from, to, by: "machine", bucket }, s),
     [api, profileId, from, to, nonce],
   );
+  // 模型表与区间合计只要桶合计，不要时间序列
   const models = useAsync(
-    // 带 bucket：同一份取数既喂模型占比环，也喂费用趋势
-    (s) => api.distribution({ profile_id: profileId, from, to, by: "model", bucket }, s),
+    (s) => api.distribution({ profile_id: profileId, from, to, by: "model" }, s),
     [api, profileId, from, to, nonce],
   );
 
@@ -66,53 +84,35 @@ export function Overview({
   // 燃尽曲线可切窗口：projected_curve 对 7d 是日历模式（周末塌下去），
   // 只画 5h 的话这条曲线最要紧的那一半永远看不到。
   const [burnKind, setBurnKind] = useState("five_hour");
-  const burnWindow =
-    shown?.find((w) => w.window_kind === burnKind) ?? five;
-
+  const burnWindow = shown?.find((w) => w.window_kind === burnKind) ?? five;
   const burnOption = useMemo(
     () =>
       burnWindow
-        ? burndownOption(
-            t,
-            burnWindow,
-            nowMs,
-            burnWindow.window_kind === "five_hour" ? "five_hour" : "long",
-          )
+        ? burndownOption(t, burnWindow, nowMs, burnWindow.window_kind === "five_hour" ? "five_hour" : "long")
         : null,
     [t, burnWindow, nowMs],
   );
 
-  const machineOption = useMemo(() => {
+  // 时间线默认看钱：这个项目最初要回答的就是「按 API 算值多少」
+  const [metric, setMetric] = useState<UsageMetric>("cost");
+  const idx = useMemo(() => machineIndex(machines), [machines]);
+  const machineLabel = useMemo(() => (b: Parameters<typeof bucketLabel>[0]) => bucketLabel(b, idx.label), [idx]);
+  const machineColors = useMemo(
+    () => colorMapFor("machine", (machineDist.data?.buckets ?? []).map((b) => b.key), t),
+    [machineDist.data, t],
+  );
+  const timelineOption = useMemo(() => {
     if (!machineDist.data) return null;
-    // 取色按 bucket.key（= machine_id，与甘特图同源）；label 只用于显示，
-    // bucket.label 缺省时拿 /v1/machines 的名册补一个比 UUID 好看的名字。
-    const idx = machineIndex(machines);
-    const series = stackFromBuckets(machineDist.data.buckets, (b) => bucketLabel(b, idx.label));
-    const colors = colorMapFor("machine", series.map((s) => s.key), t);
-    return machineStackOption(t, series, colors, bucket);
-  }, [t, machineDist.data, machines, bucket]);
+    const ticks = bucketTicks(Date.parse(from), Date.parse(to), bucket);
+    const series = alignedSeries(machineDist.data.buckets, ticks, metric, machineLabel);
+    return usageTimelineOption(t, ticks, series, machineColors, bucket, metric);
+  }, [t, machineDist.data, from, to, bucket, metric, machineLabel, machineColors]);
 
-  const costOption = useMemo(() => {
-    if (!models.data) return null;
-    const pts = costSeries(models.data.buckets);
-    return pts.length > 0 ? costTrendOption(t, pts, bucket) : null;
-  }, [t, models.data, bucket]);
-
-  const modelOption = useMemo(() => {
-    if (!models.data) return null;
-    const colors = colorMapFor("model", models.data.buckets.map((b) => b.key), t);
-    return modelDonutOption(t, models.data.buckets, colors, (b) => bucketLabel(b, stripClaude));
-  }, [t, models.data]);
-
-  const modelStats = useMemo(() => {
-    if (!models.data) return null;
-    const total = models.data.buckets.reduce((a, b) => a + b.total_tokens, 0);
-    const cacheRead = models.data.buckets.reduce((a, b) => a + b.cache_read_tokens, 0);
-    return {
-      cachePct: total > 0 ? (cacheRead / total) * 100 : 0,
-      cost: costSummary(models.data.buckets),
-    };
-  }, [models.data]);
+  const modelColors = useMemo(
+    () => colorMapFor("model", (models.data?.buckets ?? []).map((b) => b.key), t),
+    [models.data, t],
+  );
+  const totals = useMemo(() => (models.data ? usageTotals(models.data.buckets) : null), [models.data]);
 
   return (
     <div className="grid">
@@ -120,7 +120,6 @@ export function Overview({
         ? shown.map((w) => (
             <WindowCard
               key={w.window_kind}
-              t={t}
               w={w}
               nowMs={nowMs}
               api={api}
@@ -130,10 +129,65 @@ export function Overview({
             />
           ))
         : [0, 1, 2].map((i) => (
-            <Card key={i} span={4}>
-              <Placeholder state={windowsError ? "error" : "loading"} height={196} />
+            <Card key={i} span={4} mdSpan={2}>
+              <Placeholder state={windowsError ? "error" : "loading"} height={150} />
             </Card>
           ))}
+
+      {/* 第二行：这段时间用了多少（左）、什么时候用的（右）—— 两张都跟着顶栏的区间走 */}
+      <UsageSummary
+        title={`${rangeLabel} 用量`}
+        totals={totals}
+        state={models.error ? "error" : "loading"}
+        span={4}
+        mdSpan={2}
+      />
+      <Card
+        title="用量时间线"
+        span={8}
+        mdSpan={4}
+        aside={
+          <Segmented
+            label="时间线口径"
+            value={metric}
+            options={[
+              { value: "cost", label: "折算 $" },
+              { value: "tokens", label: "tokens" },
+            ]}
+            onChange={setMetric}
+          />
+        }
+      >
+        {timelineOption ? (
+          <Chart
+            option={timelineOption}
+            height={176}
+            ariaLabel={metric === "cost" ? "各机器按时间的折算费用堆叠柱" : "各机器按时间的 token 堆叠柱"}
+          />
+        ) : (
+          <Placeholder state={machineDist.error ? "error" : "loading"} height={176} />
+        )}
+      </Card>
+
+      {/* 第三行：花在哪 —— 两张明细表同一个形状，并排放行数也差不多，不会一张满一张空 */}
+      <BreakdownTable
+        title="按模型"
+        buckets={models.data?.buckets ?? null}
+        colors={modelColors}
+        labelOf={(b) => b.label ?? modelDisplayName(b.key)}
+        state={models.error ? "error" : "loading"}
+        span={6}
+        mdSpan={3}
+      />
+      <BreakdownTable
+        title="按机器"
+        buckets={machineDist.data?.buckets ?? null}
+        colors={machineColors}
+        labelOf={machineLabel}
+        state={machineDist.error ? "error" : "loading"}
+        span={6}
+        mdSpan={3}
+      />
 
       <Card
         title="燃尽曲线"
@@ -143,10 +197,7 @@ export function Overview({
             <Segmented
               label="燃尽曲线窗口"
               value={burnWindow?.window_kind ?? "five_hour"}
-              options={(shown ?? []).map((w) => ({
-                value: w.window_kind,
-                label: labelOf(w.window_kind),
-              }))}
+              options={(shown ?? []).map((w) => ({ value: w.window_kind, label: labelOf(w.window_kind) }))}
               onChange={setBurnKind}
             />
           ) : undefined
@@ -155,57 +206,11 @@ export function Overview({
         {burnOption ? (
           <Chart
             option={burnOption}
-            height={240}
-            ariaLabel="燃尽曲线：已用百分比、P25–P75 预测区间、限额线与窗口边界"
+            height={200}
+            ariaLabel="燃尽曲线：已用百分比、P25–P75 预测区间与窗口边界"
           />
         ) : (
-          <Placeholder state={windowsError ? "error" : "loading"} height={240} />
-        )}
-      </Card>
-
-      <Card
-        title="折算 API 费用"
-        span={12}
-        aside={
-          modelStats ? (
-            <span className="aside-row">
-              <Mono tone="muted">按公开价目表折算，非实际扣费</Mono>
-              <Cost usd={modelStats.cost.usd} unpriced={modelStats.cost.unpricedEvents} />
-            </span>
-          ) : undefined
-        }
-      >
-        {costOption ? (
-          <Chart option={costOption} height={180} ariaLabel="折算 API 费用随时间的变化" />
-        ) : (
-          <Placeholder state={models.error ? "error" : "loading"} height={180} />
-        )}
-      </Card>
-
-      <Card title="机器分布" span={7}>
-        {machineOption ? (
-          <Chart option={machineOption} height={220} ariaLabel="各机器按小时的 token 消耗堆叠柱状图" />
-        ) : (
-          <Placeholder state={machineDist.error ? "error" : "loading"} height={220} />
-        )}
-      </Card>
-
-      <Card
-        title="模型占比"
-        span={5}
-        aside={
-          modelStats ? (
-            <span className="aside-row">
-              <Mono tone="muted">缓存命中 {fmtPct(modelStats.cachePct)}</Mono>
-              <Cost usd={modelStats.cost.usd} unpriced={modelStats.cost.unpricedEvents} />
-            </span>
-          ) : undefined
-        }
-      >
-        {modelOption ? (
-          <Chart option={modelOption} height={220} ariaLabel="各模型 token 占比环形图" />
-        ) : (
-          <Placeholder state={models.error ? "error" : "loading"} height={220} />
+          <Placeholder state={windowsError ? "error" : "loading"} height={200} />
         )}
       </Card>
     </div>

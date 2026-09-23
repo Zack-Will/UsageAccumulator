@@ -1,0 +1,159 @@
+import { describe, expect, it } from "vitest";
+import {
+  alignedSeries,
+  bucketTicks,
+  byCostThenTokens,
+  cacheHitPct,
+  modelDisplayName,
+  usageTotals,
+} from "../src/api/derive";
+import type { DistributionBucket } from "../src/api/types";
+import { fmtUntil, fmtWhen, niceMaxPct } from "../src/charts/base";
+
+const H = 3_600_000;
+const T0 = Date.UTC(2026, 8, 23, 0, 0, 0);
+
+function bucket(over: Partial<DistributionBucket> = {}): DistributionBucket {
+  return {
+    key: "k",
+    events: 1,
+    input_tokens: 0,
+    output_tokens: 0,
+    cache_read_tokens: 0,
+    cache_write_5m_tokens: 0,
+    cache_write_1h_tokens: 0,
+    total_tokens: 0,
+    cost_usd: 0,
+    unpriced_events: 0,
+    ...over,
+  };
+}
+
+describe("bucketTicks / 时间轴补零", () => {
+  it("★ 空着的小时也要有刻度 —— 以前被挤掉，夜里十几个小时看着和两小时一样宽", () => {
+    const ticks = bucketTicks(T0 + 17 * H, T0 + 23 * H, "hour");
+    expect(ticks.map((t) => (t - T0) / H)).toEqual([17, 18, 19, 20, 21, 22]);
+  });
+
+  it("起点按桶取整，与服务端 truncToBucket 对齐", () => {
+    const ticks = bucketTicks(T0 + 17 * H + 25 * 60_000, T0 + 19 * H, "hour");
+    expect(ticks[0]).toBe(T0 + 17 * H);
+  });
+
+  it("天桶按 UTC 零点取整（跟随服务端）", () => {
+    const ticks = bucketTicks(T0 + 5 * H, T0 + 3 * 24 * H, "day");
+    expect(ticks).toEqual([T0, T0 + 24 * H, T0 + 48 * H]);
+  });
+
+  it("参数反了返回空，而不是死循环", () => {
+    expect(bucketTicks(T0 + H, T0, "hour")).toEqual([]);
+    expect(bucketTicks(Number.NaN, T0, "hour")).toEqual([]);
+  });
+});
+
+describe("alignedSeries", () => {
+  const ticks = [T0, T0 + H, T0 + 2 * H];
+  const b = bucket({
+    key: "mac",
+    series: [
+      { ts: new Date(T0).toISOString(), total_tokens: 100, events: 2, cost_usd: 1.5, unpriced_events: 0 },
+      { ts: new Date(T0 + 2 * H).toISOString(), total_tokens: 50, events: 1, cost_usd: null, unpriced_events: 1 },
+    ],
+  });
+
+  it("按刻度对齐，空桶补 0", () => {
+    const [s] = alignedSeries([b], ticks, "tokens", (x) => x.key);
+    expect(s!.values).toEqual([100, 0, 50]);
+  });
+
+  it("★ cost 口径：空桶是 $0（确实没花），缺价是 null（花了但不知道多少）—— 两者不能混", () => {
+    const [s] = alignedSeries([b], ticks, "cost", (x) => x.key);
+    expect(s!.values).toEqual([1.5, 0, null]);
+  });
+});
+
+describe("usageTotals / cacheHitPct", () => {
+  it("★ 命中率的分母是输入侧，不含输出 —— 输出从不走缓存", () => {
+    // 输入 10 + 缓存读 880 + 缓存写 110 = 1000；输出 5000 不该进分母
+    expect(cacheHitPct(10, 880, 110)).toBeCloseTo(88, 6);
+  });
+
+  it("没有任何输入侧 token 时是 null（未知），不是 0%", () => {
+    expect(cacheHitPct(0, 0, 0)).toBeNull();
+  });
+
+  it("跨桶汇总，缓存写把 5m 与 1h 合起来算", () => {
+    const t = usageTotals([
+      bucket({ input_tokens: 10, output_tokens: 5, cache_read_tokens: 800, cache_write_5m_tokens: 40, cache_write_1h_tokens: 60, total_tokens: 915, events: 3, cost_usd: 2 }),
+      bucket({ input_tokens: 0, output_tokens: 1, cache_read_tokens: 80, cache_write_5m_tokens: 0, cache_write_1h_tokens: 10, total_tokens: 91, events: 1, cost_usd: null, unpriced_events: 1 }),
+    ]);
+    expect(t.totalTokens).toBe(1006);
+    expect(t.cacheWrite).toBe(110);
+    expect(t.events).toBe(4);
+    expect(t.cost.usd).toBe(2);
+    expect(t.cost.unpricedEvents).toBe(1);
+    expect(t.cacheHitPct).toBeCloseTo((880 / 1000) * 100, 6);
+  });
+});
+
+describe("byCostThenTokens", () => {
+  it("有报价的按金额降序，缺价的沉底", () => {
+    const rows = [
+      bucket({ key: "a", cost_usd: 1, total_tokens: 9 }),
+      bucket({ key: "b", cost_usd: null, total_tokens: 99 }),
+      bucket({ key: "c", cost_usd: 5, total_tokens: 1 }),
+    ].sort(byCostThenTokens);
+    expect(rows.map((r) => r.key)).toEqual(["c", "a", "b"]);
+  });
+});
+
+describe("modelDisplayName", () => {
+  it.each([
+    ["claude-opus-5-5", "Opus 5.5"],
+    ["claude-opus-5", "Opus 5"],
+    ["claude-fable-5-1", "Fable 5.1"],
+    ["claude-sonnet-4-5-20250929", "Sonnet 4.5"],
+    ["claude-haiku-4-5-20251001", "Haiku 4.5"],
+    ["claude-3-7-sonnet-20250219", "Sonnet 3.7"],
+    ["claude-opus-5[1m]", "Opus 5"],
+    ["claude-opus-4-5@20251101", "Opus 4.5"],
+  ])("%s → %s", (raw, shown) => {
+    expect(modelDisplayName(raw)).toBe(shown);
+  });
+
+  it("认不出的原样返回，不瞎猜", () => {
+    expect(modelDisplayName("claude-mythos-preview")).toBe("claude-mythos-preview");
+    expect(modelDisplayName("some-gateway-model")).toBe("some-gateway-model");
+  });
+});
+
+describe("fmtUntil / fmtWhen", () => {
+  it("相对时长", () => {
+    expect(fmtUntil(55 * 60_000)).toBe("55 分钟后");
+    expect(fmtUntil(105 * 60_000)).toBe("1 小时 45 分后");
+    expect(fmtUntil(2 * H)).toBe("2 小时后");
+    expect(fmtUntil((5 * 24 + 16) * H)).toBe("5 天 16 小时后");
+    expect(fmtUntil(30_000)).toBe("即将");
+  });
+
+  it("★ 超过一天的时刻必须带日期 —— 只写 07:00 会被读成明早", () => {
+    const now = new Date(2026, 8, 23, 15, 17).getTime(); // 本地 09-23 周三 15:17
+    expect(fmtWhen(new Date(2026, 8, 23, 16, 10).getTime(), now)).toBe("16:10");
+    expect(fmtWhen(new Date(2026, 8, 24, 7, 0).getTime(), now)).toBe("明天 07:00");
+    expect(fmtWhen(new Date(2026, 8, 29, 7, 0).getTime(), now)).toBe("09-29 周二 07:00");
+  });
+});
+
+describe("niceMaxPct / 燃尽图纵轴", () => {
+  it("贴着数据取整齐刻度，留 15% 余量", () => {
+    expect(niceMaxPct(5)).toBe(10);
+    expect(niceMaxPct(8.6)).toBe(10); // 8.6 × 1.15 = 9.89
+    expect(niceMaxPct(9)).toBe(25);
+    expect(niceMaxPct(55)).toBe(75);
+  });
+
+  it("逼近上限就回到 110%，让 100% 线重新可见", () => {
+    expect(niceMaxPct(88)).toBe(110);
+    expect(niceMaxPct(100)).toBe(110);
+  });
+});

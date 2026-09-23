@@ -1,5 +1,5 @@
 import type { EChartsOption } from "./echarts";
-import { axisCommon, baseOption, fmtClock, fmtDay, NUM_FONT } from "./base";
+import { axisCommon, baseOption, fmtClock, fmtDay, niceMaxPct, NUM_FONT } from "./base";
 import { bandSeries } from "./band";
 import { alpha, status, type Tokens } from "./tokens";
 import type { WindowState } from "../api/types";
@@ -52,6 +52,16 @@ export function burndownOption(
   const hi: Pair[] = curve.map((p) => [Date.parse(p.ts), p.p75]);
   const mid: Pair[] = curve.map((p) => [Date.parse(p.ts), p.mid]);
 
+  // 纵轴贴着数据走（见 niceMaxPct）：已用与预测上沿里取最高的那个
+  const peak = Math.max(
+    w.utilization_pct,
+    ...w.burn_curve.map((p) => p.pct),
+    ...curve.map((p) => p.p75),
+  );
+  const yMax = niceMaxPct(peak);
+  // 100% 线只在视野内时才画 —— 画在轴外会把纵轴硬撑回 110%，缩放就白做了
+  const limitInView = yMax >= 100;
+
   const series: NonNullable<EChartsOption["series"]> = [];
 
   if (curve.length > 1) {
@@ -96,7 +106,9 @@ export function burndownOption(
         formatter: (p: { name?: string }) => p.name ?? "",
       },
       data: [
-        { yAxis: 100, lineStyle: { color: s.danger, type: "dashed", width: 1 }, label: { show: false } },
+        ...(limitInView
+          ? [{ yAxis: 100, lineStyle: { color: s.danger, type: "dashed" as const, width: 1 }, label: { show: false } }]
+          : []),
         {
           name: "边界",
           xAxis: endMs,
@@ -138,8 +150,9 @@ export function burndownOption(
     yAxis: {
       type: "value",
       min: 0,
-      max: 110,
-      interval: 25,
+      max: yMax,
+      // 刻度取整数百分比：25% 上限按 4 等分是 6.25 / 12.5 / 18.75，读起来像噪声
+      interval: ({ 10: 2, 25: 5, 50: 10, 75: 25 } as Record<number, number>)[yMax] ?? 25,
       ...axisCommon(t),
       axisLine: { show: false },
       axisLabel: {

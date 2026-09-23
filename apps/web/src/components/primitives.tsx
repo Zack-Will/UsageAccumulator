@@ -7,18 +7,27 @@ export function Card({
   aside,
   tone = "plain",
   span,
+  mdSpan,
   children,
 }: {
   title?: string;
   aside?: ReactNode;
   tone?: "plain" | "warn" | "danger";
   span?: number;
+  /**
+   * 中等宽度（≤1080px，6 栅格）下占几列；缺省占满一行。
+   * 以前这个断点下所有卡一律整行 —— 三张额度卡被拆成三行，一屏只剩额度。
+   */
+  mdSpan?: number;
   children: ReactNode;
 }) {
+  const style: Record<string, string> = {};
+  if (span) style["gridColumn"] = `span ${span}`;
+  if (mdSpan) style["--md-span"] = String(mdSpan);
   return (
     <section
       className={`card card--${tone}`}
-      style={span ? { gridColumn: `span ${span}` } : undefined}
+      style={Object.keys(style).length ? (style as React.CSSProperties) : undefined}
       aria-label={title}
     >
       {(title || aside) && (

@@ -1,12 +1,11 @@
 import { useMemo } from "react";
 import type { UaApi, WindowState } from "../api";
 import { costSummary } from "../api/derive";
-import { fmtClock, fmtDuration, fmtTokens } from "../charts/base";
-import { ringOption, ringTone } from "../charts/rings";
+import { fmtTokens, fmtUntil, fmtWhen } from "../charts/base";
+import { ringTone } from "../charts/rings";
 import type { Tokens } from "../charts/tokens";
 import { useAsync } from "../hooks/useAsync";
-import { Chart } from "./Chart";
-import { Card, Cost, Mono, Num } from "./primitives";
+import { Card, Cost, Dot, Mono, Num } from "./primitives";
 
 /**
  * CONTRACT §1.3 说 window_kind 是自由字符串；§2.2 的菜单栏摘要用 "5h" / "7d" / "7d Fable"
@@ -55,8 +54,43 @@ function modelInFamily(model: string, family: string): boolean {
   return m === family || m.startsWith(`${family}-`) || m.startsWith(`${family}.`);
 }
 
+/**
+ * 额度条：已用实心、预计半透明、时间进度一根竖线。
+ *
+ * 与菜单栏同一套语言（那边是照 Usage Tracker 一比一复刻的）：竖线左边是「按时间
+ * 均匀用完的话，现在该到哪」，实心条越过竖线就是用得比时间快。
+ * 以前这里是一个 132px 高的圆环，只装得下一个数字；换成条之后同样的信息只要 8px，
+ * 而且多出了「时间走到哪了」这一维。
+ */
+function QuotaBar({
+  used,
+  projected,
+  pace,
+  tone,
+}: {
+  used: number;
+  projected: number;
+  /** 0..1，窗口时间已过去的比例；null = 不知道窗口起点 */
+  pace: number | null;
+  tone: "ok" | "warn" | "danger";
+}) {
+  const clamp = (v: number) => Math.max(0, Math.min(100, v));
+  return (
+    <div
+      className={`qbar qbar--${tone}`}
+      role="img"
+      aria-label={`已用 ${used.toFixed(0)}%，重置时预计 ${projected.toFixed(0)}%${
+        pace !== null ? `，窗口时间已过 ${(pace * 100).toFixed(0)}%` : ""
+      }`}
+    >
+      <span className="qbar__proj" style={{ width: `${clamp(projected)}%` }} />
+      <span className="qbar__used" style={{ width: `${clamp(used)}%` }} />
+      {pace !== null && <span className="qbar__pace" style={{ left: `${clamp(pace * 100)}%` }} />}
+    </div>
+  );
+}
+
 export function WindowCard({
-  t,
   w,
   nowMs,
   api,
@@ -64,7 +98,6 @@ export function WindowCard({
   to,
   nonce,
 }: {
-  t: Tokens;
   w: WindowState;
   nowMs: number;
   api: UaApi;
@@ -76,12 +109,17 @@ export function WindowCard({
   const tone = ringTone(w.utilization_pct, w.projected_pct.mid);
   // 预计值单独取色：它才是「会不会超」的答案，已用量只是现状
   const projTone = w.projected_pct.mid >= 100 ? "danger" : w.projected_pct.mid >= 90 ? "warn" : undefined;
+  // 带宽不足 1 个百分点就不写 ±：「±0」不是「很确定」，是区间塌成了一个点，写出来是假精度
+  const band = Math.round((w.projected_pct.p75 - w.projected_pct.p25) / 2);
+
   const etaMs = w.exhaust_eta ? Date.parse(w.exhaust_eta) : NaN;
   const remain = Number.isFinite(etaMs) ? etaMs - nowMs : null;
-  const option = useMemo(
-    () => ringOption(t, { used: w.utilization_pct, projected: w.projected_pct.mid, tone }),
-    [t, w.utilization_pct, w.projected_pct.mid, tone],
-  );
+  const resetMs = Date.parse(w.resets_at);
+  const startMs = Date.parse(w.starts_at);
+  const pace =
+    Number.isFinite(resetMs) && Number.isFinite(startMs) && resetMs > startMs
+      ? Math.max(0, Math.min(1, (nowMs - startMs) / (resetMs - startMs)))
+      : null;
   const label = labelOf(w.window_kind);
 
   /**
@@ -135,59 +173,74 @@ export function WindowCard({
   /** 只在真的测到别处的消耗时才占一行字；测到 0 就什么都不说 */
   const otherPct = attr?.other_pct_lower_bound ?? 0;
 
-  return (
-    <Card title={label} span={4} tone={tone === "ok" ? "plain" : tone}>
-      <div className="ring">
-        <Chart
-          option={option}
-          height={132}
-          ariaLabel={`${label} 已用 ${w.utilization_pct.toFixed(0)}%，预计 ${w.projected_pct.mid.toFixed(0)}%`}
-        />
-        <div className="ring__center">
-          <Num value={w.utilization_pct} digits={0} suffix="%" size="xl" tone={tone} />
-        </div>
-      </div>
-      <div className="ring__foot">
-        <span>
-          <Mono tone="muted">重置时预计 </Mono>
-          <Num value={w.projected_pct.mid} digits={0} suffix="%" size="sm" tone={projTone} />
-          <Mono tone="muted">
-            {" "}
-            ±{Math.round((w.projected_pct.p75 - w.projected_pct.p25) / 2)}
-          </Mono>
-        </span>
-        <Mono tone="muted">{fmtClock(Date.parse(w.resets_at))} 重置</Mono>
-      </div>
-      {/* 折算费用：官方只给百分比，金额是按价目表折的等价成本，不是实际扣费 */}
-      <div className="ring__cost">
-        <span className="ring__cost-main">
-          <Mono tone="muted">已用 </Mono>
-          {/* 过滤后一个桶都不剩 = 这个家族本窗口确实没用过，是 $0 而不是「未知」 */}
-          {buckets === null ? (
-            <Mono tone="muted">—</Mono>
-          ) : (
-            <Cost usd={buckets.length === 0 ? 0 : cost!.usd} unpriced={cost?.unpricedEvents ?? 0} />
-          )}
-          <Mono tone="muted">
-            {" "}
-            · {events.toLocaleString("en-US")} 次请求 · {fmtTokens(tokens)} tokens
-          </Mono>
-        </span>
-        <Mono tone="muted">
-          满额约 {fullWindowCost !== null ? `$${fullWindowCost.toFixed(0)}` : "—"}
-          {otherPct > 0 && ` · ${otherPct.toFixed(0)}% 非 Code`}
-        </Mono>
-      </div>
+  const etaTone = remain === null ? "muted" : remain < 45 * 60_000 ? "danger" : "warn";
 
-      {/* 耗尽倒计时并进本卡，不再单独占一张 —— 它本来就是某个窗口的属性 */}
-      <div className="ring__eta">
-        {remain !== null ? (
-          <Mono tone={remain < 45 * 60_000 ? "danger" : "warn"}>
-            {fmtDuration(remain)} 后耗尽 · {fmtClock(etaMs)}
-          </Mono>
-        ) : (
-          <Mono tone="muted">本窗口不会耗尽 · {w.rate_pct_per_min.toFixed(2)} %/min</Mono>
-        )}
+  return (
+    <Card
+      title={label}
+      span={4}
+      mdSpan={2}
+      tone={tone === "ok" ? "plain" : tone}
+      aside={
+        <Mono tone="muted">
+          {fmtWhen(resetMs, nowMs)} 重置 · {fmtUntil(resetMs - nowMs)}
+        </Mono>
+      }
+    >
+      <div className="quota">
+        <div className="quota__head">
+          <Num value={w.utilization_pct} digits={0} suffix="%" size="xl" tone={tone === "ok" ? undefined : tone} />
+          <span className="quota__proj">
+            <Mono tone="muted">重置时预计</Mono>
+            <Num value={w.projected_pct.mid} digits={0} suffix="%" size="md" tone={projTone} />
+            {band >= 1 && <Mono tone="muted">±{band}</Mono>}
+          </span>
+        </div>
+
+        <QuotaBar used={w.utilization_pct} projected={w.projected_pct.mid} pace={pace} tone={tone} />
+
+        {/* 会耗尽就是这张卡最响的一句话；不会耗尽就安静地说一声 */}
+        <div className={`quota__eta quota__eta--${etaTone}`} title={`${w.rate_pct_per_min.toFixed(2)} %/min`}>
+          {remain !== null ? (
+            <>
+              <Dot tone={etaTone} />
+              <span>
+                {fmtWhen(etaMs, nowMs)} 耗尽 · {fmtUntil(remain)}
+              </span>
+            </>
+          ) : (
+            <span>按当前速率不会耗尽</span>
+          )}
+        </div>
+
+        {/* 折算费用：官方只给百分比，金额是按价目表折的等价成本，不是实际扣费 */}
+        <div className="quota__money">
+          <div className="quota__money-col">
+            <span className="quota__k">已用</span>
+            {/* 过滤后一个桶都不剩 = 这个家族本窗口确实没用过，是 $0 而不是「未知」 */}
+            {buckets === null ? (
+              <Mono tone="muted">—</Mono>
+            ) : (
+              <span className="quota__v">
+                <Cost usd={buckets.length === 0 ? 0 : cost!.usd} unpriced={cost?.unpricedEvents ?? 0} />
+              </span>
+            )}
+            <Mono tone="muted">
+              {events.toLocaleString("en-US")} 次 · {fmtTokens(tokens)}
+            </Mono>
+          </div>
+          <div className="quota__money-col quota__money-col--end">
+            <span className="quota__k">满额约</span>
+            <span className="quota__v quota__v--strong">
+              {fullWindowCost !== null ? `$${fullWindowCost.toFixed(0)}` : "—"}
+            </span>
+            {otherPct > 0 ? (
+              <Mono tone="muted">{otherPct.toFixed(0)}% 非 Code</Mono>
+            ) : (
+              <Mono tone="muted">&nbsp;</Mono>
+            )}
+          </div>
+        </div>
       </div>
     </Card>
   );

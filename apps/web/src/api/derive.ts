@@ -132,66 +132,6 @@ export function ganttOverlaps(lanes: TimelineLane[], minMs = 5 * MIN): GanttOver
   return out;
 }
 
-// ── 二维分桶 → 堆叠柱 ───────────────────────────────────────────────────────
-export interface StackSeries {
-  key: string;
-  label: string;
-  points: Array<{ ts: number; tokens: number }>;
-}
-
-/**
- * `bucket=hour|day` 时每个 bucket 自带 series[]，直接铺成堆叠柱。
- * 各桶的时间刻度取并集，缺失刻度补 0，保证 stack 对齐。
- * series.key 原样保留 bucket.key（取色用），label 只用于显示。
- */
-export function stackFromBuckets(
-  buckets: DistributionBucket[],
-  labelOf: (b: DistributionBucket) => string,
-): StackSeries[] {
-  const ticks = [
-    ...new Set(buckets.flatMap((b) => (b.series ?? []).map((p) => Date.parse(p.ts)))),
-  ].sort((a, b) => a - b);
-
-  return buckets.map((b) => {
-    const at = new Map((b.series ?? []).map((p) => [Date.parse(p.ts), p.total_tokens]));
-    return {
-      key: b.key,
-      label: labelOf(b),
-      points: ticks.map((ts) => ({ ts, tokens: at.get(ts) ?? 0 })),
-    };
-  });
-}
-
-/** 费用时间序列上的一点。cost 为 null = 该点没有任何有报价的模型（不是 0 美元）。 */
-export interface CostPoint {
-  ts: number;
-  cost: number | null;
-  unpricedEvents: number;
-}
-
-/**
- * 各桶的 series 按时间点汇总成一条费用曲线。
- *
- * ★ 缺价必须传播成 null 而不是塌成 0：定价表是刻意留空的，
- * 把缺价渲染成 $0 会让"这段时间几乎没花钱"变成一个假结论。
- */
-export function costSeries(buckets: DistributionBucket[]): CostPoint[] {
-  const at = new Map<number, { cost: number | null; unpriced: number }>();
-  for (const b of buckets) {
-    for (const p of b.series ?? []) {
-      const ts = Date.parse(p.ts);
-      if (!Number.isFinite(ts)) continue;
-      const cur = at.get(ts) ?? { cost: null, unpriced: 0 };
-      if (p.cost_usd !== null) cur.cost = (cur.cost ?? 0) + p.cost_usd;
-      cur.unpriced += p.unpriced_events;
-      at.set(ts, cur);
-    }
-  }
-  return [...at.entries()]
-    .sort((a, b) => a[0] - b[0])
-    .map(([ts, v]) => ({ ts, cost: v.cost, unpricedEvents: v.unpriced }));
-}
-
 // ── by=hour 桶 → 热力图 / 缓存趋势 ─────────────────────────────────────────
 /** by=hour 的 bucket.key 是小时起点的 RFC3339 时刻（UTC）。 */
 function parseHourKey(key: string): number | null {
@@ -277,4 +217,164 @@ export function projectLabel(slug: string): string {
   if (/^[0-9a-f]{16,}$/i.test(slug)) return slug.slice(0, 10);
   const tail = slug.split("-").filter(Boolean).slice(-1)[0];
   return tail ?? slug;
+}
+
+// ── 时间刻度补零 ────────────────────────────────────────────────────────────
+/**
+ * 区间内**每一个**桶的起点（毫秒），与服务端 truncToBucket 同一口径（UTC 取整）。
+ *
+ * ★ 服务端只回有数据的桶。以前直接拿「有数据的桶」当类目轴，
+ * 空着的小时就被整段挤掉了：17:00、19:00、21:00、22:00、11:00 等距排开，
+ * 夜里十几个小时的空白看起来和相邻两小时一样宽 —— 轴在说谎。
+ * 补齐之后，空档就是空档。
+ *
+ * 天桶按 UTC 零点取整（服务端如此），本地显示时是早上 8 点起算的一天；
+ * 这里跟随服务端，保证补出来的刻度能和数据对上。
+ */
+export function bucketTicks(fromMs: number, toMs: number, bucket: "hour" | "day"): number[] {
+  if (!Number.isFinite(fromMs) || !Number.isFinite(toMs) || toMs <= fromMs) return [];
+  const step = bucket === "hour" ? 3_600_000 : 86_400_000;
+  const start = Math.floor(fromMs / step) * step;
+  const out: number[] = [];
+  // 上限防呆：30d 按天是 31 个，24h 按小时是 25 个；超过 2000 说明参数错了
+  for (let ts = start; ts < toMs && out.length < 2000; ts += step) out.push(ts);
+  return out;
+}
+
+export type UsageMetric = "cost" | "tokens";
+
+export interface MetricSeries {
+  key: string;
+  label: string;
+  /** 与 ticks 一一对应。cost 口径下 null = 该桶有事件但全部缺价（不是 $0） */
+  values: Array<number | null>;
+}
+
+/**
+ * by=machine（或任意维度）+ bucket 的分桶 → 按给定刻度对齐的堆叠序列。
+ *
+ * 空桶的值：tokens 口径是 0；cost 口径也是 0 —— 那一小时**没有任何事件**，
+ * 确实一分钱没花。这和「有事件但缺价」（null）是两回事，不能混。
+ */
+export function alignedSeries(
+  buckets: DistributionBucket[],
+  ticks: number[],
+  metric: UsageMetric,
+  labelOf: (b: DistributionBucket) => string,
+): MetricSeries[] {
+  return buckets.map((b) => {
+    const at = new Map((b.series ?? []).map((p) => [Date.parse(p.ts), p]));
+    return {
+      key: b.key,
+      label: labelOf(b),
+      values: ticks.map((ts) => {
+        const p = at.get(ts);
+        if (!p) return 0;
+        return metric === "tokens" ? p.total_tokens : p.cost_usd;
+      }),
+    };
+  });
+}
+
+// ── 区间合计 ────────────────────────────────────────────────────────────────
+export interface UsageTotals {
+  totalTokens: number;
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  events: number;
+  cost: CostSummary;
+  /** 缓存命中率 0..100；没有任何输入侧 token 时为 null（不是 0%） */
+  cacheHitPct: number | null;
+}
+
+/**
+ * 缓存命中率 = 缓存读 ÷ **输入侧**总量（输入 + 缓存读 + 缓存写）。
+ *
+ * 以前除的是 total_tokens，把输出也算进了分母。输出从来不走缓存，
+ * 放进分母只会让命中率随「这一轮写了多少字」上下飘，和缓存本身无关。
+ */
+export function cacheHitPct(input: number, cacheRead: number, cacheWrite: number): number | null {
+  const denom = input + cacheRead + cacheWrite;
+  return denom > 0 ? (cacheRead / denom) * 100 : null;
+}
+
+export function usageTotals(buckets: DistributionBucket[]): UsageTotals {
+  let totalTokens = 0;
+  let input = 0;
+  let output = 0;
+  let cacheRead = 0;
+  let cacheWrite = 0;
+  let events = 0;
+  for (const b of buckets) {
+    totalTokens += b.total_tokens;
+    input += b.input_tokens;
+    output += b.output_tokens;
+    cacheRead += b.cache_read_tokens;
+    cacheWrite += b.cache_write_5m_tokens + b.cache_write_1h_tokens;
+    events += b.events;
+  }
+  return {
+    totalTokens,
+    input,
+    output,
+    cacheRead,
+    cacheWrite,
+    events,
+    cost: costSummary(buckets),
+    cacheHitPct: cacheHitPct(input, cacheRead, cacheWrite),
+  };
+}
+
+export function bucketCacheHitPct(b: DistributionBucket): number | null {
+  return cacheHitPct(
+    b.input_tokens,
+    b.cache_read_tokens,
+    b.cache_write_5m_tokens + b.cache_write_1h_tokens,
+  );
+}
+
+/**
+ * 表格排序：有报价的按金额降序，缺价的沉底再按 token 降序。
+ * 金额才是这张表要回答的问题（「钱花在哪个模型上」），token 只是旁证。
+ */
+export function byCostThenTokens(a: DistributionBucket, b: DistributionBucket): number {
+  if (a.cost_usd !== null && b.cost_usd !== null && a.cost_usd !== b.cost_usd) {
+    return b.cost_usd - a.cost_usd;
+  }
+  if (a.cost_usd === null && b.cost_usd !== null) return 1;
+  if (a.cost_usd !== null && b.cost_usd === null) return -1;
+  return b.total_tokens - a.total_tokens;
+}
+
+// ── 模型显示名 ──────────────────────────────────────────────────────────────
+const FAMILY = ["opus", "sonnet", "haiku", "fable", "mythos"];
+const cap = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1);
+
+/**
+ * `claude-opus-5-5` → `Opus 5.5`，`claude-sonnet-4-5-20250929` → `Sonnet 4.5`，
+ * `claude-3-7-sonnet-20250219` → `Sonnet 3.7`。
+ *
+ * 只管显示；取色、过滤一律用原始 model 字符串。认不出的原样返回，
+ * 不猜 —— 猜错一个名字比显示原始 id 更误导。
+ */
+export function modelDisplayName(model: string): string {
+  const m = model
+    .trim()
+    .toLowerCase()
+    .replace(/^claude[-.]/, "")
+    .replace(/\[[^\]]*\]$/, "") // 网关后缀：opus-5[1m]
+    .replace(/@.*$/, "") // Vertex 快照：opus-4-5@20251101
+    .replace(/-\d{8}$/, ""); // 日期快照
+
+  const modern = /^([a-z]+)-(\d+)(?:-(\d+))?$/.exec(m);
+  if (modern && FAMILY.includes(modern[1]!)) {
+    return `${cap(modern[1]!)} ${modern[2]}${modern[3] ? `.${modern[3]}` : ""}`;
+  }
+  const legacy = /^(\d+)(?:-(\d+))?-([a-z]+)$/.exec(m);
+  if (legacy && FAMILY.includes(legacy[3]!)) {
+    return `${cap(legacy[3]!)} ${legacy[1]}${legacy[2] ? `.${legacy[2]}` : ""}`;
+  }
+  return model;
 }

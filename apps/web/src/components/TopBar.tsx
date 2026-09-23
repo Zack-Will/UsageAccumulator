@@ -135,7 +135,8 @@ export function TopBar(props: {
         aria-label={`同步状态：${STATUS_TEXT[props.streamStatus]}${props.stale ? "，快照已过期" : ""}`}
       >
         <Dot tone={syncTone(props.streamStatus, props.stale)} />
-        {props.capturedAt ? fmtClock(props.capturedAt) : "--:--"}
+        {/* 这个钟点是**额度快照**的采集时刻，不是现在几点 —— 不写明就会被当成时钟 */}
+        额度更新 {props.capturedAt ? fmtClock(props.capturedAt) : "--:--"}
       </span>
 
       <button
