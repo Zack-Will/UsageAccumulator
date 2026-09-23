@@ -91,12 +91,12 @@ semantic_id = sha256(session_id | ts_ms | model | input | output | cache_read | 
 
 实测口径（见 ARCHITECTURE §2.0）：28,794 条原始事件去重后剩 10,423 条，**64% 是重复**；其中跨机重复仅 441 条。探针会先在本地去重一轮（实测吃掉 56%），服务端仍须自己再去一次，不得假设上游已去干净。
 
-### 1.3 QuotaSnapshot（探针 → 服务端）
+### 1.3 QuotaSnapshot（探针 → 服务端；默认由服务端自己抓，见 2.4）
 
 ```jsonc
 {
   "profile_id": "claude-official",
-  "machine_id": "9f2c1a7e-...",   // 采集机器；v1 只有一台开启，但要能追溯来源
+  "machine_id": "9f2c1a7e-...",   // 可省略：服务端以上报用的 machine token 为准记录来源
   "captured_at": "2026-09-21T02:30:00Z",
   "windows": [
     { "window_kind": "five_hour", "utilization_pct": 62.0, "resets_at": "2026-09-21T10:30:00Z" },
@@ -107,6 +107,8 @@ semantic_id = sha256(session_id | ts_ms | model | input | output | cache_read | 
 ```
 
 `window_kind` 是**自由字符串**，不做枚举约束 —— 官方字段名尚未实测确认（见 ARCHITECTURE.md §2.2）。
+
+入库时 `quota_snapshots.machine_id` 记的是**上报者的鉴权身份**，不是 body 里的字段；留空专指「服务端自己抓的」（2.4）。
 
 ---
 
@@ -133,7 +135,9 @@ Idempotency-Key: <批次内容的 sha256 前 32 位>
 | `5xx` | 服务端故障 | 指数退避重试 |
 
 `error.code` 取值（客户端据此区分"凭证失效"与"服务端挂了"，不要只看 HTTP 状态码）：
-`bad_request` · `unauthorized` · `machine_revoked` · `not_found` · `rate_limited` · `internal`
+`bad_request` · `unauthorized` · `forbidden` · `machine_revoked` · `not_found` · `rate_limited` · `upstream` · `internal`
+
+`upstream` 专指服务端去问第三方（目前只有 claude.ai）时对方出了问题：连不上、被 Cloudflare 质询。探针不会遇到它。
 
 `not_found` 专指路由或资源不存在。不要用 `bad_request` 代替 —— 看板调试时会误导人以为是参数错了。
 
@@ -152,6 +156,9 @@ Idempotency-Key: <批次内容的 sha256 前 32 位>
 | `GET` | `/v1/calibration?profile_id=` | 标定结果：limit 估计、模型权重、残差、观测点数 |
 | `GET` | `/v1/summary?profile_id=` | 菜单栏 app 用的精简摘要（见 2.2） |
 | `GET` | `/v1/stream?profile_id=` | SSE。`event: window_update` → data 与 `/v1/windows/current` 同体；`event: event_batch` → `{"profile_id","count","last_ts"}`；`event: ping` → `{}` 心跳 |
+| `GET` | `/v1/quota/session?profile_id=` | 服务端抓额度用的 claude.ai 会话**状态**（见 2.4）。任何已鉴权身份可读 |
+| `PUT` | `/v1/quota/session` | body: `{"profile_id","session_key"}`，**仅看板身份**。先验后存 → 状态（见 2.4） |
+| `DELETE` | `/v1/quota/session?profile_id=` | 删除会话，**仅看板身份** → 状态 |
 | `GET` | `/healthz` | → `200 "ok"` |
 
 ### 2.1 `GET /v1/windows/current`
@@ -264,6 +271,42 @@ Idempotency-Key: <批次内容的 sha256 前 32 位>
 **服务端是权威。** 探针 `install` 时先本地生成一个 `provisional_machine_id`（randomUUID）以便离线可用，enroll 时一并提交；服务端返回的 `machine_id` **覆盖**本地值并持久化。此后所有上报只用服务端下发的那个。
 
 未 enroll 就直接上报的探针，服务端应返回 `401`。
+
+
+### 2.4 `/v1/quota/session`（服务端直接抓额度）
+
+额度默认由**服务端**每 5 分钟（+ 最多 1 分钟抖动）直接向 claude.ai 抓取，不再依赖某台机器上的探针在线（ARCHITECTURE §5.3）。
+为此服务端要持有一份 claude.ai 会话（浏览器 Cookie 里的 `sessionKey`）。
+
+```jsonc
+// GET / PUT / DELETE 的响应同形 —— 只有状态，任何接口都不回显 sessionKey
+{
+  "profile_id": "claude-official",
+  "state": "ok",               // none | pending | ok | auth | blocked | error | disabled
+  "last_ok_at": "2026-09-23T12:05:00Z",
+  "last_attempt_at": "2026-09-23T12:05:00Z",
+  "next_attempt_at": "2026-09-23T12:10:31Z",
+  "error": null                 // 给人看的失败原因，绝不含凭证
+}
+```
+
+| state | 含义 | 服务端行为 |
+|---|---|---|
+| `none` | 没保存会话 | 不抓 |
+| `pending` | 存了、还没抓过 | 下一轮（≤30 秒）抓 |
+| `ok` | 最近一次成功 | 按间隔继续 |
+| `auth` | claude.ai 不认这个会话 | 退避 15 分钟 → 1 小时 → 6 小时，等人重新登录 |
+| `blocked` | 被 Cloudflare 质询 | 同样退避；换会话也没用 |
+| `error` | 网络 / 5xx / 响应变形 | 下一轮照常重试，不进退避阶梯 |
+| `disabled` | 服务端关了采集（`UA_QUOTA_SAMPLING=false`） | 只收探针上报；PUT / DELETE 返回 `404` |
+
+**PUT 先验后存**：服务端先用它请求 `GET /api/organizations`，claude.ai 认了才落盘并立刻抓一次，
+所以响应里的 `state` 通常已经是 `ok`。不认 → `400 bad_request`（不会顶掉原来那个好的）；
+连不上或被质询 → `502 upstream`。
+格式明显不对（短于 16、含空白或非 ASCII）直接 `400`，不去问 claude.ai。
+
+**存放**：`UA_CLAUDE_SESSION_DIR` 下一个 profile 一个文件（目录 0700、文件 0600），**不进数据库**。
+服务端每一轮都重新读文件，所以在机器上直接覆盖它也立刻生效，退避随之清零。
 
 ---
 

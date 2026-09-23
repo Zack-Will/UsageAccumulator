@@ -221,6 +221,7 @@ official_profile_id = ${JSON.stringify(v.defaultProfileId)}
 # JSONL 行上的 ownerAccountUuid → profile_id（L3 兜底）
 [attribution.account_profiles]
 
+# 额度默认由服务端直接抓（ARCHITECTURE §5.3）。这里是探针代抓的旧路径，只在服务端关了采集时才开
 [quota]
 enabled       = ${v.quotaEnabled}
 profile_id    = ${JSON.stringify(v.defaultProfileId)}

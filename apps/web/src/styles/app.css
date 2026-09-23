@@ -212,10 +212,36 @@ button {
   color: var(--text-3);
 }
 
+/* 同步状态兼作 claude.ai 会话的入口：长得和原来一样，只是可点。
+   内边距用等量负外边距抵掉 —— 顶栏各断点的宽度是实测调过的，不能因为它多出 12px 折行 */
+button.sync {
+  padding: 4px 6px;
+  margin: 0 -6px;
+  background: none;
+  border: none;
+  border-radius: 999px;
+  cursor: pointer;
+}
+button.sync:hover {
+  color: var(--text-2);
+  background: var(--seg-active, var(--border));
+}
+button.sync:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
 /* 带「额度更新」四个字时顶栏实测要 ~1210px；留出余量，1280 以下只留钟点 */
 @media (max-width: 1280px) {
   .sync__label {
     display: none;
+  }
+}
+/* 会话出了问题（会话失效 / 被拦截 / 未登录）时手机上也要看得见字：
+   手机顶栏本来就是两行、不固定，放得下；721–1280 那一档仍只留颜色，免得把顶栏挤折 */
+@media (max-width: 720px) {
+  .sync--alert .sync__label {
+    display: inline;
   }
 }
 
@@ -684,6 +710,43 @@ button {
   cursor: pointer;
 }
 .gate-alt:hover { color: var(--text-2); }
+
+/* ── claude.ai 会话弹窗：沿用登录页的卡片与控件 */
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(20, 20, 19, 0.36);
+}
+.dialog {
+  box-shadow: var(--shadow-card, 0 12px 40px rgba(0, 0, 0, 0.25));
+}
+.dialog .gate-title {
+  margin-bottom: 0;
+  font-size: 20px;
+}
+.dialog__status {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0 0 6px;
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-2);
+}
+.dialog__actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 2px;
+}
+.dialog__actions .gate-alt {
+  align-self: auto;
+}
 
 /* ── 额度卡 ─────────────────────────────────────────────────────────────
    层级从上到下：已用（最大）→ 额度条 → 会不会耗尽 → 钱。

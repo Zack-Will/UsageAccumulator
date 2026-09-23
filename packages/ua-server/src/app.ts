@@ -5,8 +5,8 @@ import cors from "@fastify/cors";
 import fastifyStatic from "@fastify/static";
 import { z } from "zod";
 import type { Logger } from "pino";
-import type { PricingTable } from "@ua/core";
-import { EMPTY_PRICING } from "@ua/core";
+import type { ClaudeWebClient, PricingTable, QuotaSnapshot } from "@ua/core";
+import { EMPTY_PRICING, QuotaAuthError } from "@ua/core";
 import type { Config } from "./config.js";
 import { createLogger } from "./logger.js";
 import { EventBus, formatSse } from "./bus.js";
@@ -24,6 +24,8 @@ import { buildSummary, computeCurrentWindows } from "./windows-service.js";
 import { decodeEventBatch, enrollWireSchema, quotaSnapshotWireSchema, quotaWireToSnapshot } from "./wire.js";
 import type { EventRow, Store } from "./store.js";
 import { LoginGuard } from "./login-guard.js";
+import { QuotaSampler, type SamplerStatus } from "./quota-sampler.js";
+import { isVaultSafeId, type SessionVault } from "./quota-vault.js";
 import {
   DEFAULT_SESSION_MS,
   SESSION_COOKIE,
@@ -52,6 +54,17 @@ export interface BuildAppOptions {
   bus?: EventBus;
   /** 测试注入可控时钟 */
   now?: () => Date;
+  /**
+   * 服务端直接抓额度（ARCHITECTURE §5.3）。不给就不开采样器，
+   * /v1/quota/session 报 disabled，额度只能靠探针代抓上报。
+   */
+  quota?: {
+    vault: SessionVault;
+    client: Pick<ClaudeWebClient, "orgId" | "snapshot">;
+    intervalMs?: number;
+    jitterMs?: number;
+    authBackoffMs?: number[];
+  };
 }
 
 export type UaApp = ReturnType<typeof buildApp>;
@@ -70,6 +83,8 @@ type ErrorCode =
   // 专指路由或资源不存在；不要用 bad_request 代替，看板调试时会误以为是参数错了
   | "not_found"
   | "rate_limited"
+  // 服务端去问 claude.ai 时对方出了问题（连不上、被 Cloudflare 质询）。不是我们的 5xx，也不是请求写错了
+  | "upstream"
   | "internal";
 
 class HttpError extends Error {
@@ -206,6 +221,30 @@ export function buildApp(opts: BuildAppOptions) {
   app.setNotFoundHandler((_req, reply) => {
     void reply.status(404).send({ error: { code: "not_found", message: "no such route" } });
   });
+
+  /** 额度快照入库并立即推给看板。探针上报与服务端自采走同一条路。 */
+  async function recordQuota(snapshot: QuotaSnapshot, machineId: string | null): Promise<void> {
+    await store.insertQuotaSnapshot(snapshot, machineId);
+    const current = await computeCurrentWindows(store, snapshot.profileId, {
+      now: now(),
+      quotaStaleMs: config.quotaStaleMs,
+    });
+    bus.publish({ name: "window_update", profileId: snapshot.profileId, data: current });
+  }
+
+  const sampler = opts.quota
+    ? new QuotaSampler({
+        vault: opts.quota.vault,
+        client: opts.quota.client,
+        // machine_id 留空 = 服务端自己抓的（探针上报的带着上报机器的 id）
+        record: (snap) => recordQuota(snap, null),
+        log,
+        now,
+        ...(opts.quota.intervalMs !== undefined ? { intervalMs: opts.quota.intervalMs } : {}),
+        ...(opts.quota.jitterMs !== undefined ? { jitterMs: opts.quota.jitterMs } : {}),
+        ...(opts.quota.authBackoffMs !== undefined ? { authBackoffMs: opts.quota.authBackoffMs } : {}),
+      })
+    : null;
 
   // ── 鉴权：会话 Cookie（浏览器）、Bearer machine_token（探针）、单一看板 token（脚本）
   async function authenticate(req: FastifyRequest): Promise<void> {
@@ -478,15 +517,102 @@ export function buildApp(opts: BuildAppOptions) {
     }
     const snapshot = quotaWireToSnapshot(parsed.data);
     if (!snapshot) throw new HttpError(400, "bad_request", "captured_at must be RFC3339");
-    // 采集机器仅供追溯来源（CONTRACT §1.3）
-    await store.insertQuotaSnapshot(snapshot, parsed.data.machine_id ?? null);
-
-    const current = await computeCurrentWindows(store, snapshot.profileId, {
-      now: now(),
-      quotaStaleMs: config.quotaStaleMs,
-    });
-    bus.publish({ name: "window_update", profileId: snapshot.profileId, data: current });
+    // 采集机器仅供追溯来源（CONTRACT §1.3）。以鉴权身份为准 —— 探针从来不在 body 里带 machine_id，
+    // 以前这一列因此全是空的，分不出是谁抓的；现在留空专指「服务端自己抓的」
+    const auth = (req as FastifyRequest & { auth?: { kind: string; id?: string } }).auth;
+    const machineId = auth?.kind === "machine" && auth.id ? auth.id : (parsed.data.machine_id ?? null);
+    await recordQuota(snapshot, machineId);
     return reply.send({ ok: true });
+  });
+
+  // ── claude.ai 会话：服务端直接抓额度用（ARCHITECTURE §5.3）──────────────────
+  //
+  // ★ 只写不读：没有任何接口回显 sessionKey，GET 只给采集状态。
+  // ★ 写（PUT / DELETE）只认看板身份；探针的 machine token 不能改会话。
+  // ★ 先验再存：claude.ai 不认的会话不落盘，免得把一个好的换成坏的。
+  const quotaSessionQuery = z.object({ profile_id: z.string().optional() });
+  const quotaSessionBody = z.object({
+    profile_id: z.string().optional(),
+    session_key: z
+      .string()
+      .trim()
+      .min(16, "sessionKey 太短")
+      .max(4096, "sessionKey 太长")
+      .regex(/^[\x21-\x7e]+$/, "sessionKey 里不应有空白或非 ASCII 字符"),
+  });
+
+  function requireDashboard(req: FastifyRequest): void {
+    const auth = (req as FastifyRequest & { auth?: { kind: string } }).auth;
+    if (auth?.kind !== "dashboard") {
+      throw new HttpError(403, "forbidden", "只有看板身份能更改 claude.ai 会话");
+    }
+  }
+
+  async function sessionProfile(raw: string | undefined): Promise<string> {
+    const profileId = await resolveProfileId(raw);
+    if (!isVaultSafeId(profileId)) throw new HttpError(400, "bad_request", "profile_id 含不允许的字符");
+    return profileId;
+  }
+
+  function sessionDto(s: SamplerStatus) {
+    return {
+      profile_id: s.profileId,
+      state: s.state,
+      last_ok_at: s.lastOkAt ? s.lastOkAt.toISOString() : null,
+      last_attempt_at: s.lastAttemptAt ? s.lastAttemptAt.toISOString() : null,
+      next_attempt_at: s.nextAttemptAt ? s.nextAttemptAt.toISOString() : null,
+      error: s.error,
+    };
+  }
+
+  const disabledStatus = (profileId: string): SamplerStatus => ({
+    profileId,
+    state: "disabled",
+    lastOkAt: null,
+    lastAttemptAt: null,
+    nextAttemptAt: null,
+    error: null,
+  });
+
+  app.get("/v1/quota/session", async (req, reply) => {
+    const q = parseQuery(quotaSessionQuery, req.query);
+    const profileId = await sessionProfile(q.profile_id);
+    return reply.send(sessionDto(sampler ? await sampler.status(profileId) : disabledStatus(profileId)));
+  });
+
+  app.put("/v1/quota/session", async (req, reply) => {
+    requireDashboard(req);
+    if (!sampler || !opts.quota) throw new HttpError(404, "not_found", "服务端没有开启额度采集");
+    const parsed = quotaSessionBody.safeParse(req.body);
+    if (!parsed.success) {
+      throw new HttpError(400, "bad_request", parsed.error.issues[0]?.message ?? "invalid body");
+    }
+    const profileId = await sessionProfile(parsed.data.profile_id);
+    const sessionKey = parsed.data.session_key;
+    try {
+      await opts.quota.client.orgId(sessionKey);
+    } catch (err) {
+      if (err instanceof QuotaAuthError && err.reason === "session") {
+        throw new HttpError(400, "bad_request", "claude.ai 不认这个 sessionKey");
+      }
+      if (err instanceof QuotaAuthError) {
+        throw new HttpError(502, "upstream", "请求被 claude.ai 前面的 Cloudflare 拦下了");
+      }
+      throw new HttpError(502, "upstream", `暂时连不上 claude.ai：${(err as Error).message}`);
+    }
+    await opts.quota.vault.write(profileId, sessionKey);
+    log.info({ profileId }, "claude.ai 会话已更新");
+    return reply.send(sessionDto(await sampler.kick(profileId)));
+  });
+
+  app.delete("/v1/quota/session", async (req, reply) => {
+    requireDashboard(req);
+    if (!sampler || !opts.quota) throw new HttpError(404, "not_found", "服务端没有开启额度采集");
+    const q = parseQuery(quotaSessionQuery, req.query);
+    const profileId = await sessionProfile(q.profile_id);
+    if (await opts.quota.vault.remove(profileId)) log.info({ profileId }, "claude.ai 会话已删除");
+    sampler.forget(profileId);
+    return reply.send(sessionDto(await sampler.status(profileId)));
   });
 
   // ── GET /v1/profiles —— 注意键是 `id`，不是 `profile_id`
@@ -788,5 +914,5 @@ export function buildApp(opts: BuildAppOptions) {
     req.raw.on("error", cleanup);
   });
 
-  return { fastify: app, bus };
+  return { fastify: app, bus, sampler };
 }

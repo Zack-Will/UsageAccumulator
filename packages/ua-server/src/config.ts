@@ -1,8 +1,11 @@
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { z } from "zod";
 
 /**
  * 服务端配置全部来自环境变量。
- * 凭证类只从环境读，绝不落盘、绝不写日志（ARCHITECTURE §9）。
+ * 凭证类只从环境读、绝不写日志（ARCHITECTURE §9）。唯一例外是 claude.ai 会话：
+ * 它要能在看板上更新，所以存在 claudeSessionDir 下的 0600 文件里，同样不进日志、不进数据库。
  */
 const schema = z.object({
   host: z.string().default("0.0.0.0"),
@@ -39,6 +42,20 @@ const schema = z.object({
   maxIngestBytes: z.coerce.number().int().positive().default(32 * 1024 * 1024),
   /** 看板构建产物目录；为空则不托管静态文件（纯 API 模式） */
   webDir: z.string().default(""),
+  /**
+   * 服务端直接抓 claude.ai 额度（ARCHITECTURE §5.3）。默认开；
+   * 关掉就只收探针代抓上报的快照（旧路径）。
+   */
+  quotaSampling: z
+    .string()
+    .default("true")
+    .transform((v) => !/^(0|false|no|off)$/i.test(v.trim())),
+  /** claude.ai 会话的保管目录（一个 profile 一个 0600 文件，见 quota-vault.ts）。不进数据库 */
+  claudeSessionDir: z.string().default(join(homedir(), ".config", "ua-server", "claude-sessions")),
+  claudeBaseUrl: z.string().url().default("https://claude.ai"),
+  /** 采样间隔与抖动，和探针一致 */
+  quotaIntervalMs: z.coerce.number().int().positive().default(300_000),
+  quotaJitterMs: z.coerce.number().int().nonnegative().default(60_000),
   logLevel: z.string().default("info"),
 });
 
@@ -62,6 +79,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     streamHeartbeatMs: env["UA_STREAM_HEARTBEAT_MS"],
     maxIngestBytes: env["UA_MAX_INGEST_BYTES"],
     webDir: env["UA_WEB_DIR"],
+    quotaSampling: env["UA_QUOTA_SAMPLING"],
+    claudeSessionDir: env["UA_CLAUDE_SESSION_DIR"],
+    claudeBaseUrl: env["UA_CLAUDE_BASE_URL"],
+    quotaIntervalMs: env["UA_QUOTA_INTERVAL_MS"],
+    quotaJitterMs: env["UA_QUOTA_JITTER_MS"],
     logLevel: env["UA_LOG_LEVEL"] ?? env["LOG_LEVEL"],
   });
 }

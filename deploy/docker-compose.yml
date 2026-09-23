@@ -50,11 +50,15 @@ services:
       # 定价表挂进来，模型缺价时成本字段是 null 而不是 0
       UA_PRICING_FILE: /app/deploy/pricing.json
       UA_LOG_LEVEL: ${UA_LOG_LEVEL:-info}
+      # 服务端直接抓 claude.ai 额度；会话在看板上登录后存这里（0600 文件，不进数据库）
+      UA_QUOTA_SAMPLING: ${UA_QUOTA_SAMPLING:-true}
+      UA_CLAUDE_SESSION_DIR: /data/claude-sessions
       TZ: UTC
     volumes:
       # 改价格不用重建镜像；migrations 同理（服务启动时自动执行）
       - ./pricing.json:/app/deploy/pricing.json:ro
       - ./migrations:/app/deploy/migrations:ro
+      - claude_sessions:/data/claude-sessions
     expose:
       - "8080"
 
@@ -76,5 +80,6 @@ services:
 
 volumes:
   pgdata:
+  claude_sessions:
   caddy_data:
   caddy_config:

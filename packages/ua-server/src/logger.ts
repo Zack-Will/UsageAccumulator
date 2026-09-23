@@ -19,6 +19,8 @@ export const REDACT_PATHS = [
   "machine_token",
   "enroll_token",
   "sessionKey",
+  "session_key",
+  "*.session_key",
 ];
 
 export function createLogger(level = "info"): Logger {

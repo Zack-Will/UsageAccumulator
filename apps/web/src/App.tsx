@@ -10,6 +10,7 @@ import {
   type WindowsCurrent,
 } from "./api";
 import { RANGES, TopBar, type RangeId } from "./components/TopBar";
+import { QuotaSessionDialog } from "./components/QuotaSession";
 import { useAsync } from "./hooks/useAsync";
 import { useRoute } from "./hooks/useRoute";
 import { useTheme } from "./hooks/useTheme";
@@ -119,6 +120,15 @@ export function App() {
 
   const windows = pushed ?? initialWindows.data;
 
+  // 服务端抓额度的会话状态。失效是服务端几分钟一轮的采样才发现的，这里每分钟问一次就够
+  const [sessionTick, setSessionTick] = useState(0);
+  const [sessionOpen, setSessionOpen] = useState(false);
+  const quotaSession = useAsync((s) => api.quotaSession(profileId, s), [api, profileId, nonce, sessionTick]);
+  useEffect(() => {
+    const id = setInterval(() => setSessionTick((n) => n + 1), 60_000);
+    return () => clearInterval(id);
+  }, []);
+
   // 同步状态取额度快照的时刻，不是本次请求时刻（CONTRACT §2.2 的说明同样适用于看板）
   const head = windows?.windows[0];
   const capturedAt = head ? Date.parse(head.captured_at) : null;
@@ -161,9 +171,21 @@ export function App() {
         streamStatus={streamStatus}
         capturedAt={capturedAt}
         stale={stale}
+        quotaSession={quotaSession.data}
+        onQuotaSession={() => setSessionOpen(true)}
         refreshing={refreshing}
         onRefresh={onRefresh}
       />
+
+      {sessionOpen && (
+        <QuotaSessionDialog
+          api={api}
+          profileId={profileId}
+          status={quotaSession.data}
+          onClose={() => setSessionOpen(false)}
+          onChanged={() => setSessionTick((n) => n + 1)}
+        />
+      )}
 
       <main className="main">
         {route === "overview" && (

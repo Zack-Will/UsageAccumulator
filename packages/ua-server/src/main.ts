@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
 import postgres from "postgres";
+import { ClaudeWebClient } from "@ua/core";
 import { buildApp } from "./app.js";
 import { startCalibrationJob } from "./calibration-job.js";
 import { loadConfig } from "./config.js";
@@ -7,6 +8,8 @@ import { createLogger } from "./logger.js";
 import { loadPricingTable } from "./pricing.js";
 import { runMigrations } from "./migrate.js";
 import { PgStore } from "./store-pg.js";
+import { fetchGet } from "./quota-sampler.js";
+import { FileSessionVault } from "./quota-vault.js";
 import { computeCurrentWindows } from "./windows-service.js";
 
 const config = loadConfig();
@@ -33,7 +36,16 @@ async function main(): Promise<void> {
   );
 
   const store = new PgStore(sql as postgres.Sql<Record<string, never>>);
-  const { fastify, bus } = buildApp({ store, config, pricing, logger: log });
+  // claude.ai 会话存文件不进库（见 quota-vault.ts）；服务端每 5 分钟自己抓一次额度
+  const quota = config.quotaSampling
+    ? {
+        vault: new FileSessionVault(resolve(config.claudeSessionDir), (msg) => log.warn({}, msg)),
+        client: new ClaudeWebClient(fetchGet, config.claudeBaseUrl),
+        intervalMs: config.quotaIntervalMs,
+        jitterMs: config.quotaJitterMs,
+      }
+    : undefined;
+  const { fastify, bus, sampler } = buildApp({ store, config, pricing, logger: log, ...(quota ? { quota } : {}) });
 
   // usage_hourly 刷新（ARCHITECTURE §6.2）
   const refreshTimer =
@@ -63,9 +75,16 @@ async function main(): Promise<void> {
   await fastify.listen({ host: config.host, port: config.port });
   log.info({ host: config.host, port: config.port }, "ua-server listening");
 
+  const stopSampler = sampler ? sampler.start() : () => {};
+  log.info(
+    { sampling: Boolean(sampler), dir: sampler ? resolve(config.claudeSessionDir) : undefined },
+    sampler ? "额度采样器已启动" : "服务端额度采样已关闭（只收探针上报）",
+  );
+
   const shutdown = async (signal: string) => {
     log.info({ signal }, "shutting down");
     stopCalibration();
+    stopSampler();
     if (refreshTimer) clearInterval(refreshTimer);
     clearInterval(streamTimer);
     await fastify.close();

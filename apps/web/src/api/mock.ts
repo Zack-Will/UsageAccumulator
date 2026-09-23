@@ -24,6 +24,8 @@ import type {
   ProjectedCurvePoint,
   QuotaHistory,
   QuotaHistoryParams,
+  QuotaSessionState,
+  QuotaSessionStatus,
   QuotaSample,
   StreamEvent,
   TimeRangeParams,
@@ -34,6 +36,7 @@ import type {
   WindowState,
   WindowsCurrent,
 } from "./types";
+import { ApiError } from "./live";
 
 const MIN = 60_000;
 const HOUR = 60 * MIN;
@@ -648,8 +651,33 @@ function buildCalibration(profileId: string, nowMs: number): Calibration {
 }
 
 // ── 数据源 ──────────────────────────────────────────────────────────────────
+/**
+ * claude.ai 会话的 mock 状态。`?scenario=session-auth` / `session-none` / `session-blocked`
+ * 用来预览顶栏与弹窗在出问题时的样子。
+ */
+function mockSession(state: QuotaSessionState): QuotaSessionStatus {
+  const now = Date.now();
+  return {
+    profile_id: "claude-official",
+    state,
+    last_ok_at: state === "none" ? null : iso(now - (state === "ok" ? 2 : 95) * 60_000),
+    last_attempt_at: state === "none" ? null : iso(now - 2 * 60_000),
+    next_attempt_at: state === "none" ? null : iso(now + (state === "ok" ? 3 : 13) * 60_000),
+    error:
+      state === "auth"
+        ? "GET /api/organizations/{id}/usage 返回 403，sessionKey 可能已失效"
+        : state === "blocked"
+          ? "GET /api/organizations 被 Cloudflare 质询（403）"
+          : null,
+  };
+}
+
 export function createMockApi(opts?: { latencyMs?: number }): UaApi {
   const latency = opts?.latencyMs ?? 180;
+  const scenario = mockScenario();
+  let session = mockSession(
+    scenario === "session-auth" ? "auth" : scenario === "session-none" ? "none" : scenario === "session-blocked" ? "blocked" : "ok",
+  );
   const wait = <T>(v: T, signal?: AbortSignal): Promise<T> =>
     new Promise<T>((resolve, reject) => {
       const id = setTimeout(() => resolve(v), latency);
@@ -668,6 +696,19 @@ export function createMockApi(opts?: { latencyMs?: number }): UaApi {
     distribution: (p, signal) => wait(buildDistribution(p), signal),
     calibration: (profileId, signal) => wait(buildCalibration(profileId, Date.now()), signal),
     quotaHistory: (p, signal) => wait(buildQuotaHistory(p), signal),
+    quotaSession: (profileId, signal) => wait({ ...session, profile_id: profileId }, signal),
+    saveQuotaSession: async (profileId, sessionKey) => {
+      await wait(null);
+      // 和真服务端一样先验再存：mock 里只认 sk-ant- 开头的
+      if (!sessionKey.startsWith("sk-ant-")) throw new ApiError(400, "bad_request", "claude.ai 不认这个 sessionKey");
+      session = mockSession("ok");
+      return { ...session, profile_id: profileId };
+    },
+    clearQuotaSession: async (profileId) => {
+      await wait(null);
+      session = mockSession("none");
+      return { ...session, profile_id: profileId };
+    },
     stream(profileId, handlers) {
       handlers.onStatus("connecting");
       let drift = 0;

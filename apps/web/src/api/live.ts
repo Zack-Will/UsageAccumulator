@@ -2,6 +2,7 @@ import type {
   Calibration,
   Distribution,
   QuotaHistory,
+  QuotaSessionStatus,
   MachinesResponse,
   ProfilesResponse,
   StreamEvent,
@@ -21,6 +22,7 @@ export type ApiErrorCode =
   | "machine_revoked"
   | "not_found"
   | "rate_limited"
+  | "upstream"
   | "internal"
   | "http_error";
 
@@ -55,8 +57,20 @@ export function createLiveApi(opts: { base: string; token?: string | undefined }
   if (opts.token) headers["Authorization"] = `Bearer ${opts.token}`;
 
   async function get<T>(path: string, query?: Record<string, string>, signal?: AbortSignal): Promise<T> {
+    return send<T>("GET", path, query, undefined, signal);
+  }
+
+  async function send<T>(
+    method: "GET" | "PUT" | "DELETE",
+    path: string,
+    query?: Record<string, string>,
+    body?: unknown,
+    signal?: AbortSignal,
+  ): Promise<T> {
     const res = await fetch(joinUrl(base, path, query), {
-      headers,
+      method,
+      headers: body === undefined ? headers : { ...headers, "Content-Type": "application/json" },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       signal: signal ?? null,
       // ★ "same-origin" 而不是 "include"：同源时带上会话 Cookie，跨源时自动退化成
       // 不带凭据 —— 于是不会触发带凭据的 CORS 模式（那会强制要求服务端回
@@ -106,6 +120,15 @@ export function createLiveApi(opts: { base: string; token?: string | undefined }
     calibration: (profileId, signal) =>
       get<Calibration>("/v1/calibration", { profile_id: profileId }, signal),
     quotaHistory: (p, signal) => get<QuotaHistory>("/v1/quota/history", { ...p }, signal),
+    quotaSession: (profileId, signal) =>
+      get<QuotaSessionStatus>("/v1/quota/session", { profile_id: profileId }, signal),
+    saveQuotaSession: (profileId, sessionKey) =>
+      send<QuotaSessionStatus>("PUT", "/v1/quota/session", undefined, {
+        profile_id: profileId,
+        session_key: sessionKey,
+      }),
+    clearQuotaSession: (profileId) =>
+      send<QuotaSessionStatus>("DELETE", "/v1/quota/session", { profile_id: profileId }),
     stream(profileId, handlers) {
       handlers.onStatus("connecting");
       const src = new EventSource(joinUrl(base, "/v1/stream", { profile_id: profileId }), {

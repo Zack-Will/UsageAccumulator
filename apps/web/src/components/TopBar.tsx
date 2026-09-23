@@ -1,8 +1,9 @@
 import type { ThemeName } from "@ua/tokens";
-import type { DataSource, Profile, StreamStatus } from "../api";
+import type { DataSource, Profile, QuotaSessionStatus, StreamStatus } from "../api";
 import { fmtClock } from "../charts/base";
 import { hrefFor, ROUTES, type RouteId } from "../hooks/useRoute";
 import { Dot, Segmented } from "./primitives";
+import { sessionBadge, sessionTone } from "./QuotaSession";
 
 export const RANGES = [
   { value: "5h", label: "5h", ms: 5 * 3600_000 },
@@ -33,8 +34,11 @@ const STATUS_TEXT: Record<StreamStatus, string> = {
 };
 
 /** CONTRACT §2.1：stale = 超过 15 分钟没有新快照；captured_at 是快照采集时刻，不是请求时刻。 */
-function syncTone(s: StreamStatus, stale: boolean): "ok" | "warn" | "danger" {
+function syncTone(s: StreamStatus, stale: boolean, session: QuotaSessionStatus | null): "ok" | "warn" | "danger" {
   if (s === "closed") return "danger";
+  // 服务端抓额度的会话出了问题，比「快照有点旧」更要紧，优先显示
+  const bySession = sessionTone(session?.state);
+  if (bySession) return bySession;
   return stale ? "warn" : STATUS_TONE[s];
 }
 
@@ -75,6 +79,9 @@ export function TopBar(props: {
   /** 最近一次额度快照的采集时刻（CONTRACT §2.1 captured_at）。 */
   capturedAt: number | null;
   stale: boolean;
+  /** 服务端抓额度用的 claude.ai 会话状态；null = 还没问到 */
+  quotaSession: QuotaSessionStatus | null;
+  onQuotaSession: () => void;
   refreshing: boolean;
   onRefresh: () => void;
 }) {
@@ -130,16 +137,20 @@ export function TopBar(props: {
         onChange={props.onSource}
       />
 
-      <span
-        className="sync"
-        aria-label={`同步状态：${STATUS_TEXT[props.streamStatus]}${props.stale ? "，快照已过期" : ""}`}
+      {/* 点开是 claude.ai 会话（服务端抓额度用）—— 同步状态出问题时，要做的动作多半就在这里 */}
+      <button
+        type="button"
+        className={`sync${sessionTone(props.quotaSession?.state) ? " sync--alert" : ""}`}
+        onClick={props.onQuotaSession}
+        aria-haspopup="dialog"
+        aria-label={`同步状态：${STATUS_TEXT[props.streamStatus]}${props.stale ? "，快照已过期" : ""}，${sessionBadge(props.quotaSession?.state)}`}
       >
-        <Dot tone={syncTone(props.streamStatus, props.stale)} />
+        <Dot tone={syncTone(props.streamStatus, props.stale, props.quotaSession)} />
         {/* 这个钟点是**额度快照**的采集时刻，不是现在几点 —— 不写明就会被当成时钟。
             窄屏放不下文字时只留钟点（不能为了四个字把整条顶栏挤成两行），悬停仍可见 */}
-        <span className="sync__label">额度更新</span>
+        <span className="sync__label">{sessionBadge(props.quotaSession?.state)}</span>
         <span title="额度更新时刻">{props.capturedAt ? fmtClock(props.capturedAt) : "--:--"}</span>
-      </span>
+      </button>
 
       <button
         type="button"

@@ -25,7 +25,7 @@ install 选项
   --machine-token <t>     直接给长期 token（与 --enroll-token 二选一）
   --profile <id>          default_profile_id，默认 claude-official
   --scan-root <path>      可重复；默认 ~/.claude/projects
-  --quota                 本机启用 QuotaFetcher（只在一台机器上开）
+  --quota                 本机代抓额度（旧路径；默认由服务端直接抓，只在服务端关了采集时用）
   --no-service            只写配置，不装 launchd/systemd
   --force                 覆盖已存在的配置
 

@@ -299,6 +299,23 @@ export interface QuotaHistoryParams extends TimeRangeParams {
   window_kind: string;
 }
 
+// ── claude.ai 会话：服务端直接抓额度用（CONTRACT §2.4）──────────────────────
+/**
+ * none 未登录 · pending 存了还没抓过 · ok 正常 · auth 会话失效 · blocked 被 Cloudflare 拦
+ * · error 暂时失败（下一轮自动重试）· disabled 服务端没开采集（额度只能靠探针代抓）
+ */
+export type QuotaSessionState = "none" | "pending" | "ok" | "auth" | "blocked" | "error" | "disabled";
+
+/** 只有状态，没有 sessionKey —— 服务端任何接口都不回显它。 */
+export interface QuotaSessionStatus {
+  profile_id: string;
+  state: QuotaSessionState;
+  last_ok_at: Rfc3339 | null;
+  last_attempt_at: Rfc3339 | null;
+  next_attempt_at: Rfc3339 | null;
+  error: string | null;
+}
+
 export interface UaApi {
   readonly kind: "mock" | "live";
   profiles(signal?: AbortSignal): Promise<Profile[]>;
@@ -308,6 +325,10 @@ export interface UaApi {
   distribution(p: DistributionParams, signal?: AbortSignal): Promise<Distribution>;
   calibration(profileId: string, signal?: AbortSignal): Promise<Calibration>;
   quotaHistory(p: QuotaHistoryParams, signal?: AbortSignal): Promise<QuotaHistory>;
+  quotaSession(profileId: string, signal?: AbortSignal): Promise<QuotaSessionStatus>;
+  /** 服务端先拿它去问 claude.ai，认了才保存；不认就抛 ApiError，message 可以直接给人看。 */
+  saveQuotaSession(profileId: string, sessionKey: string): Promise<QuotaSessionStatus>;
+  clearQuotaSession(profileId: string): Promise<QuotaSessionStatus>;
   /** 返回 unsubscribe。连接状态通过 onStatus 上报，供顶栏「同步状态」使用。 */
   stream(
     profileId: string,

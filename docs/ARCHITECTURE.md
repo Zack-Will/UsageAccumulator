@@ -305,7 +305,22 @@ cursor 存本地 SQLite，fsync 在成功上报之后
 
 上报请求：`POST /v1/ingest/events`，body 为 gzip 的 NDJSON，header 带 `Idempotency-Key`（批次 hash）与 `Authorization: Bearer <machine_token>`。
 
-### 5.3 QuotaFetcher（仅 primary probe 启用）
+### 5.3 额度采集：服务端直接抓（2026-09-23 起）
+
+> **改动（2026-09-23）**：额度改由 **ua-server 自己抓**，探针代抓降为可选的旧路径（默认关）。
+> 原因：代抓的那台机器是笔记本，一合盖、一出门，额度曲线就断档 —— 这段时间里手机聊天、
+> 公司 Mac、NAS 上消耗的额度没人采样，燃尽、耗尽预估与「其他来源」归因一起失真。
+> 服务端 7×24 在线，自己抓才干净；它也本来就是唯一需要这份数据的地方。
+>
+> - 会话：看板顶栏点「额度更新」→ 粘贴浏览器 Cookie 里的 `sessionKey`。服务端先拿它问 claude.ai，
+>   认了才保存。**服务端替不了浏览器登录**（邮件 / Google 登录要过人机验证，不做）。
+> - 存放：`UA_CLAUDE_SESSION_DIR`（默认 `~/.config/ua-server/claude-sessions/<profile_id>`，0700 / 0600），
+>   **不进数据库**，免得跟着备份和 pg_dump 走。接口只写不读，GET 只给状态（CONTRACT §2.4）。
+> - 节奏与判错沿用下面探针那一套（5 分钟 + 抖动；401/403 阶梯退避），代码共用 `@ua/core` 的 `ClaudeWebClient`。
+>   额外区分了 Cloudflare 质询（HTML 挑战页）与会话失效：前者换会话没用，提示不能混。
+> - 看板顶栏在会话失效 / 被拦截 / 未登录时直接显示这几个字（手机上也显示）。
+>
+> 以下是探针代抓的原设计，保留作旧路径说明。
 
 移植 Claude-Usage-Tracker 的采集逻辑。它本身就是 macOS 原生菜单栏 App，形态与我们的 Mac 探针一致，移植成本低。
 
@@ -517,7 +532,7 @@ rate_pct = 最近 30min 的 pct 增长速率（EWMA）
 |---|---|
 | 探针认证 | 安装时用一次性 enroll token 换取长期 machine token；服务端可单独吊销某台机器 |
 | 传输 | HTTPS only，Caddy 自动证书 |
-| 官方凭证 | **只存探针本机**（macOS Keychain / Linux 0600 文件），永不上报 |
+| 官方凭证 | claude.ai 会话存**服务端**（`UA_CLAUDE_SESSION_DIR` 下 0600 文件，不进数据库），看板只写不读，任何接口不回显（§5.3，2026-09-23 起）。探针代抓的旧路径仍是只存本机 |
 | 内容隐私 | 只上报 usage 数字与维度，不含任何 prompt / 响应 / 工具参数 |
 | 项目路径 | 配置项 `hash_project_paths = true` 时上报 HMAC 后的 slug，看板显示别名 |
 | 看板访问 | v1 用单一 Bearer token + Caddy basic auth 即可；不做用户体系 |
@@ -628,6 +643,8 @@ M1 的验收标准是刻意设计的：**用 ccusage 的输出做 golden test**�
 | ua-probe | Mac | launchd `com.zackwill.ua-probe` | ✓ |
 | ua-menubar | Mac | launchd `com.zackwill.ua-menubar` | ✓ |
 
+**额度采集**（2026-09-23 起）：由 ua-server 内置采样器直接抓，会话文件在 NAS VM `~/.config/ua-server/claude-sessions/`；两台探针的 `[quota] enabled` 均为 `false`。
+
 四个服务均已实测「杀掉进程后自动拉起」。
 
 **基建侧改动**（按 SOP 走，回滚点见下）：`00-core.toml` 新增 `ubuntu-ccusage-8787`，core 47→48，备份 `00-core.toml.pre-ccusage-20260921T025104Z`；杭州 `domains.yaml` 的 `ali` 组新增 `ccusage`，声明 49→50，备份 `domains.yaml.bak-ccusage-20260921T025216Z`。nginx 与证书未动（泛域名覆盖）。
@@ -638,6 +655,11 @@ M1 的验收标准是刻意设计的：**用 ccusage 的输出做 golden test**�
 **已知未完成**：额度采集（见 §13.8）；菜单栏未正式打包成 `.app`，其自带的开机自启开关因缺少 bundle 身份而失效（当前由 launchd 代劳）。
 
 ## 13.8 额度采集在本网络环境下走不通（2026-09-21 实测）
+
+> **已推翻（2026-09-22）**：下表四次测试用的都是 curl，Cloudflare 拦的是 curl 的 TLS 指纹，不是网络位置。
+> undici（Node）、URLSession、Chromium 在同一条链路上都能正常取到 usage。
+> 2026-09-23 从 NAS VM 用 Node 发不带凭证的请求复核：过了 Cloudflare、未判地区不可用，只因未登录被拒（`account_session_invalid`）。
+> 额度随后改由服务端直接抓（§5.3）。下面保留原记录，作为「用 curl 下结论」的反例。
 
 §2.2 假设「本地机器代抓，住宅 IP + 真实 UA，风控友好」。**实测该假设不成立**：
 
