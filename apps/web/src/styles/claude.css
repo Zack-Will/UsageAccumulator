@@ -170,6 +170,8 @@ body {
   padding: 6px 30px 6px 14px;
   border-color: var(--border);
   font-weight: 500;
+  /* <select> 按最长的选项撑宽，账号名多长它就多宽 —— 封顶，别让它把顶栏挤折 */
+  max-width: 180px;
 }
 
 .iconbtn {
@@ -471,8 +473,10 @@ body {
 }
 
 /* 再窄就放不下一行了：与其让最后几个按钮被挤到第二行角落，不如明确分成两行 ——
-   第一行字标 + 导航，第二行整条控件。占位的 spacer 在这里变成换行符。 */
-@media (max-width: 1023px) {
+   第一行字标 + 导航，第二行整条控件。占位的 spacer 在这里变成换行符。
+   断点放在 1100 而不是刚好放不下的宽度：账号名长短不定（「Claude 官方订阅」比
+   「claude-official」宽一截），按某个账号名卡断点，换个账号就又在边缘折行。 */
+@media (max-width: 1100px) {
   .topbar {
     row-gap: 8px;
   }
@@ -490,4 +494,27 @@ body {
   .page-head__title {
     font-size: 26px;
   }
+}
+
+/* 换了衬线大字和 14px 正文之后，「一行三张」在 960 以下放不下了：
+   800 宽时每张卡只剩 ~240px，「重置时预计 100% ±7」「38,695 次调用 · 256.7M」
+   都会折行，而且各卡折得不一样，同一行里金额行就对不齐了。这一档起一律整行。 */
+@media (max-width: 960px) {
+  .grid > .card {
+    grid-column: span 6 !important;
+  }
+}
+
+/* 兜底：卡里的短标签和金额下面那行小字不许折行 —— 折行是按内容长短各折各的，
+   同一行里的卡就会高低不齐。放不下就截断，宽度由上面的断点保证够用。 */
+.quota__proj,
+.usum__k {
+  white-space: nowrap;
+}
+
+.quota__money-col .mono {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

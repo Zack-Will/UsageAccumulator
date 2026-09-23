@@ -287,6 +287,14 @@ export interface UsageTotals {
   cost: CostSummary;
   /** 缓存命中率 0..100；没有任何输入侧 token 时为 null（不是 0%） */
   cacheHitPct: number | null;
+  /**
+   * 平均每次调用带进模型的上下文 = 输入侧总量（未缓存 + 缓存读 + 缓存写）÷ 调用次数。
+   * 这是额度消耗的主因：Claude Code 每次调用都把整段会话重新送一遍，
+   * 会话越长这个数越大 —— 比单独一个「调用次数」有信息量得多。
+   */
+  avgContext: number | null;
+  /** 平均每次调用折算多少钱。只按有报价的调用平均；全部缺价时 null（不是 $0） */
+  avgCostPerCall: number | null;
 }
 
 /**
@@ -315,6 +323,8 @@ export function usageTotals(buckets: DistributionBucket[]): UsageTotals {
     cacheWrite += b.cache_write_5m_tokens + b.cache_write_1h_tokens;
     events += b.events;
   }
+  const cost = costSummary(buckets);
+  const priced = events - cost.unpricedEvents;
   return {
     totalTokens,
     input,
@@ -322,8 +332,10 @@ export function usageTotals(buckets: DistributionBucket[]): UsageTotals {
     cacheRead,
     cacheWrite,
     events,
-    cost: costSummary(buckets),
+    cost,
     cacheHitPct: cacheHitPct(input, cacheRead, cacheWrite),
+    avgContext: events > 0 ? (input + cacheRead + cacheWrite) / events : null,
+    avgCostPerCall: cost.usd !== null && priced > 0 ? cost.usd / priced : null,
   };
 }
 

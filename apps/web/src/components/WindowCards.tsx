@@ -293,7 +293,7 @@ export function WindowCard({
               </span>
             )}
             <Mono tone="muted">
-              {events.toLocaleString("en-US")} 次 · {fmtTokens(tokens)}
+              {events.toLocaleString("en-US")} 次调用 · {fmtTokens(tokens)}
             </Mono>
           </div>
           <div className="quota__money-col quota__money-col--end">

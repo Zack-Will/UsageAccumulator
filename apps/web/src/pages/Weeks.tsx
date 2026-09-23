@@ -162,7 +162,7 @@ export function Weeks({ api, t, profileId, nonce, windows }: Props) {
             {cost ? <Cost usd={cost.usd} unpriced={cost.unpricedEvents} /> : <Mono tone="muted">—</Mono>}
           </div>
           <div className="weekstat__row">
-            <Mono tone="muted">请求 / tokens</Mono>
+            <Mono tone="muted">调用 / tokens</Mono>
             <Mono>
               {events.toLocaleString("en-US")} 次 · {fmtTokens(tokens)}
             </Mono>

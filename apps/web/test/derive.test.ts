@@ -96,6 +96,36 @@ describe("usageTotals / cacheHitPct", () => {
   });
 });
 
+describe("usageTotals / 平均上下文与单次金额", () => {
+  it("平均上下文 = 输入侧总量 ÷ 调用次数（实测形态：每次 2 个未缓存 + 大段缓存读）", () => {
+    // 216 次调用、未缓存输入 432（每次 2）、缓存读 116.0M、缓存写 2.0M —— 截图里那张卡的数
+    const t = usageTotals([
+      bucket({ events: 216, input_tokens: 432, cache_read_tokens: 116_000_000, cache_write_1h_tokens: 2_000_000, cost_usd: 46.52 }),
+    ]);
+    expect(t.avgContext).toBeCloseTo((432 + 116_000_000 + 2_000_000) / 216, 3);
+    expect(t.avgCostPerCall).toBeCloseTo(46.52 / 216, 6);
+  });
+
+  it("单次金额只按有报价的调用平均 —— 缺价的调用不能拉低均值", () => {
+    const t = usageTotals([
+      bucket({ events: 10, cost_usd: 5, unpriced_events: 0 }),
+      bucket({ events: 4, cost_usd: null, unpriced_events: 4 }),
+    ]);
+    expect(t.avgCostPerCall).toBeCloseTo(0.5, 6);
+  });
+
+  it("全部缺价 → 单次金额是 null（未知），不是 $0", () => {
+    const t = usageTotals([bucket({ events: 3, cost_usd: null, unpriced_events: 3 })]);
+    expect(t.avgCostPerCall).toBeNull();
+  });
+
+  it("没有调用 → 两个均值都是 null，不除以 0", () => {
+    const t = usageTotals([]);
+    expect(t.avgContext).toBeNull();
+    expect(t.avgCostPerCall).toBeNull();
+  });
+});
+
 describe("byCostThenTokens", () => {
   it("有报价的按金额降序，缺价的沉底", () => {
     const rows = [
@@ -155,5 +185,14 @@ describe("niceMaxPct / 燃尽图纵轴", () => {
   it("逼近上限就回到 110%，让 100% 线重新可见", () => {
     expect(niceMaxPct(88)).toBe(110);
     expect(niceMaxPct(100)).toBe(110);
+  });
+});
+
+describe("fmtUsdSmall", () => {
+  it("一毛以下给三位小数：$0.045 不该被显示成 $0.05", async () => {
+    const { fmtUsdSmall } = await import("../src/components/UsagePanels");
+    expect(fmtUsdSmall(0.045)).toBe("$0.045");
+    expect(fmtUsdSmall(0.2154)).toBe("$0.22");
+    expect(fmtUsdSmall(1.5)).toBe("$1.50");
   });
 });

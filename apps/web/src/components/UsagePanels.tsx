@@ -24,7 +24,19 @@ export function UsageSummary({
   mdSpan?: number;
 }) {
   return (
-    <Card title={title} span={span} mdSpan={mdSpan}>
+    <Card
+      title={title}
+      span={span}
+      mdSpan={mdSpan}
+      aside={
+        totals ? (
+          <span>
+            {totals.events.toLocaleString("en-US")} 次调用
+            {totals.avgCostPerCall !== null && ` · 均 ${fmtUsdSmall(totals.avgCostPerCall)}`}
+          </span>
+        ) : undefined
+      }
+    >
       {totals ? (
         <div className="usum">
           <div className="usum__hero">
@@ -40,15 +52,18 @@ export function UsageSummary({
             </div>
           </div>
 
+          {/* 第一行：比率与产出；第二行：输入侧的三个组成部分，三格加起来就是输入侧总量。
+              「未缓存输入」以前叫「输入」—— Claude Code 几乎整段上下文都走缓存，
+              这一格常年只有个位数 × 调用次数，不写明「未缓存」就像是漏了单位 */}
           <div className="usum__grid">
             <Stat k="缓存命中" v={totals.cacheHitPct === null ? "—" : fmtPct(totals.cacheHitPct)}>
               {totals.cacheHitPct !== null && <HitRing pct={totals.cacheHitPct} />}
             </Stat>
-            <Stat k="输入" v={fmtTokens(totals.input)} />
+            <Stat k="平均上下文" v={totals.avgContext === null ? "—" : fmtTokens(totals.avgContext)} />
             <Stat k="输出" v={fmtTokens(totals.output)} />
             <Stat k="缓存读" v={fmtTokens(totals.cacheRead)} />
             <Stat k="缓存写" v={fmtTokens(totals.cacheWrite)} />
-            <Stat k="请求" v={totals.events.toLocaleString("en-US")} />
+            <Stat k="未缓存输入" v={fmtTokens(totals.input)} />
           </div>
         </div>
       ) : (
@@ -56,6 +71,11 @@ export function UsageSummary({
       )}
     </Card>
   );
+}
+
+/** 单次金额常在几分钱量级：两位小数会把 $0.045 显示成 $0.05，所以 1 毛以下给三位 */
+export function fmtUsdSmall(v: number): string {
+  return `$${v < 0.1 ? v.toFixed(3) : v.toFixed(2)}`;
 }
 
 function Stat({ k, v, children }: { k: string; v: string; children?: React.ReactNode }) {
