@@ -14,9 +14,9 @@ import { usageTimelineOption } from "../charts/distribution";
 import { colorMapFor } from "../charts/registry";
 import type { Tokens } from "../charts/tokens";
 import { Chart } from "../components/Chart";
-import { Card, Placeholder, Segmented } from "../components/primitives";
+import { Card, Mono, Placeholder, Segmented } from "../components/primitives";
 import { BreakdownTable, UsageSummary } from "../components/UsagePanels";
-import { isMeaningfulWindow, labelOf, WindowCard } from "../components/WindowCards";
+import { displayWindows, isActiveWindow, labelOf, quotaSpans, WindowCard } from "../components/WindowCards";
 import { useAsync } from "../hooks/useAsync";
 
 interface Props {
@@ -74,17 +74,16 @@ export function Overview({
     [api, profileId, from, to, nonce],
   );
 
-  // 展示用的窗口集合：滤掉官方那批代号占位字段，否则 12 栅格会被撑到换行
-  const shown = useMemo(
-    () => windows?.windows.filter(isMeaningfulWindow) ?? null,
-    [windows],
-  );
-  const five = shown?.find((w) => w.window_kind === "five_hour") ?? shown?.[0];
+  // 展示用的窗口集合：核心窗口永远在（空闲也在），代号占位字段照旧滤掉
+  const shown = useMemo(() => (windows ? displayWindows(windows.windows) : null), [windows]);
+  // 这一行的列宽跟着张数走，永远铺满 12 栅格 —— 下面的卡不会被挤上来
+  const spans = quotaSpans(shown?.length ?? 3);
 
-  // 燃尽曲线可切窗口：projected_curve 对 7d 是日历模式（周末塌下去），
-  // 只画 5h 的话这条曲线最要紧的那一半永远看不到。
+  // 燃尽曲线只画正在计时的窗口：空闲窗口没有起止时刻，画出来是一张空轴。
+  // projected_curve 对 7d 是日历模式（周末塌下去），只画 5h 的话这条曲线最要紧的那一半永远看不到。
+  const burnable = useMemo(() => shown?.filter(isActiveWindow) ?? [], [shown]);
   const [burnKind, setBurnKind] = useState("five_hour");
-  const burnWindow = shown?.find((w) => w.window_kind === burnKind) ?? five;
+  const burnWindow = burnable.find((w) => w.window_kind === burnKind) ?? burnable[0];
   const burnOption = useMemo(
     () =>
       burnWindow
@@ -126,6 +125,8 @@ export function Overview({
               profileId={profileId}
               to={to}
               nonce={nonce}
+              span={spans.span}
+              mdSpan={spans.mdSpan}
             />
           ))
         : [0, 1, 2].map((i) => (
@@ -197,7 +198,7 @@ export function Overview({
             <Segmented
               label="燃尽曲线窗口"
               value={burnWindow?.window_kind ?? "five_hour"}
-              options={(shown ?? []).map((w) => ({ value: w.window_kind, label: labelOf(w.window_kind) }))}
+              options={burnable.map((w) => ({ value: w.window_kind, label: labelOf(w.window_kind) }))}
               onChange={setBurnKind}
             />
           ) : undefined
@@ -209,6 +210,10 @@ export function Overview({
             height={200}
             ariaLabel="燃尽曲线：已用百分比、P25–P75 预测区间与窗口边界"
           />
+        ) : windows && burnable.length === 0 ? (
+          <div className="btable__empty" style={{ height: 200 }}>
+            <Mono tone="muted">没有正在计时的窗口</Mono>
+          </div>
         ) : (
           <Placeholder state={windowsError ? "error" : "loading"} height={200} />
         )}

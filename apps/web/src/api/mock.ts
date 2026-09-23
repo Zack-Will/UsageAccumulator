@@ -272,7 +272,53 @@ function makeWindow(
   };
 }
 
+/**
+ * mock 场景，由 URL 的 `?scenario=` 选择，只影响演示数据：
+ *   idle5h —— 5h 窗口到期、下一条消息还没来（0%，没有重置时刻）。
+ *             每天都会出现的状态，以前它会让整张 5h 卡从页面上消失、下一张卡被挤上第一行。
+ */
+function mockScenario(): string {
+  try {
+    return new URLSearchParams(globalThis.location?.search ?? "").get("scenario") ?? "";
+  } catch {
+    return "";
+  }
+}
+
+/** 与真实服务端对空闲窗口的输出同形：utilization 0、resets_at / starts_at 为 null、曲线为空。 */
+function idleWindow(w: WindowState): WindowState {
+  return {
+    ...w,
+    utilization_pct: 0,
+    resets_at: null,
+    starts_at: null,
+    projected_pct: { p25: 0, mid: 0, p75: 0 },
+    exhaust_eta: null,
+    rate_pct_per_min: 0,
+    burn_curve: [],
+    projected_curve: [],
+    // 服务端对空闲窗口的归因起点就是「现在」，窗口里一个采样都没有
+    attribution: {
+      other_pct_lower_bound: 0,
+      ambiguous_pct: 0,
+      unobserved_pct: 0,
+      quiet_spans: 0,
+      has_sampling_gap: false,
+      usable: false,
+      local_utilization_pct: 0,
+    },
+  };
+}
+
 function windowsAt(nowMs: number, drift: number): WindowsCurrent {
+  const out = windowsActive(nowMs, drift);
+  if (mockScenario() === "idle5h") {
+    out.windows = out.windows.map((w) => (w.window_kind === "five_hour" ? idleWindow(w) : w));
+  }
+  return out;
+}
+
+function windowsActive(nowMs: number, drift: number): WindowsCurrent {
   const fiveStart = fiveHourStart(nowMs);
   const sevenStart = nowMs - 4.3 * DAY;
   return {

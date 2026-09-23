@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import type { UaApi, WindowsCurrent } from "../api";
 import { costSummary } from "../api/derive";
-import { fmtTokens } from "../charts/base";
+import { fmtTokens, msOf } from "../charts/base";
 import { weeklyQuotaOption } from "../charts/weekly";
 import type { Tokens } from "../charts/tokens";
 import { Chart } from "../components/Chart";
@@ -41,7 +41,8 @@ const md = (ms: number): string => {
  */
 function buildWeeks(windows: WindowsCurrent | null): Week[] {
   const seven = windows?.windows.find((w) => w.window_kind === "seven_day");
-  const anchor = seven ? Date.parse(seven.resets_at) : NaN;
+  // 周窗口理论上一直在计时，但万一官方给了 null（空闲），宁可不画也不要锚在 NaN 上
+  const anchor = seven ? msOf(seven.resets_at) : NaN;
   if (!Number.isFinite(anchor)) return [];
   const out: Week[] = [];
   for (let k = 0; k < WEEKS_BACK; k++) {

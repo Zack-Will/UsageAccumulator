@@ -1,5 +1,5 @@
 import type { EChartsOption } from "./echarts";
-import { axisCommon, baseOption, fmtClock, fmtDay, niceMaxPct, NUM_FONT } from "./base";
+import { axisCommon, baseOption, fmtClock, fmtDay, msOf, niceMaxPct, NUM_FONT } from "./base";
 import { bandSeries } from "./band";
 import { alpha, status, type Tokens } from "./tokens";
 import type { WindowState } from "../api/types";
@@ -38,8 +38,9 @@ export function burndownOption(
 ): EChartsOption {
   const s = status(t);
   const { official, interpolated } = splitBySource(w);
-  const startMs = Date.parse(w.starts_at);
-  const endMs = Date.parse(w.resets_at);
+  // 只对正在计时的窗口调用（Overview 的 burnable）；空闲窗口没有起止，这里拿到的就是 NaN
+  const startMs = msOf(w.starts_at);
+  const endMs = msOf(w.resets_at);
   const fmtX = span === "five_hour" ? fmtClock : fmtDay;
 
   /**

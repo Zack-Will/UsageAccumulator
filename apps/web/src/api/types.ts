@@ -93,8 +93,13 @@ export interface OverlapMetrics {
 export interface WindowState {
   window_kind: WindowKind;
   utilization_pct: Pct;
-  resets_at: Rfc3339;
-  starts_at: Rfc3339;
+  /**
+   * ★ 可以是 null：5h 窗口到期后、下一条消息之前，官方不给重置时刻 —— 窗口处于空闲。
+   * 以前这里标成必有字符串，于是没人处理 null，空闲窗口的卡片拿 from=null 去查花费。
+   */
+  resets_at: Rfc3339 | null;
+  /** 与 resets_at 同生同灭：没有重置时刻就推不出起点。 */
+  starts_at: Rfc3339 | null;
   projected_pct: ProjectedPct;
   /** null 表示本窗口不会耗尽（ARCHITECTURE §7.3）。 */
   exhaust_eta: Rfc3339 | null;

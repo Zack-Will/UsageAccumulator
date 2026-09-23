@@ -212,6 +212,13 @@ button {
   color: var(--text-3);
 }
 
+/* 带「额度更新」四个字时顶栏实测要 ~1210px；留出余量，1280 以下只留钟点 */
+@media (max-width: 1280px) {
+  .sync__label {
+    display: none;
+  }
+}
+
 .dot {
   width: 7px;
   height: 7px;
@@ -685,6 +692,41 @@ button {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  flex: 1 1 auto;
+}
+
+/* ★ 同一行的卡被栅格拉成等高后，内容要按「行」对齐，而不是各自从上往下堆：
+   卡片做成纵向 flex，金额那一行 margin-top:auto 钉在底边。
+   这样哪张卡多一行、少一行（空闲态没有预计值、告警时状态行变粗），
+   三张卡的「已用 / 满额约」依然在同一条水平线上。 */
+.card:has(> .quota),
+.card:has(> .usum) {
+  display: flex;
+  flex-direction: column;
+}
+
+/* ★ 额度卡的表头按**卡片宽度**切换一行 / 两行，不交给 flex-wrap 各自决定。
+   同一行的三张卡宽度相同，按宽度切换就一定同进同退；而按内容换行时，
+   5h 的「21:10 重置 · 4 小时后」放得下、7d 的「09-29 周二 07:00 重置 · 5 天 14 小时后」
+   放不下，两张卡的表头差出一行，额度条就在同一行里错开 20px。
+   阈值：最长一行实测 293px（标题 50 + 间距 10 + 重置信息 233），留一成余量。 */
+.card:has(> .quota) {
+  container-type: inline-size;
+}
+
+@container (max-width: 320px) {
+  .card__head:has(+ .quota) {
+    flex-direction: column;
+    flex-wrap: nowrap;
+    align-items: flex-start;
+    gap: 3px;
+  }
+  /* 两行模式下仍然放不下（很窄的屏）就截断，绝不再折成第三行 */
+  .card__head:has(+ .quota) > .card__aside {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
 }
 
 .quota__head {
@@ -737,6 +779,8 @@ button {
   display: flex;
   align-items: center;
   gap: 7px;
+  /* 固定行高：告警态字号大一号、带圆点，不能因此把下面的金额行往下推 1px */
+  height: 18px;
   font-size: 12px;
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
@@ -750,6 +794,7 @@ button {
   display: flex;
   justify-content: space-between;
   gap: 12px;
+  margin-top: auto;
   padding-top: 10px;
   border-top: 1px solid var(--border-soft);
 }
@@ -793,6 +838,7 @@ button {
   display: flex;
   flex-direction: column;
   gap: 14px;
+  flex: 1 1 auto;
 }
 
 .usum__hero {
@@ -825,6 +871,8 @@ button {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px 16px;
+  /* 与旁边时间线的横轴一起落在卡片底边 */
+  margin-top: auto;
   padding-top: 12px;
   border-top: 1px solid var(--border-soft);
 }

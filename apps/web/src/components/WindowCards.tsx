@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import type { UaApi, WindowState } from "../api";
 import { costSummary } from "../api/derive";
-import { fmtTokens, fmtUntil, fmtWhen } from "../charts/base";
+import { fmtTokens, fmtUntil, fmtWhen, msOf } from "../charts/base";
 import { ringTone } from "../charts/rings";
 import type { Tokens } from "../charts/tokens";
 import { useAsync } from "../hooks/useAsync";
@@ -32,7 +32,42 @@ export const labelOf = (kind: string): string => WINDOW_LABEL[kind] ?? kind;
  * 还会把 12 栅格撑到换行。判据与菜单栏的 isMeaningful 一致。
  */
 export const isMeaningfulWindow = (w: WindowState): boolean =>
-  Number.isFinite(Date.parse(w.resets_at)) || w.utilization_pct > 0;
+  Number.isFinite(msOf(w.resets_at)) || w.utilization_pct > 0;
+
+/** 当前是否有一个正在计时的窗口。5h 窗口到期后、下一条消息之前，官方给的是 0% 且没有重置时刻。 */
+export const isActiveWindow = (w: WindowState): boolean => Number.isFinite(msOf(w.resets_at));
+
+/**
+ * 核心窗口：**永远占一个位置**，空闲时显示空闲态，而不是从页面上消失。
+ * 顺序就是展示顺序。
+ *
+ * ★ 以前核心窗口和代号占位字段走同一个过滤：5h 窗口一到期（0%、没有重置时刻），
+ * 整张卡就被当成噪音筛掉了 —— 顶部只剩两张，下一张卡被栅格自动排版挤上第一行，
+ * 第二行凭空空出一块。而「5h 窗口空闲」本身就是一条有用的信息。
+ */
+export const CORE_WINDOW_KINDS = ["five_hour", "seven_day", "seven_day_fable", "seven_day_opus"] as const;
+
+export function displayWindows(all: readonly WindowState[]): WindowState[] {
+  const rank = (k: string): number => {
+    const i = (CORE_WINDOW_KINDS as readonly string[]).indexOf(k);
+    return i === -1 ? CORE_WINDOW_KINDS.length : i;
+  };
+  return all
+    .filter((w) => rank(w.window_kind) < CORE_WINDOW_KINDS.length || isMeaningfulWindow(w))
+    .sort((a, b) => rank(a.window_kind) - rank(b.window_kind) || a.window_kind.localeCompare(b.window_kind));
+}
+
+/**
+ * 顶部一行的列宽按**实际张数**分，保证这一行永远正好铺满 12 栅格：
+ * 张数一变（某个周限额不存在、官方多给了一个窗口），下面的卡不会被挤上来。
+ */
+export function quotaSpans(n: number): { span: number; mdSpan: number } {
+  if (n <= 1) return { span: 12, mdSpan: 6 };
+  if (n === 2) return { span: 6, mdSpan: 3 };
+  if (n === 3) return { span: 4, mdSpan: 2 };
+  if (n === 4) return { span: 3, mdSpan: 3 };
+  return { span: 4, mdSpan: 2 };
+}
 
 /**
  * window_kind 里编码的模型家族；null = 该窗口覆盖所有模型。
@@ -97,6 +132,8 @@ export function WindowCard({
   profileId,
   to,
   nonce,
+  span = 4,
+  mdSpan = 2,
 }: {
   w: WindowState;
   nowMs: number;
@@ -105,7 +142,11 @@ export function WindowCard({
   /** 页面的区间右端（≈现在）。用它而不是 nowMs 当依赖，否则每秒都会重新取数。 */
   to: string;
   nonce: number;
+  span?: number;
+  mdSpan?: number;
 }) {
+  // 空闲：上一个窗口已到期、下一条消息还没来。没有起点，也就没有「窗口内」的任何量
+  const idle = !isActiveWindow(w);
   const tone = ringTone(w.utilization_pct, w.projected_pct.mid);
   // 预计值单独取色：它才是「会不会超」的答案，已用量只是现状
   const projTone = w.projected_pct.mid >= 100 ? "danger" : w.projected_pct.mid >= 90 ? "warn" : undefined;
@@ -114,8 +155,8 @@ export function WindowCard({
 
   const etaMs = w.exhaust_eta ? Date.parse(w.exhaust_eta) : NaN;
   const remain = Number.isFinite(etaMs) ? etaMs - nowMs : null;
-  const resetMs = Date.parse(w.resets_at);
-  const startMs = Date.parse(w.starts_at);
+  const resetMs = msOf(w.resets_at);
+  const startMs = msOf(w.starts_at);
   const pace =
     Number.isFinite(resetMs) && Number.isFinite(startMs) && resetMs > startMs
       ? Math.max(0, Math.min(1, (nowMs - startMs) / (resetMs - startMs)))
@@ -130,16 +171,22 @@ export function WindowCard({
    * 取数区间是窗口自己的 starts_at → 现在，与百分比同一段时间。
    */
   const spend = useAsync(
-    (sig) => api.distribution({ profile_id: profileId, from: w.starts_at, to, by: "model" }, sig),
-    [api, profileId, w.starts_at, to, nonce],
+    // ★ 空闲时 starts_at 是 null：照发请求会带上 from=null，服务端按缺省回看 7 天，
+    //   5h 卡上就会出现一周的花费。空闲窗口里确实什么都没发生，不必去问。
+    (sig) =>
+      idle || !w.starts_at
+        ? Promise.resolve(null)
+        : api.distribution({ profile_id: profileId, from: w.starts_at, to, by: "model" }, sig),
+    [api, profileId, w.starts_at, to, nonce, idle],
   );
   // 按模型分桶后再按窗口的家族过滤：7d Fable 只该算 Fable 的量
   const family = windowModelFamily(w.window_kind);
   const buckets = useMemo(() => {
+    if (idle) return [];
     const all = spend.data?.buckets ?? null;
     if (!all) return null;
     return family ? all.filter((b) => modelInFamily(b.key, family)) : all;
-  }, [spend.data, family]);
+  }, [spend.data, family, idle]);
 
   const cost = buckets ? costSummary(buckets) : null;
   const events = buckets ? buckets.reduce((a, b) => a + b.events, 0) : 0;
@@ -170,38 +217,58 @@ export function WindowCard({
   const localPct = attr ? attr.local_utilization_pct : w.utilization_pct;
   const fullWindowCost =
     cost?.usd != null && cost.usd > 0 && localPct > 0 ? cost.usd / (localPct / 100) : null;
-  /** 只在真的测到别处的消耗时才占一行字；测到 0 就什么都不说 */
-  const otherPct = attr?.other_pct_lower_bound ?? 0;
+  /** 只在真的测到别处的消耗时才占一行字；测到 0 就什么都不说。空闲窗口里没有「窗口内」 */
+  const otherPct = idle ? 0 : (attr?.other_pct_lower_bound ?? 0);
 
   const etaTone = remain === null ? "muted" : remain < 45 * 60_000 ? "danger" : "warn";
 
   return (
     <Card
       title={label}
-      span={4}
-      mdSpan={2}
-      tone={tone === "ok" ? "plain" : tone}
+      span={span}
+      mdSpan={mdSpan}
+      tone={idle || tone === "ok" ? "plain" : tone}
       aside={
-        <Mono tone="muted">
-          {fmtWhen(resetMs, nowMs)} 重置 · {fmtUntil(resetMs - nowMs)}
-        </Mono>
+        idle ? (
+          <Mono tone="muted">未开始计时</Mono>
+        ) : (
+          <Mono tone="muted">
+            {fmtWhen(resetMs, nowMs)} 重置 · {fmtUntil(resetMs - nowMs)}
+          </Mono>
+        )
       }
     >
       <div className="quota">
         <div className="quota__head">
-          <Num value={w.utilization_pct} digits={0} suffix="%" size="xl" tone={tone === "ok" ? undefined : tone} />
-          <span className="quota__proj">
-            <Mono tone="muted">重置时预计</Mono>
-            <Num value={w.projected_pct.mid} digits={0} suffix="%" size="md" tone={projTone} />
-            {band >= 1 && <Mono tone="muted">±{band}</Mono>}
-          </span>
+          <Num
+            value={w.utilization_pct}
+            digits={0}
+            suffix="%"
+            size="xl"
+            tone={idle ? "muted" : tone === "ok" ? undefined : tone}
+          />
+          {/* 空闲窗口没有「重置时」，预计值无从谈起 —— 留空，不写一个假的 0% */}
+          {!idle && (
+            <span className="quota__proj">
+              <Mono tone="muted">重置时预计</Mono>
+              <Num value={w.projected_pct.mid} digits={0} suffix="%" size="md" tone={projTone} />
+              {band >= 1 && <Mono tone="muted">±{band}</Mono>}
+            </span>
+          )}
         </div>
 
-        <QuotaBar used={w.utilization_pct} projected={w.projected_pct.mid} pace={pace} tone={tone} />
+        <QuotaBar
+          used={idle ? 0 : w.utilization_pct}
+          projected={idle ? 0 : w.projected_pct.mid}
+          pace={idle ? null : pace}
+          tone={tone}
+        />
 
         {/* 会耗尽就是这张卡最响的一句话；不会耗尽就安静地说一声 */}
         <div className={`quota__eta quota__eta--${etaTone}`} title={`${w.rate_pct_per_min.toFixed(2)} %/min`}>
-          {remain !== null ? (
+          {idle ? (
+            <span>空闲 · 下次使用时开始计时</span>
+          ) : remain !== null ? (
             <>
               <Dot tone={etaTone} />
               <span>

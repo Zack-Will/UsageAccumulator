@@ -46,6 +46,13 @@ export const fmtPct = (n: number, d = 1): string => (Number.isFinite(n) ? `${n.t
 
 const pad = (n: number): string => String(n).padStart(2, "0");
 
+/**
+ * 可空的 RFC3339 → 毫秒；null / 空串给 NaN。
+ * 调用方一律用 Number.isFinite 判断，不要拿 Date.parse(null) 碰运气 ——
+ * 它在不同引擎里不一定都是 NaN，而 NaN 一旦混进 min/max 就会静默污染整条轴。
+ */
+export const msOf = (s: string | null | undefined): number => (s ? Date.parse(s) : Number.NaN);
+
 /** 本地时区显示；服务端一律 UTC（CONTRACT §4）。 */
 export const fmtClock = (ms: number): string => {
   // 无效时间要显式说"没有"，不能吐 NaN:NaN —— 那既不是时间也不是占位符
