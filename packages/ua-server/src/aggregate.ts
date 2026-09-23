@@ -187,7 +187,7 @@ export function buildTimelineLanes(events: UsageEvent[], gapMs = 5 * 60_000): Ti
   return lanes;
 }
 
-export type DistributionBy = "machine" | "model" | "project" | "hour" | "attribution";
+export type DistributionBy = "machine" | "model" | "project" | "hour" | "attribution" | "session";
 /** series 的时间粒度；none = 不带 series */
 export type SeriesBucket = "none" | "hour" | "day";
 
@@ -207,6 +207,9 @@ export function distributionKey(e: UsageEvent, by: DistributionBy): string {
       return e.model;
     case "project":
       return e.projectSlug ?? "(unknown)";
+    // 一个会话 = 一个 JSONL 文件 = 桌面端侧边栏里的一条对话
+    case "session":
+      return e.sessionId || "(unknown)";
     // 归属可信度（ARCHITECTURE §4.2 / §12 的 M5 验收项：归属可信度必须可见）
     case "attribution":
       return e.attributionLevel;
@@ -621,4 +624,14 @@ export function downsample<T>(points: T[], max: number): T[] {
  */
 export function formatTrayTitlePct(pct: number | null): string {
   return pct === null ? "--%" : `${Math.round(pct)}%`;
+}
+
+/**
+ * Claude 桌面端的「临时工作区」：不选项目文件夹直接开对话时，桌面端自己建一个
+ * `…/Claude/scratch-workspaces/<org>/<user>/scratch-2026-09-22-105cae` 目录。
+ * 目录名最后一段是随机后缀，拿它当项目名毫无意义（看板上以前就显示「105cae」）。
+ * 这类项目一个目录对应一个会话，名字应该取会话标题。
+ */
+export function isScratchWorkspace(projectSlug: string | null | undefined): boolean {
+  return !!projectSlug && projectSlug.includes("-scratch-workspaces-");
 }

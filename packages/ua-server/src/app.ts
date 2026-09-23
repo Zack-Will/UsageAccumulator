@@ -19,6 +19,7 @@ import {
   ratioToPct,
 } from "./aggregate.js";
 import type { DistributionBy, SeriesBucket } from "./aggregate.js";
+import { isScratchWorkspace } from "./aggregate.js";
 import { buildSummary, computeCurrentWindows } from "./windows-service.js";
 import { decodeEventBatch, enrollWireSchema, quotaSnapshotWireSchema, quotaWireToSnapshot } from "./wire.js";
 import type { EventRow, Store } from "./store.js";
@@ -63,6 +64,8 @@ export type UaApp = ReturnType<typeof buildApp>;
 type ErrorCode =
   | "bad_request"
   | "unauthorized"
+  // 身份合法但无权做这件事（看板的只读身份去调写接口），区别于「凭证不对」的 unauthorized
+  | "forbidden"
   | "machine_revoked"
   // 专指路由或资源不存在；不要用 bad_request 代替，看板调试时会误以为是参数错了
   | "not_found"
@@ -111,7 +114,7 @@ const quotaHistorySchema = rangeSchema.extend({
 });
 
 const distributionSchema = rangeSchema.extend({
-  by: z.enum(["machine", "model", "project", "hour", "attribution"]).default("machine"),
+  by: z.enum(["machine", "model", "project", "hour", "attribution", "session"]).default("machine"),
   bucket: z.enum(["none", "hour", "day"]).default("none"),
 });
 
@@ -436,6 +439,38 @@ export function buildApp(opts: BuildAppOptions) {
   });
 
   // ── POST /v1/ingest/quota
+  // ── POST /v1/ingest/sessions：会话标题（只收标题，不收任何对话正文）
+  //
+  // 只认探针的 machine token：看板 token / 会话 Cookie 是只读身份，不能往库里写东西。
+  // 机器身份取自鉴权，不信 body 里自报的 —— 否则一台机器能改写别的机器的会话名。
+  const sessionTitlesSchema = z.object({
+    sessions: z
+      .array(
+        z.object({
+          session_id: z.string().min(1).max(200),
+          // 桌面端的标题一般十几个字；截断在探针侧做，这里只挡明显异常的输入
+          title: z.string().trim().min(1).max(300),
+        }),
+      )
+      .max(2000),
+  });
+
+  app.post("/v1/ingest/sessions", async (req, reply) => {
+    const auth = (req as FastifyRequest & { auth?: { kind: string; id?: string } }).auth;
+    if (auth?.kind !== "machine" || !auth.id) {
+      throw new HttpError(403, "forbidden", "only a machine token can report session titles");
+    }
+    const parsed = sessionTitlesSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new HttpError(400, "bad_request", parsed.error.issues[0]?.message ?? "invalid sessions payload");
+    }
+    const updated = await store.upsertSessionTitles(
+      auth.id,
+      parsed.data.sessions.map((x) => ({ sessionId: x.session_id, title: x.title })),
+    );
+    return reply.send({ ok: true, received: parsed.data.sessions.length, updated });
+  });
+
   app.post("/v1/ingest/quota", async (req, reply) => {
     const parsed = quotaSnapshotWireSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -581,6 +616,8 @@ export function buildApp(opts: BuildAppOptions) {
     // by=machine 时 key = machine_id，label = 可读主机名；没有可读名就不塞 label，
     // 让前端退回显示 key —— 硬塞一个等于 key 的 label 只会让调用方误以为拿到了人名。
     let labelOf: ((key: string) => string | undefined) | null = null;
+    /** by=session 的桶另带「在哪个项目、哪台机器」：只看标题分不清同名的两个会话 */
+    let sessionExtra: ((key: string) => { project_slug: string | null; machine_label: string }) | null = null;
     if (q.by === "machine") {
       const names = new Map(
         (await store.listMachines()).map((m) => [m.id, machineLabel(m.id, m.hostname)]),
@@ -588,6 +625,49 @@ export function buildApp(opts: BuildAppOptions) {
       labelOf = (key) => {
         const l = names.get(key);
         return l && l !== key ? l : undefined;
+      };
+    } else if (q.by === "session") {
+      const titles = await store.sessionTitles(buckets.map((b) => b.key));
+      labelOf = (key) => titles.get(key);
+      const machines = new Map(
+        (await store.listMachines()).map((m) => [m.id, machineLabel(m.id, m.hostname)]),
+      );
+      // 一个会话只在一台机器、一个项目目录里：取第一次见到的即可
+      const where = new Map<string, { project: string | null; machine: string }>();
+      for (const r of rows) {
+        const sid = r.event.sessionId || "(unknown)";
+        if (!where.has(sid)) where.set(sid, { project: r.event.projectSlug, machine: r.event.machineId });
+      }
+      sessionExtra = (key) => {
+        const w = where.get(key);
+        return {
+          project_slug: w?.project ?? null,
+          machine_label: w ? (machines.get(w.machine) ?? w.machine) : "",
+        };
+      };
+    } else if (q.by === "project") {
+      // ★ 临时工作区的目录名只有一段随机后缀（「105cae」）。它的名字应该是里面那个会话的标题：
+      //   取该目录里 token 最多的会话，有标题就用标题；多于一个会话时注明「等 N 个」。
+      const bySlug = new Map<string, Map<string, number>>();
+      for (const r of rows) {
+        const slug = r.event.projectSlug;
+        if (!isScratchWorkspace(slug)) continue;
+        const inner = bySlug.get(slug!) ?? new Map<string, number>();
+        const sid = r.event.sessionId || "(unknown)";
+        inner.set(sid, (inner.get(sid) ?? 0) + r.event.inputTokens + r.event.outputTokens + r.event.cacheReadTokens + r.event.cacheWrite5mTokens + r.event.cacheWrite1hTokens);
+        bySlug.set(slug!, inner);
+      }
+      const top = new Map<string, { sessionId: string; n: number }>();
+      for (const [slug, inner] of bySlug) {
+        const [sid] = [...inner.entries()].sort((a, b) => b[1] - a[1])[0] ?? [];
+        if (sid) top.set(slug, { sessionId: sid, n: inner.size });
+      }
+      const titles = await store.sessionTitles([...top.values()].map((t) => t.sessionId));
+      labelOf = (key) => {
+        const t = top.get(key);
+        const title = t ? titles.get(t.sessionId) : undefined;
+        if (!title) return undefined;
+        return t!.n > 1 ? `${title} 等 ${t!.n} 个` : title;
       };
     }
     return reply.send({
@@ -599,6 +679,7 @@ export function buildApp(opts: BuildAppOptions) {
       buckets: buckets.map((b) => ({
         key: b.key,
         ...(labelOf?.(b.key) ? { label: labelOf(b.key) } : {}),
+        ...(sessionExtra ? sessionExtra(b.key) : {}),
         events: b.events,
         input_tokens: b.inputTokens,
         output_tokens: b.outputTokens,

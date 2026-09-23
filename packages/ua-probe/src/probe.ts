@@ -1,5 +1,5 @@
 import chokidar, { type FSWatcher } from "chokidar";
-import type { ProbeConfig } from "./config.js";
+import { shareSessionTitles, type ProbeConfig } from "./config.js";
 import { createLogger, type Logger } from "./logger.js";
 import { Attributor } from "./attributor.js";
 import { Ingestor, emptyStats, type IngestStats } from "./ingest.js";
@@ -10,6 +10,7 @@ import { ClaudeWebSource } from "./quota.js";
 import { createCredentialStore } from "./credentials.js";
 import { QuotaFetcher, macNotifier } from "./quota-fetcher.js";
 import { expandHome } from "./paths.js";
+import { scanFileTitles } from "./session-titles.js";
 
 export function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
@@ -145,10 +146,59 @@ export class Probe {
         if (this.abort.signal.aborted) break;
       }
       await this.drainQuotaQueue();
+      await this.drainSessionTitles();
     } finally {
       this.draining = false;
     }
     return { sent, batches, dropped };
+  }
+
+  /**
+   * 上报会话标题。开了 hash_project_paths 的机器一律不报（见 shareSessionTitles）。
+   * 服务端拒收（4xx）的一批标记为已处理，免得每轮都重发同一批；可重试的留到下一轮。
+   */
+  private async drainSessionTitles(): Promise<void> {
+    if (!shareSessionTitles(this.cfg)) return;
+    for (let round = 0; round < 20; round++) {
+      const rows = this.store.pendingSessionTitles(500);
+      if (rows.length === 0) return;
+      const res = await this.shipper.sendSessionTitles(rows);
+      if (res.ok || res.verdict === "drop") {
+        this.store.markSessionTitlesShipped(rows);
+        if (!res.ok) this.log.error({ status: res.status, message: res.message }, "会话标题被拒收，跳过这一批");
+        else this.log.debug({ titles: rows.length }, "会话标题已上报");
+      } else {
+        return;
+      }
+    }
+  }
+
+  /**
+   * 老会话补标题：只做一次。
+   *
+   * 增量解析只读游标之后的新内容，而老会话的标题行早就在游标之前了 ——
+   * 不补的话，只有「装探针之后还在用的会话」才有名字。
+   * 全部日志扫一遍（本机实测 83 个文件 605MB），只挑标题行，不碰游标、不产生事件。
+   */
+  async backfillSessionTitles(): Promise<number> {
+    const DONE = "session_titles_backfilled_v1";
+    if (this.store.getMeta(DONE)) return 0;
+    const started = Date.now();
+    const files = await walkScanRoots(this.cfg.resolvedScanRoots);
+    let changed = 0;
+    for (const f of files) {
+      if (this.abort.signal.aborted) return changed;
+      try {
+        for (const t of await scanFileTitles(f)) {
+          if (this.store.putSessionTitle(t.sessionId, t.title, t.kind)) changed++;
+        }
+      } catch (err) {
+        this.log.warn({ path: f, err: (err as Error).message }, "补标题时读取文件失败，跳过");
+      }
+    }
+    this.store.setMeta(DONE, new Date().toISOString());
+    this.log.info({ files: files.length, titles: changed, ms: Date.now() - started }, "老会话标题补齐");
+    return changed;
   }
 
   private async drainQuotaQueue(): Promise<void> {
@@ -197,6 +247,10 @@ export class Probe {
 
     const first = await this.scanAll(false);
     this.log.info({ files: first.files, events: first.events, enqueued: first.enqueued }, "启动扫描完成");
+    // 老会话补标题放后台：几百 MB 的日志要扫几秒，不该挡住启动
+    void this.backfillSessionTitles().catch((err: unknown) =>
+      this.log.warn({ err: String(err) }, "补标题失败，下次启动再试"),
+    );
 
     this.watcher = chokidar.watch(this.cfg.resolvedScanRoots, {
       ignoreInitial: true,
@@ -265,6 +319,8 @@ export class Probe {
       state_db: this.cfg.resolvedStateDb,
       cursors: this.store.cursorCount(),
       queue_depth: this.store.queueDepth(),
+      session_titles: this.store.sessionTitleCount(),
+      share_session_titles: shareSessionTitles(this.cfg),
       quota_queue_depth: this.store.quotaDepth(),
       installed_at: new Date(this.attributor.installedAt).toISOString(),
       current_profile: last ? { profile_id: last.profileId, since: new Date(last.changedAt).toISOString(), source: last.source } : null,

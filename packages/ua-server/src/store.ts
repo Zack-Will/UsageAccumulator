@@ -69,6 +69,14 @@ export interface Store {
    */
   quotaEventTimestamps(profileId: string, from: Date, to: Date): Promise<Date[]>;
 
+  /**
+   * 会话标题（Claude 桌面端侧边栏里那个名字）。整批 upsert，返回实际写入 / 改动的条数。
+   * 标题会被改名，所以一律「后到的覆盖先到的」。
+   */
+  upsertSessionTitles(machineId: string, rows: { sessionId: string; title: string }[]): Promise<number>;
+  /** 按 session_id 批量取标题；没有标题的会话不出现在返回里。 */
+  sessionTitles(sessionIds: string[]): Promise<Map<string, string>>;
+
   latestCalibration(profileId: string, windowKind?: string): Promise<CalibrationRecord[]>;
   insertCalibration(rec: CalibrationRecord): Promise<void>;
 

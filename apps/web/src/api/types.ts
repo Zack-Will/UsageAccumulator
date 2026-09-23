@@ -168,7 +168,7 @@ export interface Timeline {
 }
 
 // ── /v1/distribution（CONTRACT §2.1a） ─────────────────────────────────────
-export type DistributionBy = "machine" | "model" | "project" | "hour" | "attribution";
+export type DistributionBy = "machine" | "model" | "project" | "hour" | "attribution" | "session";
 
 /** `bucket` 缺省 none；hour|day 时每个 bucket 额外带 series[]。 */
 export type BucketGranularity = "none" | "hour" | "day";
@@ -209,6 +209,10 @@ export interface DistributionBucket {
   unpriced_events: number;
   /** 仅在 bucket=hour|day 时出现。 */
   series?: BucketSeriesPoint[];
+  /** 仅 by=session：这个会话在哪个项目目录（可能已 HMAC 化；临时工作区也在这里） */
+  project_slug?: string | null;
+  /** 仅 by=session：这个会话在哪台机器 */
+  machine_label?: string;
 }
 
 export interface Distribution {

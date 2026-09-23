@@ -85,6 +85,13 @@ export class ProbeStore {
         k TEXT PRIMARY KEY,
         v TEXT NOT NULL
       );
+      -- 会话标题：shipped 记录「最后一次成功上报的是哪个标题」，与 title 不同即待上报
+      CREATE TABLE IF NOT EXISTS session_titles (
+        session_id TEXT PRIMARY KEY,
+        title      TEXT NOT NULL,
+        kind       TEXT NOT NULL,
+        shipped    TEXT
+      );
     `);
   }
 
@@ -109,6 +116,50 @@ export class ProbeStore {
     const now = Date.now();
     this.setMeta("installed_at", String(now));
     return now;
+  }
+
+  // ── 会话标题 ─────────────────────────────────────────────────────────
+  /**
+   * 记下一个会话的标题。返回是否真的变了。
+   * 用户起的标题（custom）优先于 agent 名：后到的 agent 名不能把它盖掉。
+   */
+  putSessionTitle(sessionId: string, title: string, kind: "custom" | "agent"): boolean {
+    const cur = this.db.prepare("SELECT title, kind FROM session_titles WHERE session_id = ?").get(sessionId);
+    if (cur) {
+      if (asString(cur["kind"]) === "custom" && kind === "agent") return false;
+      if (asString(cur["title"]) === title && asString(cur["kind"]) === kind) return false;
+    }
+    this.db
+      .prepare(
+        `INSERT INTO session_titles (session_id, title, kind, shipped) VALUES (?, ?, ?, NULL)
+         ON CONFLICT(session_id) DO UPDATE SET title = excluded.title, kind = excluded.kind`,
+      )
+      .run(sessionId, title, kind);
+    return true;
+  }
+
+  /** 还没上报、或上报后又改了名的标题 */
+  pendingSessionTitles(limit: number): { sessionId: string; title: string }[] {
+    return this.db
+      .prepare(
+        "SELECT session_id, title FROM session_titles WHERE shipped IS NULL OR shipped <> title LIMIT ?",
+      )
+      .all(limit)
+      .map((r) => ({ sessionId: asString(r["session_id"]), title: asString(r["title"]) }));
+  }
+
+  /**
+   * 标记为已上报。只标记「上报的正是当前标题」的行：
+   * 发出去之后、回执之前如果又改了名，那一行必须继续待上报。
+   */
+  markSessionTitlesShipped(rows: { sessionId: string; title: string }[]): void {
+    const stmt = this.db.prepare("UPDATE session_titles SET shipped = ? WHERE session_id = ? AND title = ?");
+    for (const r of rows) stmt.run(r.title, r.sessionId, r.title);
+  }
+
+  sessionTitleCount(): number {
+    const row = this.db.prepare("SELECT COUNT(*) AS n FROM session_titles").get();
+    return asNumber(row?.["n"]);
   }
 
   // ── cursors ───────────────────────────────────────────────────────────

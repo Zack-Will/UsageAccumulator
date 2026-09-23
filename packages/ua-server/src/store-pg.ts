@@ -240,6 +240,30 @@ export class PgStore implements Store {
     return rows.map((r) => r["ts"] as Date);
   }
 
+  async upsertSessionTitles(machineId: string, rows: { sessionId: string; title: string }[]): Promise<number> {
+    if (rows.length === 0) return 0;
+    let n = 0;
+    // 批量很小（一台机器也就几十上百个会话），逐条 upsert 足够，换来 WHERE 里能判「没变就不写」
+    for (const r of rows) {
+      const res = await this.sql`
+        INSERT INTO session_titles (session_id, machine_id, title, updated_at)
+        VALUES (${r.sessionId}, ${machineId}, ${r.title}, now())
+        ON CONFLICT (session_id) DO UPDATE
+          SET title = excluded.title, machine_id = excluded.machine_id, updated_at = now()
+          WHERE session_titles.title IS DISTINCT FROM excluded.title`;
+      n += res.count;
+    }
+    return n;
+  }
+
+  async sessionTitles(sessionIds: string[]): Promise<Map<string, string>> {
+    const ids = [...new Set(sessionIds.filter(Boolean))];
+    if (ids.length === 0) return new Map();
+    const rows = await this.sql<Record<string, unknown>[]>`
+      SELECT session_id, title FROM session_titles WHERE session_id = ANY(${ids})`;
+    return new Map(rows.map((r) => [String(r["session_id"]), String(r["title"])]));
+  }
+
   async eventsInRange(profileId: string, from: Date, to: Date): Promise<EventRow[]> {
     const rows = await this.sql<Record<string, unknown>[]>`
       SELECT * FROM usage_events

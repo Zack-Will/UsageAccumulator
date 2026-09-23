@@ -118,6 +118,8 @@ export function BreakdownTable({
   span,
   mdSpan,
   emptyText = "区间内没有用量",
+  subOf,
+  limit,
 }: {
   title: string;
   aside?: React.ReactNode;
@@ -128,9 +130,15 @@ export function BreakdownTable({
   span: number;
   mdSpan?: number;
   emptyText?: string;
+  /** 名字后面的灰色小字（按会话时是「项目 · 机器」） */
+  subOf?: (b: DistributionBucket) => string | undefined;
+  /** 只列前 N 行，其余合成一行「其余 N 个」—— 会话一多就是几百行 */
+  limit?: number;
 }) {
-  const rows = buckets ? [...buckets].sort(byCostThenTokens) : null;
-  const totalCost = rows?.reduce((a, b) => a + (b.cost_usd ?? 0), 0) ?? 0;
+  const sorted = buckets ? [...buckets].sort(byCostThenTokens) : null;
+  const totalCost = sorted?.reduce((a, b) => a + (b.cost_usd ?? 0), 0) ?? 0;
+  const rows = sorted && limit && sorted.length > limit ? sorted.slice(0, limit) : sorted;
+  const rest = sorted && rows && sorted.length > rows.length ? sorted.slice(rows.length) : null;
 
   return (
     <Card title={title} span={span} mdSpan={mdSpan} aside={aside}>
@@ -158,9 +166,10 @@ export function BreakdownTable({
               const color = colors.get(b.key);
               return (
                 <tr key={b.key}>
-                  <th scope="row" className="btable__name" title={b.key}>
+                  <th scope="row" className="btable__name" title={[labelOf(b), subOf?.(b), b.key].filter(Boolean).join("\n")}>
                     <span className="btable__swatch" style={{ background: color }} />
                     <span className="btable__label">{labelOf(b)}</span>
+                    {subOf?.(b) && <span className="btable__sub">{subOf(b)}</span>}
                   </th>
                   <td>{fmtTokens(b.total_tokens)}</td>
                   <td className="btable__barcol">
@@ -178,9 +187,38 @@ export function BreakdownTable({
                 </tr>
               );
             })}
+            {rest && <RestRow rest={rest} totalCost={totalCost} />}
           </tbody>
         </table>
       )}
     </Card>
+  );
+}
+
+/** 「其余 N 个」：合成一行，金额与 token 照样合计，免得表格底部的数字对不上总数 */
+function RestRow({ rest, totalCost }: { rest: DistributionBucket[]; totalCost: number }) {
+  const tokens = rest.reduce((a, b) => a + b.total_tokens, 0);
+  const priced = rest.filter((b) => b.cost_usd !== null);
+  const cost = priced.length ? priced.reduce((a, b) => a + (b.cost_usd ?? 0), 0) : null;
+  const unpriced = rest.reduce((a, b) => a + b.unpriced_events, 0);
+  const share = cost !== null && totalCost > 0 ? (cost / totalCost) * 100 : null;
+  return (
+    <tr className="btable__rest">
+      <th scope="row" className="btable__name">
+        <span className="btable__swatch" />
+        <span className="btable__label">其余 {rest.length} 个</span>
+      </th>
+      <td>{fmtTokens(tokens)}</td>
+      <td className="btable__barcol">
+        <span className="btable__track">
+          {share !== null && <span className="btable__fill btable__fill--rest" style={{ width: `${share}%` }} />}
+        </span>
+        <span className="btable__pct">{share !== null ? `${share.toFixed(0)}%` : "—"}</span>
+      </td>
+      <td>—</td>
+      <td className="btable__cost">
+        <Cost usd={cost} unpriced={unpriced} />
+      </td>
+    </tr>
   );
 }

@@ -144,6 +144,28 @@ export class Shipper {
     }
   }
 
+  /** 会话标题。与额度快照一样走普通 JSON：量很小，不值得 gzip NDJSON。 */
+  async sendSessionTitles(rows: { sessionId: string; title: string }[]): Promise<ShipResult> {
+    if (rows.length === 0) return { ok: true, accepted: 0, deduped: 0, status: 200 };
+    try {
+      const res = await request(`${this.base}/v1/ingest/sessions`, {
+        method: "POST",
+        body: JSON.stringify({ sessions: rows.map((r) => ({ session_id: r.sessionId, title: r.title })) }),
+        headers: this.headers({ "content-type": "application/json" }),
+        headersTimeout: this.opts.timeoutMs ?? 30_000,
+        bodyTimeout: this.opts.timeoutMs ?? 30_000,
+      });
+      const text = await res.body.text();
+      const verdict = classifyStatus(res.statusCode, isServerErrorEnvelope(text));
+      if (verdict !== "ok") {
+        return { ok: false, verdict, status: res.statusCode, message: text.slice(0, 500) };
+      }
+      return { ok: true, accepted: rows.length, deduped: 0, status: res.statusCode };
+    } catch (err) {
+      return { ok: false, verdict: "retry", status: 0, message: (err as Error).message };
+    }
+  }
+
   /** install 用：一次性 enroll token 换长期 machine token（ARCHITECTURE §9）。 */
   static async enroll(
     serverUrl: string,

@@ -196,3 +196,27 @@ describe("fmtUsdSmall", () => {
     expect(fmtUsdSmall(1.5)).toBe("$1.50");
   });
 });
+
+describe("临时工作区与会话的显示名", () => {
+  const SCRATCH =
+    "-Users-me-Library-Application-Support-Claude-scratch-workspaces-org-user-scratch-2026-09-22-105cae";
+
+  it("★ 临时工作区没有标题时显示「临时会话 09-22」，而不是随机后缀「105cae」", async () => {
+    const { projectLabel } = await import("../src/api/derive");
+    expect(projectLabel(SCRATCH)).toBe("临时会话 09-22");
+    expect(projectLabel("-Users-me-Repos-Cleave")).toBe("Cleave");
+  });
+
+  it("会话名：有标题用标题，没有就「未命名 · id 前 8 位」", async () => {
+    const { sessionLabel } = await import("../src/api/derive");
+    expect(sessionLabel({ key: "e8c04bc5-162a-48ec", label: "糖果形状口味组合问题" })).toBe("糖果形状口味组合问题");
+    expect(sessionLabel({ key: "0d8a057e-67f6-4eaf" })).toBe("未命名 · 0d8a057e");
+  });
+
+  it("会话位置：项目 · 机器；临时工作区写成「临时会话」", async () => {
+    const { sessionWhere } = await import("../src/api/derive");
+    expect(sessionWhere({ project_slug: "-Users-me-Repos-Cleave", machine_label: "mbp" })).toBe("Cleave · mbp");
+    expect(sessionWhere({ project_slug: SCRATCH, machine_label: "K4F59009H4" })).toBe("临时会话 · K4F59009H4");
+    expect(sessionWhere({})).toBe("");
+  });
+});

@@ -1011,6 +1011,30 @@ button {
   color: var(--text);
 }
 
+/* 名字后的灰色小字：按会话时是「项目 · 机器」，同名会话靠它区分 */
+.btable__sub {
+  margin-left: 8px;
+  font-weight: 400;
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+/* 「其余 N 个」：比正常行安静一档 */
+.btable__rest th,
+.btable__rest td,
+.btable__rest .btable__cost .mono {
+  color: var(--text-3);
+  font-weight: 400;
+}
+
+.btable__rest .btable__swatch {
+  background: var(--border);
+}
+
+.btable__fill--rest {
+  background: var(--text-4);
+}
+
 .btable__empty {
   height: 120px;
   display: flex;

@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import type { AttributionLevel, DistributionBucket, UaApi } from "../api";
-import { bucketLabel, cacheTrend, costSummary, hourCells, projectLabel, sharePct } from "../api/derive";
+import { bucketLabel, cacheTrend, costSummary, hourCells, projectLabel, sessionLabel, sessionWhere, sharePct } from "../api/derive";
 import { fmtPct, fmtTokens } from "../charts/base";
 import { cacheTrendOption, hourHeatmapOption, projectTreemapOption } from "../charts/distribution";
 import { colorMapFor } from "../charts/registry";
@@ -8,6 +8,7 @@ import { status, type Tokens } from "../charts/tokens";
 import { Chart } from "../components/Chart";
 import { Card, Cost, Mono, Placeholder } from "../components/primitives";
 import { useAsync } from "../hooks/useAsync";
+import { BreakdownTable } from "../components/UsagePanels";
 
 interface Props {
   api: UaApi;
@@ -52,6 +53,17 @@ export function Distribution({ api, t, profileId, from, to, nonce }: Props) {
     (s) => api.distribution({ profile_id: profileId, from, to, by: "attribution" }, s),
     [api, profileId, from, to, nonce],
   );
+  // 按会话：回答「这块用量到底是哪条对话」—— 尤其是临时工作区那种没有项目归属的会话
+  const sessions = useAsync(
+    (s) => api.distribution({ profile_id: profileId, from, to, by: "session" }, s),
+    [api, profileId, from, to, nonce],
+  );
+  // 会话的色点取所在项目的颜色：和上面树图里那块同色，一眼对得上是哪个项目下的会话
+  const sessionColors = useMemo(() => {
+    const buckets = sessions.data?.buckets ?? [];
+    const byProject = colorMapFor("project", buckets.map((b) => b.project_slug ?? b.key), t);
+    return new Map(buckets.map((b) => [b.key, byProject.get(b.project_slug ?? b.key) ?? t.cat1]));
+  }, [sessions.data, t]);
 
   const treemap = useMemo(() => {
     if (!projects.data) return null;
@@ -161,6 +173,18 @@ export function Distribution({ api, t, profileId, from, to, nonce }: Props) {
           <Placeholder state={attribution.error ? "error" : "loading"} height={300} />
         )}
       </Card>
+
+      <BreakdownTable
+        title="按会话"
+        buckets={sessions.data?.buckets ?? null}
+        colors={sessionColors}
+        labelOf={sessionLabel}
+        subOf={sessionWhere}
+        state={sessions.error ? "error" : "loading"}
+        span={12}
+        limit={12}
+        emptyText="区间内没有会话"
+      />
 
       <Card title="星期 × 小时" span={7}>
         {heatmap ? (

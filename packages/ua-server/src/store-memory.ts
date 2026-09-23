@@ -103,6 +103,27 @@ export class MemoryStore implements Store {
     return out.sort((a, b) => a.ts.getTime() - b.ts.getTime());
   }
 
+  private readonly titles = new Map<string, { machineId: string; title: string }>();
+
+  async upsertSessionTitles(machineId: string, rows: { sessionId: string; title: string }[]): Promise<number> {
+    let n = 0;
+    for (const r of rows) {
+      if (this.titles.get(r.sessionId)?.title === r.title) continue;
+      this.titles.set(r.sessionId, { machineId, title: r.title });
+      n++;
+    }
+    return n;
+  }
+
+  async sessionTitles(sessionIds: string[]): Promise<Map<string, string>> {
+    const out = new Map<string, string>();
+    for (const id of sessionIds) {
+      const t = this.titles.get(id);
+      if (t) out.set(id, t.title);
+    }
+    return out;
+  }
+
   async eventsInRange(profileId: string, from: Date, to: Date): Promise<EventRow[]> {
     return [...this.events.values()]
       .filter((r) => r.event.profileId === profileId && r.event.ts >= from && r.event.ts < to)

@@ -546,6 +546,26 @@ function buildDistribution(p: DistributionParams): Distribution {
       return { ...base, buckets };
     }
 
+    case "session": {
+      // 一个会话一桶：有标题的、临时工作区里的、没标题的（CLI 会话常见）三种都给
+      const scratch = "-Users-me-Library-Application-Support-Claude-scratch-workspaces-org-user-scratch-2026-09-22-105cae";
+      const rows: Array<[string, string | undefined, string, string, number, number]> = [
+        ["8eb5ce56-eee1-499d", "Cleave 架构图优化", "-Users-me-Repos-Cleave", "mbp-local", 1840, 9_800_000],
+        ["e8c04bc5-162a-48ec", "糖果形状口味组合问题", scratch, "linux-a", 960, 6_400_000],
+        ["a5836485-2f1c-4d0e", "论文写作架构与实验设计学习", "-Users-me-Repos-Cleave", "mbp-local", 720, 4_900_000],
+        ["c969b578-8d21-4b77", "UsageAccumulator 看板改版", "-Users-me-Repos-UsageAccumulator", "mbp-local", 610, 3_700_000],
+        ["0d8a057e-67f6-4eaf", undefined, "-Users-me-Repos-ServerMaintenance", "vps-tokyo", 240, 1_300_000],
+      ];
+      return {
+        ...base,
+        buckets: rows.map(([id, title, project, machine, ev, tk], i) => ({
+          ...bucket(id, ev, tk, r, i !== 4, true, title),
+          project_slug: project,
+          machine_label: machine,
+        })),
+      };
+    }
+
     case "attribution": {
       const rows: Array<[string, number, number]> = [
         ["proxy", 7412, 28_900_000],

@@ -215,6 +215,10 @@ export function sharePct(buckets: DistributionBucket[], b: DistributionBucket): 
  */
 export function projectLabel(slug: string): string {
   if (/^[0-9a-f]{16,}$/i.test(slug)) return slug.slice(0, 10);
+  // Claude 桌面端的临时工作区：目录名是 …-scratch-2026-09-22-105cae，
+  // 取最后一段就是随机后缀「105cae」—— 以前看板上显示的正是这个。有标题时服务端会给 label。
+  const scratch = /-scratch-\d{4}-(\d{2})-(\d{2})-[0-9a-z]+$/i.exec(slug);
+  if (scratch && slug.includes("-scratch-workspaces-")) return `临时会话 ${scratch[1]}-${scratch[2]}`;
   const tail = slug.split("-").filter(Boolean).slice(-1)[0];
   return tail ?? slug;
 }
@@ -389,4 +393,17 @@ export function modelDisplayName(model: string): string {
     return `${cap(legacy[3]!)} ${legacy[1]}${legacy[2] ? `.${legacy[2]}` : ""}`;
   }
   return model;
+}
+
+/** 会话的显示名：有标题用标题；没有就「未命名 · 会话 id 前 8 位」，至少能和日志文件名对上 */
+export function sessionLabel(b: Pick<DistributionBucket, "key" | "label">): string {
+  return b.label ?? `未命名 · ${b.key.slice(0, 8)}`;
+}
+
+/** 会话所在的位置：项目名 · 机器名（临时工作区显示成「临时会话」而不是随机后缀） */
+export function sessionWhere(b: Pick<DistributionBucket, "project_slug" | "machine_label">): string {
+  const parts: string[] = [];
+  if (b.project_slug) parts.push(b.project_slug.includes("-scratch-workspaces-") ? "临时会话" : projectLabel(b.project_slug));
+  if (b.machine_label) parts.push(b.machine_label);
+  return parts.join(" · ");
 }

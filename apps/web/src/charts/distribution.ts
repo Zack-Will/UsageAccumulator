@@ -32,7 +32,9 @@ export function projectTreemapOption(
       formatter: (p: unknown) => {
         const d = p as { name: string; value: number };
         const b = byName.get(d.name);
-        return `${d.name}　${fmtTokens(d.value)}${b ? `\n${costCell(b)}` : ""}`;
+        // 临时工作区（桌面端不选项目直接开的对话）注明一句，免得把会话标题当成项目名
+        const scratch = b && b.key.includes("-scratch-workspaces-") ? "\n临时会话 · 没有项目目录" : "";
+        return `${d.name}　${fmtTokens(d.value)}${b ? `\n${costCell(b)}` : ""}${scratch}`;
       },
     },
     series: [

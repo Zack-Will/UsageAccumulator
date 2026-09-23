@@ -5,6 +5,7 @@ import { Attributor, extractOwnerAccountUuid } from "./attributor.js";
 import { readNewLines } from "./scanner.js";
 import type { ProbeStore } from "./store.js";
 import { toWireEvent } from "./wire.js";
+import { parseTitleLine } from "./session-titles.js";
 import { basename, dirname } from "node:path";
 
 export interface IngestStats {
@@ -49,6 +50,13 @@ export class Ingestor {
     try {
       outcome = await readNewLines(path, prev, (raw) => {
         stats.lines++;
+        // 标题行（custom-title / agent-name）不是用量事件，单独记下来；
+        // 本地总是记，报不报由 shareSessionTitles() 在上报时决定
+        const title = parseTitleLine(raw);
+        if (title) {
+          this.store.putSessionTitle(title.sessionId, title.title, title.kind);
+          return;
+        }
         const { event, warnings } = parseLine(raw, {
           machineId: this.cfg.machine_id,
           profileId: this.cfg.default_profile_id,

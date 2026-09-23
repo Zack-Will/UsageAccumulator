@@ -92,6 +92,12 @@ const configSchema = z.object({
   /** 隐私：上报 HMAC 后的 slug，看板显示别名（ARCHITECTURE §9） */
   hash_project_paths: z.boolean().default(false),
   project_hash_secret: z.string().default(""),
+  /**
+   * 上报会话标题（桌面端侧边栏里那个名字），看板用它标出「这是哪条会话」。
+   * ★ hash_project_paths = true 时**一律不报**，不看这个开关：连项目路径都要藏的机器，
+   *   标题（它概括的是对话内容）更不该出去。见 shareSessionTitles()。
+   */
+  share_session_titles: z.boolean().default(true),
   log_level: z.string().default("info"),
   server: serverSchema,
   queue: queueSchema.default({}),
@@ -179,6 +185,10 @@ ${roots}
 hash_project_paths  = false
 project_hash_secret = ""
 
+# 上报会话标题（桌面端侧边栏里的名字），看板据此标出是哪条会话；只报标题，不报对话内容。
+# hash_project_paths = true 时无论这里怎么写都不报。
+share_session_titles = true
+
 [server]
 url           = ${JSON.stringify(v.serverUrl)}
 machine_token = ${JSON.stringify(v.machineToken)}
@@ -219,4 +229,9 @@ jitter_secs   = 60
 credential    = ${JSON.stringify(process.platform === "darwin" ? "keychain" : "file")}
 # 凭证只存本机，绝不上报服务端
 `;
+}
+
+/** 这台机器要不要上报会话标题：开关打开，且没有要求隐藏项目路径。 */
+export function shareSessionTitles(cfg: Pick<ProbeConfig, "share_session_titles" | "hash_project_paths">): boolean {
+  return cfg.share_session_titles && !cfg.hash_project_paths;
 }
