@@ -15,7 +15,17 @@
       "url": "https://platform.claude.com/docs/en/about-claude/pricing",
       "date": "2026-09-21",
       "scope": "实测出现过的 7 个模型 × 5 个价格字段，逐条一致"
-    }
+    },
+    "incremental": [
+      {
+        "model": "claude-opus-5-5",
+        "added_at": "2026-09-23T03:19:12Z",
+        "from": "同一 litellm 源的 claude-opus-5-5（litellm_provider=anthropic），程序化换算，未手工录入",
+        "sha256_prefix": "3a9fb996911926b5",
+        "cross_checked": "Anthropic 官方口径 $4 / $20 per MTok、cache read $0.20；写入按标准 1.25x（5m）/ 2x（1h）= $5 / $8，逐字段一致",
+        "note": "只追加这一条，其余条目未随新快照重算，避免顺手改动已核实过的价格"
+      }
+    ]
   },
   "_anomalies": [
     "已核实（2026-09-21，来源 platform.claude.com/docs/en/about-claude/pricing）：",
@@ -186,6 +196,13 @@
       "cacheReadPerMTok": 0.5,
       "cacheWrite5mPerMTok": 6.25,
       "cacheWrite1hPerMTok": 10.0
+    },
+    "claude-opus-5-5": {
+      "inputPerMTok": 4.0,
+      "outputPerMTok": 20.0,
+      "cacheReadPerMTok": 0.2,
+      "cacheWrite5mPerMTok": 5.0,
+      "cacheWrite1hPerMTok": 8.0
     },
     "claude-sonnet-4-20250514": {
       "inputPerMTok": 3.0,
