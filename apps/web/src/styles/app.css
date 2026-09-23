@@ -1042,8 +1042,56 @@ button {
   justify-content: center;
 }
 
-/* 窄屏：占比条让位，别的列一个不少 */
+/* ★ 手机：表格改成「一条记录三行」。
+   按列排时名字列只剩 ~105px，会话标题被截成「Claude 用量…」，后面的「项目 · 机器」
+   一个字都看不见 —— 而这张表存在的意义就是认出是哪条会话。
+   第一行完整的名字（可折行），第二行灰字的出处，第三行左边 token / 命中、右边金额。
+   表头藏掉，数值自己带标签（data-label），不用回头对照表头。 */
 @media (max-width: 720px) {
+  .btable thead {
+    display: none;
+  }
+  .btable tbody tr {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    column-gap: 14px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border-soft);
+  }
+  .btable tbody tr:last-child {
+    border-bottom: 0;
+  }
+  /* 多带一级 tbody：claude.css 排在本文件之后、同样写了 `.btable th/td` 的内边距，
+     同优先级时后者会把这里盖掉 */
+  .btable tbody th,
+  .btable tbody td {
+    padding: 0;
+    border-bottom: 0;
+  }
+  .btable tbody .btable__name {
+    flex: 1 1 100%;
+    max-width: none;
+    width: auto;
+    white-space: normal;
+    overflow: visible;
+    margin-bottom: 4px;
+  }
+  .btable__sub {
+    display: block;
+    margin: 2px 0 0 16px;
+  }
+  /* 数值行与名字的文字左缘对齐（跳过色点那 16px） */
+  .btable .btable__tokens {
+    margin-left: 16px;
+  }
+  .btable .btable__hit::before {
+    content: attr(data-label) " ";
+    color: var(--text-3);
+  }
+  .btable .btable__cost {
+    margin-left: auto;
+  }
   .btable .btable__barcol {
     display: none;
   }

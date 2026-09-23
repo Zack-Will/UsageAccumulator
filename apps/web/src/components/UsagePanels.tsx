@@ -171,7 +171,7 @@ export function BreakdownTable({
                     <span className="btable__label">{labelOf(b)}</span>
                     {subOf?.(b) && <span className="btable__sub">{subOf(b)}</span>}
                   </th>
-                  <td>{fmtTokens(b.total_tokens)}</td>
+                  <td className="btable__tokens">{fmtTokens(b.total_tokens)}</td>
                   <td className="btable__barcol">
                     <span className="btable__track">
                       {share !== null && (
@@ -180,7 +180,7 @@ export function BreakdownTable({
                     </span>
                     <span className="btable__pct">{share !== null ? `${share.toFixed(0)}%` : "—"}</span>
                   </td>
-                  <td>{hit === null ? "—" : fmtPct(hit, 0)}</td>
+                  <td className="btable__hit" data-label="命中">{hit === null ? "—" : fmtPct(hit, 0)}</td>
                   <td className="btable__cost">
                     <Cost usd={b.cost_usd} unpriced={b.unpriced_events} />
                   </td>
@@ -208,14 +208,14 @@ function RestRow({ rest, totalCost }: { rest: DistributionBucket[]; totalCost: n
         <span className="btable__swatch" />
         <span className="btable__label">其余 {rest.length} 个</span>
       </th>
-      <td>{fmtTokens(tokens)}</td>
+      <td className="btable__tokens">{fmtTokens(tokens)}</td>
       <td className="btable__barcol">
         <span className="btable__track">
           {share !== null && <span className="btable__fill btable__fill--rest" style={{ width: `${share}%` }} />}
         </span>
         <span className="btable__pct">{share !== null ? `${share.toFixed(0)}%` : "—"}</span>
       </td>
-      <td>—</td>
+      <td className="btable__hit" data-label="命中">—</td>
       <td className="btable__cost">
         <Cost usd={cost} unpriced={unpriced} />
       </td>
