@@ -150,7 +150,7 @@ Idempotency-Key: <批次内容的 sha256 前 32 位>
 | `POST` | `/v1/enroll` | body: `{"enroll_token","hostname","os","provisional_machine_id"}` → `200 {"machine_id","machine_token"}` |
 | `GET` | `/v1/profiles` | → `{"profiles":[{"id","kind","label","account_uuid","base_url","plan"}]}`（注意键是 `id` 不是 `profile_id`） |
 | `GET` | `/v1/machines` | **全局**清单（不按 profile 过滤——一台机器可给多个 profile 上报）。→ `{"machines":[{"machine_id","label","hostname","os","last_seen_at","revoked":false}]}`。被吊销的机器照常列出并带 `revoked:true`，隐藏会让人以为机器凭空消失 |
-| `GET` | `/v1/windows/current?profile_id=` | 当前 5h/7d 窗口状态 + 预测（见 2.1） |
+| `GET` | `/v1/windows/current?profile_id=&burn_points=` | 当前 5h/7d 窗口状态 + 预测（见 2.1）。`burn_points`（2–240，缺省 240）限制燃尽 / 预测曲线的点数，只要数字的客户端传 2 |
 | `GET` | `/v1/timeline?profile_id=&from=&to=` | 甘特图数据：每机器的活跃区间 |
 | `GET` | `/v1/distribution?profile_id=&from=&to=&by=machine\|model\|project\|hour\|attribution&bucket=none\|hour\|day` | 分布聚合；`bucket` 缺省 `none` |
 | `GET` | `/v1/calibration?profile_id=` | 标定结果：limit 估计、模型权重、残差、观测点数 |

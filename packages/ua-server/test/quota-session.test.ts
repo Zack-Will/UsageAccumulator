@@ -158,3 +158,23 @@ describe("POST /v1/ingest/quota 的来源", () => {
     expect(store.quota.at(-1)?.machineId).toBeTruthy();
   });
 });
+
+describe("GET /v1/windows/current?burn_points", () => {
+  it("限制曲线点数；越界 400", async () => {
+    for (let i = 0; i < 30; i++) {
+      await store.insertQuotaSnapshot({
+        profileId: "claude-official",
+        capturedAt: new Date(NOW.getTime() - (30 - i) * 5 * 60_000),
+        windows: [{ windowKind: "seven_day", utilizationPct: 10 + i * 0.5, resetsAt: new Date("2026-09-29T00:00:00Z") }],
+        raw: {},
+      });
+    }
+    const full = await app.fastify.inject({ method: "GET", url: "/v1/windows/current?profile_id=claude-official", headers: AUTH });
+    const lite = await app.fastify.inject({ method: "GET", url: "/v1/windows/current?profile_id=claude-official&burn_points=2", headers: AUTH });
+    type W = { windows: { burn_curve: unknown[] }[] };
+    expect((full.json() as W).windows[0]!.burn_curve.length).toBeGreaterThan(2);
+    expect((lite.json() as W).windows[0]!.burn_curve.length).toBeLessThanOrEqual(2);
+    const bad = await app.fastify.inject({ method: "GET", url: "/v1/windows/current?burn_points=1", headers: AUTH });
+    expect(bad.statusCode).toBe(400);
+  });
+});

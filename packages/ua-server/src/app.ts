@@ -646,12 +646,18 @@ export function buildApp(opts: BuildAppOptions) {
   });
 
   // ── GET /v1/windows/current
+  // burn_points：燃尽 / 预测曲线最多多少个点（缺省 240）。手表这类只要数字不画曲线的客户端
+  // 传 2 就够 —— 否则四个窗口加起来上百 KB，每分钟走一趟蓝牙太重
+  const windowsCurrentSchema = rangeSchema.extend({
+    burn_points: z.coerce.number().int().min(2).max(240).optional(),
+  });
   app.get("/v1/windows/current", async (req, reply) => {
-    const q = parseQuery(rangeSchema, req.query);
+    const q = parseQuery(windowsCurrentSchema, req.query);
     const profileId = await resolveProfileId(q.profile_id);
     const result = await computeCurrentWindows(store, profileId, {
       now: now(),
       quotaStaleMs: config.quotaStaleMs,
+      ...(q.burn_points !== undefined ? { maxBurnPoints: q.burn_points } : {}),
     });
     return reply.send(result);
   });

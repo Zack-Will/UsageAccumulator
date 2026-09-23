@@ -608,7 +608,8 @@ export function calibrationPoints(
 
 /** 燃尽曲线降采样，避免一条曲线塞几千个点。保留首尾。 */
 export function downsample<T>(points: T[], max: number): T[] {
-  if (points.length <= max || max <= 2) return points;
+  // max = 2 是合法请求（首尾两点）；以前写成 max <= 2 会原样返回全部点，传 2 等于没传
+  if (points.length <= max || max < 2) return points;
   const step = (points.length - 1) / (max - 1);
   const out: T[] = [];
   for (let i = 0; i < max; i++) out.push(points[Math.round(i * step)]!);
