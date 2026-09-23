@@ -15,6 +15,7 @@ import { colorMapFor } from "../charts/registry";
 import type { Tokens } from "../charts/tokens";
 import { Chart } from "../components/Chart";
 import { Card, Mono, Placeholder, Segmented } from "../components/primitives";
+import { PageHead } from "../components/PageHead";
 import { BreakdownTable, UsageSummary } from "../components/UsagePanels";
 import { displayWindows, isActiveWindow, labelOf, quotaSpans, WindowCard } from "../components/WindowCards";
 import { useAsync } from "../hooks/useAsync";
@@ -115,6 +116,8 @@ export function Overview({
 
   return (
     <div className="grid">
+      <PageHead windows={shown} nowMs={nowMs} />
+
       {shown
         ? shown.map((w) => (
             <WindowCard

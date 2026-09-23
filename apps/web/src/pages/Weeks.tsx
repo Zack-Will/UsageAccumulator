@@ -7,6 +7,8 @@ import type { Tokens } from "../charts/tokens";
 import { Chart } from "../components/Chart";
 import { Card, Cost, Mono, Num, Placeholder, Segmented } from "../components/primitives";
 import { useAsync } from "../hooks/useAsync";
+import { colorMapFor } from "../charts/registry";
+import { BreakdownTable } from "../components/UsagePanels";
 
 const WEEK_MS = 7 * 24 * 3600_000;
 /** 往回看多少周 */
@@ -88,6 +90,10 @@ export function Weeks({ api, t, profileId, nonce, windows }: Props) {
         : Promise.resolve(null),
     [api, profileId, fromIso, toIso, nonce],
   );
+  const machineColors = useMemo(
+    () => colorMapFor("machine", (byMachine.data?.buckets ?? []).map((b) => b.key), t),
+    [byMachine.data, t],
+  );
 
   const cost = usage.data ? costSummary(usage.data.buckets) : null;
   const tokens = usage.data ? usage.data.buckets.reduce((a, b) => a + b.total_tokens, 0) : 0;
@@ -168,28 +174,18 @@ export function Weeks({ api, t, profileId, nonce, windows }: Props) {
         </div>
       </Card>
 
-      <Card title="这一周各机器" span={7}>
-        {byMachine.data ? (
-          <ul className="attr-list">
-            {[...byMachine.data.buckets]
-              .sort((a, b) => b.total_tokens - a.total_tokens)
-              .map((b) => {
-                const total = byMachine.data!.buckets.reduce((s, x) => s + x.total_tokens, 0) || 1;
-                return (
-                  <li className="attr-list__row" key={b.key}>
-                    <span className="attr-list__name">{b.label ?? b.key}</span>
-                    <span className="attr-list__n">{fmtTokens(b.total_tokens)}</span>
-                    <span className="attr-list__pct">
-                      {((b.total_tokens / total) * 100).toFixed(1)}%
-                    </span>
-                  </li>
-                );
-              })}
-          </ul>
-        ) : (
-          <Placeholder state={byMachine.error ? "error" : "loading"} height={160} />
-        )}
-      </Card>
+      {/* 与总览的「按机器」同一张表：以前这里套用归属列表的四列模板却只放了三个元素，
+          主机名落进了 10px 的色点列，被挤得折成两行 */}
+      <BreakdownTable
+        title="这一周各机器"
+        buckets={byMachine.data?.buckets ?? null}
+        colors={machineColors}
+        labelOf={(b) => b.label ?? b.key}
+        state={byMachine.error ? "error" : "loading"}
+        span={7}
+        mdSpan={3}
+        emptyText="这一周没有用量"
+      />
     </div>
   );
 }

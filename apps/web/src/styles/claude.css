@@ -1,0 +1,493 @@
+/*
+ * Claude 风格（实验版，分支 style/claude-web）
+ *
+ * 叠在 app.css 之上，只作用于网页看板：菜单栏那套照 Usage Tracker 一比一复刻的样式
+ * 与看板共用 @ua/tokens，所以这里**不改**令牌包本身，只在看板里覆盖同名变量。
+ * 撤回这一版 = 在 main.tsx 里删掉这个文件的 import。
+ *
+ * 取向：
+ *   · 暖色中性底（象牙白 / 暖炭灰），陶土橙只做点睛，橄榄、天蓝、无花果做辅色
+ *   · 衬线大字承担「数字与标题」，无衬线承担界面文字 —— 等宽字体退场，
+ *     数字对齐改靠 tabular-nums
+ *   · 圆角更大、边框更轻、控件一律胶囊形
+ *
+ * 所有颜色都按项目原有的约束取值（theme.css 开头的注释）：
+ *   文字对卡片与底色 ≥ 4.5:1，图形填充对轨道与卡片 ≥ 3:1。逐个算过。
+ */
+
+:root {
+  --font-ui: "Inter Variable", -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB",
+    "Microsoft YaHei", "Noto Sans SC", sans-serif;
+  /* 中文衬线退到系统宋体：西文衬线 + 中文宋体在大字号下是成立的组合 */
+  --font-display: "Source Serif 4 Variable", "Songti SC", "Noto Serif SC", "Source Han Serif SC", Georgia,
+    serif;
+}
+
+/* ★ 两个主题块必须覆盖**同一组**变量：这个文件排在 theme.css 之后，
+   `:root` 块里多出来的任何一个变量都会在日间模式下漏成暗色值。 */
+:root,
+.t-dark {
+  --font-sans: var(--font-ui);
+  /* 看板里不再用等宽字体：数字靠 tabular-nums 对齐。变量名保留，图表按它取字体 */
+  --font-mono: var(--font-ui);
+
+  --bg: #1f1e1c;
+  --surface: #262624;
+  --border: #393834;
+  --border-soft: #302f2c;
+  --ring-track: #383733;
+  --track: #2b2a27;
+  --text: #f5f4ee;
+  --text-2: #cfccc2;
+  --text-3: #a6a399;
+  --text-4: #8f8c83;
+  --seg-active: #3a3935;
+  --cut: #8f8c83;
+
+  --ok: #a9be8c;
+  --warn: #e6b46f;
+  --danger: #ef8f82;
+  --info: #9db5e0;
+  --ok-g: #93ac70;
+  --warn-g: #e39a4f;
+  --danger-g: #e26a55;
+  --ok-bg: rgba(147, 172, 112, 0.12);
+  --warn-bg: rgba(227, 154, 79, 0.1);
+  --warn-border: rgba(227, 154, 79, 0.32);
+  --danger-bg: rgba(226, 106, 85, 0.14);
+  --danger-border: rgba(226, 106, 85, 0.45);
+
+  --accent: #d97757;
+  --accent-active: #e58a6b;
+  /* 分类色的前两位避开橄榄绿：那是额度条「安全」的颜色，
+     两台机器 / 两个模型里有一个被染成状态色，会被读成「这个是正常的」 */
+  --cat1: #d97757;
+  --cat2: #7fa7d6;
+  --cat3: #98ad78;
+  --cat4: #d17c98;
+  --empty: #302f2c;
+
+  --shadow-card: none;
+}
+
+.t-light {
+  --font-sans: var(--font-ui);
+  --font-mono: var(--font-ui);
+
+  --bg: #faf9f5;
+  --surface: #ffffff;
+  --border: #e8e6dc;
+  --border-soft: #f0eee6;
+  --ring-track: #f0eee6;
+  --track: #f5f4ee;
+  --text: #141413;
+  --text-2: #3d3d3a;
+  --text-3: #5e5d59;
+  --text-4: #73726c;
+  --seg-active: #efede6;
+  --cut: #b0aea5;
+
+  --ok: #566b3e;
+  --warn: #96590f;
+  --danger: #ae3f35;
+  --info: #3f63a8;
+  /* 琥珀和陶土在浅底上都调深了一档：官网那个 #D97757 对轨道色只有 2.7:1 */
+  --ok-g: #6f8752;
+  --warn-g: #b87330;
+  --danger-g: #c8553f;
+  --ok-bg: rgba(111, 135, 82, 0.1);
+  --warn-bg: rgba(184, 115, 48, 0.09);
+  --warn-border: rgba(184, 115, 48, 0.3);
+  --danger-bg: rgba(200, 85, 63, 0.1);
+  --danger-border: rgba(200, 85, 63, 0.4);
+
+  --accent: #d97757;
+  --accent-active: #b4532f;
+  --cat1: #cc6b4a;
+  --cat2: #5a8bc2;
+  --cat3: #788c5d;
+  --cat4: #c46686;
+  --empty: #f0eee6;
+
+  --shadow-card: 0 1px 2px rgba(20, 20, 19, 0.04), 0 1px 1px rgba(20, 20, 19, 0.02);
+}
+
+/* ── 基础排版 ─────────────────────────────────────────────────────────── */
+body {
+  font-family: var(--font-ui);
+  font-size: 14px;
+  line-height: 1.5;
+  letter-spacing: -0.003em;
+}
+
+/* ── 顶栏：安静、胶囊形控件、衬线字标 ─────────────────────────────────── */
+.topbar {
+  padding: 12px 28px;
+  gap: 14px;
+  background: color-mix(in srgb, var(--bg) 86%, transparent);
+  border-bottom-color: var(--border-soft);
+}
+
+.brand {
+  font-family: var(--font-display);
+  font-size: 19px;
+  font-weight: 560;
+  letter-spacing: -0.01em;
+  margin-right: 10px;
+}
+
+.nav {
+  gap: 4px;
+}
+
+.nav__link {
+  padding: 6px 14px;
+  border-radius: 999px;
+  font-weight: 500;
+  color: var(--text-3);
+}
+
+.nav__link:hover {
+  background: var(--seg-active);
+}
+
+.seg {
+  padding: 3px;
+  border-radius: 999px;
+  border-color: var(--border);
+}
+
+.seg__btn {
+  padding: 4px 12px;
+  border-radius: 999px;
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.select {
+  border-radius: 999px;
+  padding: 6px 30px 6px 14px;
+  border-color: var(--border);
+  font-weight: 500;
+}
+
+.iconbtn {
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  border-color: var(--border);
+}
+
+.sync {
+  font-family: var(--font-ui);
+  font-size: 12px;
+}
+
+/* ── 版面 ─────────────────────────────────────────────────────────────── */
+.main {
+  padding: 22px 28px 48px;
+}
+
+.grid {
+  gap: 14px;
+}
+
+/* ── 页首问候：官网首页那句衬线问候，但第二行放的是真信息 ──────────── */
+.page-head {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 18px;
+  padding: 2px 2px 6px;
+}
+
+.page-head__title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 30px;
+  font-weight: 460;
+  letter-spacing: -0.015em;
+  line-height: 1.15;
+  color: var(--text);
+}
+
+.page-head__line {
+  margin: 0;
+  font-size: 14px;
+  color: var(--text-3);
+}
+
+.page-head__line strong {
+  font-weight: 600;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.page-head__line--warn strong {
+  color: var(--warn);
+}
+
+.page-head__line--danger strong {
+  color: var(--danger);
+}
+
+/* ── 卡片 ─────────────────────────────────────────────────────────────── */
+.card {
+  border-radius: 16px;
+  padding: 18px 20px 20px;
+  box-shadow: var(--shadow-card);
+}
+
+.card__head {
+  margin-bottom: 14px;
+}
+
+.card__title {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0;
+  color: var(--text-2);
+}
+
+.card__aside {
+  font-family: var(--font-ui);
+  font-size: 12px;
+}
+
+/* ── 数字：大数字交给衬线，小数字仍是无衬线 + 等宽数位 ───────────────── */
+.num,
+.mono {
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+.num {
+  font-weight: 500;
+}
+
+.num--xl {
+  font-family: var(--font-display);
+  font-size: 46px;
+  font-weight: 440;
+  letter-spacing: -0.025em;
+  line-height: 1;
+}
+
+.num--lg {
+  font-family: var(--font-display);
+  font-size: 28px;
+  font-weight: 460;
+}
+
+/* 百分号跟着数字走同一个字体，紧贴数字：以前是无衬线小字 + 3px 间距，读起来像「11 %」 */
+.num__suffix {
+  font-family: inherit;
+  font-size: 0.56em;
+  font-weight: inherit;
+  margin-left: 0.04em;
+  letter-spacing: 0;
+}
+
+/* 小号数字的后缀不能按大号的比例缩：16px × 0.46 只剩 7px，「19%」的百分号小成一个点 */
+.num--md .num__suffix,
+.num--sm .num__suffix {
+  font-size: 0.78em;
+  margin-left: 1px;
+}
+
+.mono {
+  font-size: 12px;
+}
+
+/* ── 额度卡 ───────────────────────────────────────────────────────────── */
+.quota {
+  gap: 12px;
+}
+
+.qbar {
+  height: 10px;
+  border-radius: 999px;
+}
+
+.qbar__used,
+.qbar__proj {
+  border-radius: 999px;
+}
+
+.qbar__pace {
+  top: -4px;
+  bottom: -4px;
+  width: 2px;
+  background: var(--text);
+  opacity: 0.55;
+}
+
+.quota__eta {
+  height: 20px;
+  font-family: var(--font-ui);
+  font-size: 13px;
+}
+
+.quota__eta--muted {
+  font-size: 13px;
+}
+
+.quota__money {
+  padding-top: 12px;
+}
+
+.quota__k {
+  font-size: 12px;
+}
+
+.quota__v,
+.quota__v .mono {
+  font-family: var(--font-display);
+  font-size: 21px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  color: var(--text);
+}
+
+/* ── 区间用量 ─────────────────────────────────────────────────────────── */
+.usum__unit {
+  font-size: 13px;
+}
+
+.usum__cost .mono {
+  font-family: var(--font-display);
+  font-size: 32px;
+  font-weight: 460;
+  letter-spacing: -0.015em;
+}
+
+.usum__k {
+  font-size: 12px;
+}
+
+.usum__v {
+  font-family: var(--font-ui);
+  font-size: 17px;
+  font-weight: 500;
+}
+
+/* ── 明细表 ───────────────────────────────────────────────────────────── */
+.btable {
+  font-size: 13px;
+}
+
+.btable th,
+.btable td {
+  padding: 9px 0 9px 14px;
+  font-family: var(--font-ui);
+}
+
+.btable thead th {
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.btable__swatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.btable__track {
+  height: 6px;
+  border-radius: 999px;
+}
+
+.btable__fill {
+  border-radius: 999px;
+}
+
+.btable__cost .mono {
+  font-size: 13px;
+}
+
+.btable__pct {
+  font-size: 12px;
+}
+
+/* ── 登录页：官网那种黑白主按钮 ───────────────────────────────────────── */
+.gate-card {
+  border-radius: 18px;
+  padding: 32px;
+  box-shadow: var(--shadow-card);
+}
+
+.gate-title {
+  font-family: var(--font-display);
+  font-size: 26px;
+  font-weight: 500;
+}
+
+.gate-input {
+  border-radius: 12px;
+  font-family: var(--font-ui);
+  font-size: 14px;
+}
+
+/* 陶土底配白字只有 3:1 左右，按钮文字过不了 4.5 —— 主按钮用墨色 */
+.gate-submit {
+  border-radius: 999px;
+  background: var(--text);
+  color: var(--bg);
+}
+
+/* ── 顶栏紧凑档 ───────────────────────────────────────────────────────────
+   胶囊控件的内边距比原来大，1440 下整条顶栏实测要 ~1240px。
+   不收的话 1100 / 1024 宽就会折成两行（实测 105px 高）。 */
+@media (max-width: 1240px) {
+  .topbar {
+    padding: 10px 20px;
+    gap: 8px;
+  }
+  .brand {
+    font-size: 17px;
+    margin-right: 4px;
+  }
+  .nav {
+    gap: 2px;
+  }
+  .nav__link {
+    padding: 6px 10px;
+  }
+  .seg__btn {
+    padding: 4px 9px;
+  }
+  .select {
+    padding: 6px 26px 6px 12px;
+  }
+  .iconbtn {
+    width: 30px;
+    height: 30px;
+  }
+  .main {
+    padding: 18px 20px 40px;
+  }
+}
+
+/* 再窄就放不下一行了：与其让最后几个按钮被挤到第二行角落，不如明确分成两行 ——
+   第一行字标 + 导航，第二行整条控件。占位的 spacer 在这里变成换行符。 */
+@media (max-width: 1023px) {
+  .topbar {
+    row-gap: 8px;
+  }
+  .topbar__spacer {
+    flex: 0 0 100%;
+    height: 0;
+  }
+}
+
+/* 手机上顶栏要折成三四行（实测 ~180px）：吸顶的话滚动时一直占掉五分之一屏，改为随页面滚走 */
+@media (max-width: 720px) {
+  .topbar {
+    position: static;
+  }
+  .page-head__title {
+    font-size: 26px;
+  }
+}

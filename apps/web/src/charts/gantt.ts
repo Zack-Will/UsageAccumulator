@@ -144,7 +144,8 @@ export function ganttOption(
           type: "text",
           style: {
             x,
-            y: r.y + r.height + 16,
+            // 放在时间刻度**下面**一行：以前是 +16，正好压在「20:00」上
+            y: r.y + r.height + 34,
             text: isNow ? "现在" : "边界",
             fill: color,
             font: `10px ${UI_FONT(t)}`,
@@ -155,9 +156,16 @@ export function ganttOption(
     } as unknown as CustomSeriesRenderItemReturn;
   };
 
+  // 泳道标签区按最长的主机名实测，而不是写死 88px：
+  // 「zhouweichuandeMacBook-Pro.local」在 88px 里只剩「cBook-Pro.local」。封顶 220，再长就截断。
+  const labelFont = `11px ${UI_FONT(t)}`;
+  const longest = laneNames.reduce((mx, n) => Math.max(mx, measureText(String(n), labelFont)), 0);
+  // 留一成余量：首帧量宽时正文字体可能还没到，量的是回退字体，而最终画字用的是正文字体
+  const labelW = Math.min(220, Math.max(56, Math.ceil(longest * 1.1) + 4));
+
   return {
     ...baseOption(t),
-    grid: { left: 88, right: 16, top: 10, bottom: 46 },
+    grid: { left: labelW + 20, right: 16, top: 10, bottom: 52 },
     tooltip: {
       ...baseOption(t).tooltip,
       trigger: "item",
@@ -197,7 +205,13 @@ export function ganttOption(
       ...axisCommon(t),
       axisLine: { show: false },
       splitLine: { show: false },
-      axisLabel: { color: t["text-2"], fontFamily: UI_FONT(t), fontSize: 11 },
+      axisLabel: {
+        color: t["text-2"],
+        fontFamily: UI_FONT(t),
+        fontSize: 11,
+        width: labelW,
+        overflow: "truncate",
+      },
     },
     series: [
       {
@@ -230,4 +244,15 @@ export function ganttOption(
       },
     ],
   };
+}
+
+let measureCtx: CanvasRenderingContext2D | null = null;
+/** 用 canvas 量文字宽度（与 ECharts 画字用的是同一套字体度量）。拿不到 canvas 时按字符数估。 */
+function measureText(text: string, font: string): number {
+  if (!measureCtx && typeof document !== "undefined") {
+    measureCtx = document.createElement("canvas").getContext("2d");
+  }
+  if (!measureCtx) return text.length * 7;
+  measureCtx.font = font;
+  return measureCtx.measureText(text).width;
 }

@@ -213,8 +213,9 @@ export function usageTimelineOption(
       left: 0,
       itemWidth: 8,
       itemHeight: 8,
-      itemGap: 14,
-      icon: "roundRect",
+      itemGap: 16,
+      // 圆点图例：与明细表的色点同一个形状
+      icon: "circle",
       textStyle: { color: t["text-2"], fontFamily: NUM_FONT(t), fontSize: 10 },
     },
     tooltip: {
@@ -269,7 +270,7 @@ export function usageTimelineOption(
       barCategoryGap: "32%",
       itemStyle: {
         color: colors.get(s.key) ?? t.cat1,
-        borderRadius: i === series.length - 1 ? [2, 2, 0, 0] : 0,
+        borderRadius: i === series.length - 1 ? [3, 3, 0, 0] : 0,
       },
       emphasis: { focus: "series" as const },
       data: s.values,
