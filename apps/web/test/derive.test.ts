@@ -5,10 +5,11 @@ import {
   byCostThenTokens,
   cacheHitPct,
   modelDisplayName,
+  treemapAreas,
   usageTotals,
 } from "../src/api/derive";
 import type { DistributionBucket } from "../src/api/types";
-import { fmtUntil, fmtWhen, niceMaxPct } from "../src/charts/base";
+import { escapeHtml, fmtUntil, fmtWhen, niceMaxPct } from "../src/charts/base";
 
 const H = 3_600_000;
 const T0 = Date.UTC(2026, 8, 23, 0, 0, 0);
@@ -218,5 +219,53 @@ describe("临时工作区与会话的显示名", () => {
     expect(sessionWhere({ project_slug: "-Users-me-Repos-Cleave", machine_label: "mbp" })).toBe("Cleave · mbp");
     expect(sessionWhere({ project_slug: SCRATCH, machine_label: "K4F59009H4" })).toBe("临时会话 · K4F59009H4");
     expect(sessionWhere({})).toBe("");
+  });
+});
+
+describe("treemapAreas / 树图保底面积", () => {
+  const sum = (xs: number[]) => xs.reduce((a, v) => a + v, 0);
+  const share = (xs: number[], i: number) => xs[i]! / sum(xs);
+
+  it("没有小块时面积与真实用量成比例", () => {
+    const a = treemapAreas([500, 300, 200]);
+    expect(a[0]! / a[1]!).toBeCloseTo(500 / 300, 9);
+    expect(a[1]! / a[2]!).toBeCloseTo(300 / 200, 9);
+  });
+
+  it("小到看不见的块抬到保底，零用量也占一块", () => {
+    const a = treemapAreas([1_000_000, 50, 0]);
+    expect(share(a, 1)).toBeGreaterThan(0.018);
+    expect(share(a, 2)).toBeGreaterThan(0.018);
+  });
+
+  it("面积仍然严格按真实用量排序", () => {
+    const a = treemapAreas([9_000, 800, 40, 7, 0]);
+    for (let i = 1; i < a.length; i++) expect(a[i]).toBeLessThan(a[i - 1]!);
+    // 随机量级也一样：真实值大的，面积一定大
+    let seed = 7;
+    const rand = () => (seed = (seed * 48271) % 2147483647) / 2147483647;
+    for (let round = 0; round < 50; round++) {
+      const v = Array.from({ length: 12 }, () => Math.floor(10 ** (rand() * 7)));
+      const areas = treemapAreas(v);
+      for (let i = 0; i < v.length; i++)
+        for (let j = 0; j < v.length; j++) if (v[i]! > v[j]!) expect(areas[i]).toBeGreaterThan(areas[j]!);
+    }
+  });
+
+  it("零碎块很多时保底按个数摊薄，合计不超过预算", () => {
+    const a = treemapAreas([1_000_000, ...Array<number>(40).fill(10)]);
+    expect(sum(a.slice(1)) / sum(a)).toBeLessThanOrEqual(0.25 / 1.25 + 1e-6);
+    expect(share(a, 0)).toBeGreaterThan(0.75);
+  });
+
+  it("全是 0 时各给一块等大的", () => {
+    expect(treemapAreas([0, 0, 0])).toEqual([1, 1, 1]);
+    expect(treemapAreas([])).toEqual([]);
+  });
+});
+
+describe("escapeHtml", () => {
+  it("会话标题里的尖括号、引号不会被当成 HTML", () => {
+    expect(escapeHtml(`修 <div> 对齐 & "引号" 'x'`)).toBe("修 &#60;div&#62; 对齐 &#38; &#34;引号&#34; &#39;x&#39;");
   });
 });

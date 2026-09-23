@@ -1,7 +1,7 @@
 import type { EChartsOption } from "./echarts";
-import { axisCommon, baseOption, fmtClock, fmtDay, fmtPct, fmtTokens, NUM_FONT, UI_FONT } from "./base";
+import { axisCommon, baseOption, escapeHtml, fmtClock, fmtDay, fmtPct, fmtTokens, NUM_FONT, UI_FONT } from "./base";
 import { alpha, readLightTokens, sequential, type Tokens } from "./tokens";
-import type { CachePoint, HourCell, MetricSeries, UsageMetric } from "../api/derive";
+import { treemapAreas, type CachePoint, type HourCell, type MetricSeries, type UsageMetric } from "../api/derive";
 import type { DistributionBucket } from "../api/types";
 
 /** 成本未知与成本为 0 必须区分：桶缺价时 tooltip 里标出来，不显示成 $0.00。 */
@@ -24,17 +24,24 @@ export function projectTreemapOption(
   labelOf: (b: DistributionBucket) => string,
 ): EChartsOption {
   const ink = readLightTokens().text;
-  const byName = new Map(buckets.map((b) => [labelOf(b), b]));
+  // 按 key 找回 bucket，不按名字：名字会撞（两个都叫 web 的项目、同一天两个没标题的临时会话）
+  const byKey = new Map(buckets.map((b) => [b.key, b]));
+  const bucketOf = (p: unknown) => byKey.get((p as { data?: { id?: string } }).data?.id ?? "");
+  // 面积有保底（见 treemapAreas），所以下面的标签和 tooltip 一律读 bucket 的真实数，不读 value
+  const areas = treemapAreas(buckets.map((b) => b.total_tokens));
   return {
     ...baseOption(t),
     tooltip: {
       ...baseOption(t).tooltip,
+      // 手机上小块主要靠点开 tooltip 认，别让它伸出屏幕
+      confine: true,
+      // HTML tooltip：换行用 <br/>；名字可能是会话标题（任意文本），必须转义
       formatter: (p: unknown) => {
-        const d = p as { name: string; value: number };
-        const b = byName.get(d.name);
+        const b = bucketOf(p);
+        if (!b) return escapeHtml((p as { name: string }).name);
         // 临时工作区（桌面端不选项目直接开的对话）注明一句，免得把会话标题当成项目名
-        const scratch = b && b.key.includes("-scratch-workspaces-") ? "\n临时会话 · 没有项目目录" : "";
-        return `${d.name}　${fmtTokens(d.value)}${b ? `\n${costCell(b)}` : ""}${scratch}`;
+        const scratch = b.key.includes("-scratch-workspaces-") ? "<br/>临时会话 · 没有项目目录" : "";
+        return `${escapeHtml(labelOf(b))}　${fmtTokens(b.total_tokens)}<br/>${costCell(b)}${scratch}`;
       },
     },
     series: [
@@ -55,16 +62,21 @@ export function projectTreemapOption(
           fontSize: 11,
           overflow: "truncate",
           formatter: (p: unknown) => {
-            const d = p as { name: string; value: number };
-            const b = byName.get(d.name);
+            const b = bucketOf(p);
+            if (!b) return (p as { name: string }).name;
             // 缺价的块在名字后带 †，和 tooltip 的口径一致
-            const mark = b && b.cost_usd === null ? " †" : "";
-            return `${d.name}${mark}\n${fmtTokens(d.value)}`;
+            const mark = b.cost_usd === null ? " †" : "";
+            return `${labelOf(b)}${mark}\n${fmtTokens(b.total_tokens)}`;
           },
         },
-        data: buckets.map((b) => ({
+        // 窄到放不下两三个字、矮到放不下一行的块干脆不写字：截断后只剩「2」「za」这种残片，像是坏了。
+        // 块本身还在，悬停照样有 tooltip。fontSize 0 会被 zrender 解析成 0px，等于隐藏
+        labelLayout: (p: { rect: { width: number; height: number } }) =>
+          p.rect.width < 32 || p.rect.height < 16 ? { fontSize: 0 } : {},
+        data: buckets.map((b, i) => ({
+          id: b.key,
           name: labelOf(b),
-          value: b.total_tokens,
+          value: areas[i],
           itemStyle: { color: colors.get(b.key) ?? t.cat1 },
         })),
       },

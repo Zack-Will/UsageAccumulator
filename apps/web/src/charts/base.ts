@@ -25,6 +25,11 @@ export function baseOption(t: Tokens): EChartsOption {
   };
 }
 
+/** HTML tooltip 里插入任意文本（会话标题、项目名）前先转义。 */
+export function escapeHtml(s: string): string {
+  return s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+}
+
 export function axisCommon(t: Tokens) {
   return {
     axisLine: { lineStyle: { color: t.border } },

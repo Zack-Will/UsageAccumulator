@@ -210,6 +210,25 @@ export function sharePct(buckets: DistributionBucket[], b: DistributionBucket): 
 }
 
 /**
+ * 树图的**画图面积**：小于总量 minShare 的块一律抬到这个保底，否则 0.01% 的项目小到看不见、也点不着。
+ * 数字照旧显示真实用量 —— 面积只求个大概。
+ *
+ * 保底块加起来最多占总量的 maxFloorShare：零碎项目一多（30 天里十几个临时会话很常见），
+ * 每块的保底就按个数摊薄，免得一堆小块反过来把大项目挤没。
+ *
+ * 额外的 1e-3 × 真实值只为定序：保底块面积相同，ECharts 同面积时按 dataIndex 倒序摆，
+ * 加上它之后仍然严格按真实用量从大到小排，而肉眼看不出差别。
+ */
+export function treemapAreas(values: readonly number[], minShare = 0.02, maxFloorShare = 0.25): number[] {
+  const total = values.reduce((a, v) => a + v, 0);
+  if (total <= 0) return values.map(() => 1);
+  let floor = minShare * total;
+  const small = values.filter((v) => v < floor).length;
+  if (small * minShare > maxFloorShare) floor = (maxFloorShare / small) * total;
+  return values.map((v) => Math.max(v, floor) + v * 1e-3);
+}
+
+/**
  * 项目 slug → 可读名，**仅作 bucket.label 缺省时的兜底**。
  * CONTRACT §1.1 允许 project_slug 被 HMAC 化，那种情况下截断显示。
  */
