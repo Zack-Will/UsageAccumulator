@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   createApi,
   fetchSessionStatus,
@@ -135,8 +135,16 @@ export function App() {
   const stale = windows?.windows.some((w) => w.stale) ?? false;
 
   const profileList = profiles.data ?? [];
+  // 没手动选过就跟着「当前在用」的那个走：换了订阅，打开看板看到的就是新订阅
+  const pickedProfile = useRef(false);
   useEffect(() => {
-    if (profileList.length > 0 && !profileList.some((p) => p.id === profileId)) {
+    if (profileList.length === 0) return;
+    const active = profileList.find((p) => p.active);
+    if (!pickedProfile.current && active && active.id !== profileId) {
+      setProfileId(active.id);
+      return;
+    }
+    if (!profileList.some((p) => p.id === profileId)) {
       const first = profileList[0];
       if (first) setProfileId(first.id);
     }
@@ -161,7 +169,10 @@ export function App() {
         route={route}
         profiles={profileList}
         profileId={profileId}
-        onProfile={setProfileId}
+        onProfile={(id) => {
+          pickedProfile.current = true;
+          setProfileId(id);
+        }}
         range={range}
         onRange={setRange}
         theme={theme}

@@ -995,13 +995,29 @@ describe("GET /v1/profiles and /v1/calibration", () => {
     expect(Object.keys(res.json())).toEqual(["profiles"]);
     expect(Object.keys(res.json().profiles[0]).sort()).toEqual([
       "account_uuid",
+      "active",
       "base_url",
       "id",
       "kind",
       "label",
+      "org_uuid",
       "plan",
+    ].filter((k) => k !== "account_uuid" || true).sort());
+    expect(res.json().profiles[0]).toMatchObject({ id: "claude-official", kind: "oauth", active: true });
+  });
+
+  it("多个 profile：最近有用量的那个是 active，不传 profile_id 时回落到它", async () => {
+    await store.insertEvents([
+      { event: makeEvent({ profileId: "claude-team", ts: new Date(NOW.getTime() - 3_600_000) }), costUsd: 0 },
+      { event: makeEvent({ profileId: "claude-official", ts: new Date(NOW.getTime() - 60_000) }), costUsd: 0 },
     ]);
-    expect(res.json().profiles[0]).toMatchObject({ id: "claude-official", kind: "oauth" });
+    await store.ensureProfiles(["claude-team", "claude-official"]);
+    const res = await app.fastify.inject({ method: "GET", url: "/v1/profiles", headers: AUTH });
+    const active = (res.json().profiles as { id: string; active: boolean }[]).filter((p) => p.active).map((p) => p.id);
+    expect(active).toEqual(["claude-official"]);
+    const summary = await app.fastify.inject({ method: "GET", url: "/v1/summary", headers: AUTH });
+    expect(summary.statusCode).toBe(200);
+    expect(summary.json()).toMatchObject({ profile_id: "claude-official" });
   });
 
   it("returns an empty calibration list while still calibrating", async () => {

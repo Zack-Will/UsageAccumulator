@@ -164,21 +164,22 @@ export function parseLimits(raw: unknown): QuotaWindow[] {
 export function parseUsageResponse(raw: unknown): QuotaWindow[] {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return [];
   const doc = raw as Record<string, unknown>;
+
+  // ★ 有 limits[] 就只认它：这正是 claude.ai 自己展示的那组限流窗口。
+  // 扁平 key 里混着与订阅限流无关的东西 —— 2026-09-27 个人 Max 的响应里出现了
+  // `iguana_necktie`（一份 $250 的美元额度，有重置时刻，会被当成一个真窗口显示出来）
+  // 和 `nimbus_quill`（全 null 的占位）。它们不在 limits[] 里，原文照旧留在 raw。
+  const limits = parseLimits(doc["limits"]);
+  if (limits.length > 0) return limits;
+
+  // 老格式（没有 limits[]）：扁平 key 原样透传，不硬编码枚举
   const out: QuotaWindow[] = [];
-  const seen = new Set<string>();
   for (const [key, value] of Object.entries(doc)) {
     if (!value || typeof value !== "object" || Array.isArray(value)) continue;
     const obj = value as Record<string, unknown>;
     const pct = pickPct(obj);
     if (pct === null) continue; // 比如 extra_usage：没有利用率，只进 raw
     out.push({ windowKind: key, utilizationPct: pct, resetsAt: pickDate(obj) });
-    seen.add(key);
-  }
-  // 扁平 key 优先：五小时与全局七天两边都有，值一致，不重复入列
-  for (const w of parseLimits(doc["limits"])) {
-    if (seen.has(w.windowKind)) continue;
-    out.push(w);
-    seen.add(w.windowKind);
   }
   return out;
 }
@@ -191,6 +192,7 @@ function isCodeOrg(o: Record<string, unknown>): boolean {
   return typeof tier === "string" && tier.startsWith("default_raven");
 }
 
+/** 探针旧路径用。服务端不再用它 —— 见 parseOrganizations 的说明。 */
 export function extractOrgId(raw: unknown): string | null {
   if (Array.isArray(raw)) {
     const orgs = raw.filter((x): x is Record<string, unknown> => Boolean(x) && typeof x === "object" && !Array.isArray(x));
@@ -220,6 +222,60 @@ export function extractOrgId(raw: unknown): string | null {
   return null;
 }
 
+/** `/api/organizations` 里的一个组织。只留判断「这是哪份订阅」需要的字段。 */
+export interface ClaudeOrg {
+  uuid: string;
+  name: string;
+  /** 如 `default_claude_max_5x` / `default_raven`，拿不到为 null */
+  rateLimitTier: string | null;
+  capabilities: string[];
+}
+
+/**
+ * 解析组织列表。
+ *
+ * ★ 2026-09-27 实测：同一个 sessionKey 下同时挂着 team 组织（`default_raven`，带 `raven`）
+ * 和个人 Max 组织（`default_claude_max_5x`，**不带** `raven`，只有 `claude_max`）。
+ * 所以「带 raven 的才是 Claude Code 在用的」不成立 —— 服务端一律按 profile 显式绑定组织，不猜。
+ */
+export function parseOrganizations(raw: unknown): ClaudeOrg[] {
+  if (!Array.isArray(raw)) return [];
+  const out: ClaudeOrg[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+    const o = item as Record<string, unknown>;
+    const uuid = o["uuid"] ?? o["id"];
+    if (typeof uuid !== "string" || !uuid) continue;
+    const tier = o["rate_limit_tier"];
+    const caps = o["capabilities"];
+    out.push({
+      uuid,
+      name: typeof o["name"] === "string" ? o["name"] : "",
+      rateLimitTier: typeof tier === "string" && tier ? tier : null,
+      capabilities: Array.isArray(caps) ? caps.filter((c): c is string => typeof c === "string") : [],
+    });
+  }
+  return out;
+}
+
+/**
+ * 档位名 → profiles.plan。`default_claude_max_5x` → `max_5x`，`default_raven` → `team`。
+ * 认不出的原样去掉 `default_` 前缀带出，不丢信息。
+ */
+export function planFromTier(tier: string | null): string | null {
+  if (!tier) return null;
+  const t = tier.replace(/^default_/, "");
+  if (t === "raven" || t.startsWith("raven_")) return "team";
+  return t.replace(/^claude_/, "");
+}
+
+/** 只有一个组织、或只有一个组织能用 Claude Code 时，才算「无歧义」；否则返回 null，由人来选。 */
+export function unambiguousOrg(orgs: ClaudeOrg[]): ClaudeOrg | null {
+  if (orgs.length === 1) return orgs[0]!;
+  const code = orgs.filter((o) => o.capabilities.includes("raven") || o.capabilities.includes("claude_max") || o.capabilities.includes("claude_pro"));
+  return code.length === 1 ? code[0]! : null;
+}
+
 /**
  * 薄客户端：不缓存、不读凭证、不重试 —— 这些策略归调用方（服务端采样器 / 探针）。
  * sessionKey **只进请求头**，不进任何错误信息与日志。
@@ -235,6 +291,11 @@ export class ClaudeWebClient {
     const orgId = extractOrgId(checkClaudeResponse(res, "GET /api/organizations"));
     if (!orgId) throw new QuotaUnavailableError("organizations 响应里找不到 org id");
     return orgId;
+  }
+
+  async organizations(sessionKey: string): Promise<ClaudeOrg[]> {
+    const res = await this.get(`${this.baseUrl}/api/organizations`, claudeWebHeaders(sessionKey));
+    return parseOrganizations(checkClaudeResponse(res, "GET /api/organizations"));
   }
 
   async snapshot(sessionKey: string, orgId: string, profileId: string, now = new Date()): Promise<QuotaSnapshot> {

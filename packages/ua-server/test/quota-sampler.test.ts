@@ -2,7 +2,7 @@ import { mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promise
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { QuotaAuthError, QuotaUnavailableError, type QuotaSnapshot } from "@ua/core";
+import { QuotaAuthError, QuotaUnavailableError, type ClaudeOrg, type QuotaSnapshot } from "@ua/core";
 import { QuotaSampler } from "../src/quota-sampler.js";
 import { FileSessionVault, isVaultSafeId, MemorySessionVault } from "../src/quota-vault.js";
 
@@ -21,14 +21,18 @@ class FakeClaude {
     if (this.mode === "challenge") throw new QuotaAuthError("GET x 被 Cloudflare 质询（403）", 403, "challenge");
     throw new QuotaUnavailableError("GET x 返回 HTTP 503");
   }
-  async orgId(sessionKey: string): Promise<string> {
+  orgs: ClaudeOrg[] = [{ uuid: "org-1", name: "Solo", rateLimitTier: "default_claude_max_5x", capabilities: ["chat", "claude_max"] }];
+  /** usage 对这些组织回 403（账号已不在该组织里） */
+  gone = new Set<string>();
+  async organizations(sessionKey: string): Promise<ClaudeOrg[]> {
     this.calls.push(`org:${sessionKey}`);
     if (this.mode !== "ok") this.fail();
-    return "org-1";
+    return this.orgs;
   }
   async snapshot(sessionKey: string, orgId: string, profileId: string, now = new Date()): Promise<QuotaSnapshot> {
     this.calls.push(`usage:${sessionKey}:${orgId}`);
     if (this.mode !== "ok") this.fail();
+    if (this.gone.has(orgId)) throw new QuotaAuthError("GET x 返回 403，sessionKey 可能已失效", 403, "session");
     return { profileId, capturedAt: now, windows: [{ windowKind: "five_hour", utilizationPct: 42, resetsAt: null }], raw: {} };
   }
 }
@@ -39,6 +43,8 @@ let claude: FakeClaude;
 let recorded: QuotaSnapshot[];
 let logs: unknown[];
 let sampler: QuotaSampler;
+/** profile → org 绑定（替身 profiles.org_uuid） */
+let bindings: Map<string, string>;
 
 const at = (ms: number) => new Date(Date.UTC(2026, 8, 23, 10, 0) + ms);
 
@@ -48,6 +54,7 @@ beforeEach(() => {
   claude = new FakeClaude();
   recorded = [];
   logs = [];
+  bindings = new Map();
   const log = { info: (o: object, m: string) => logs.push([o, m]), warn: (o: object, m: string) => logs.push([o, m]), error: (o: object, m: string) => logs.push([o, m]) };
   sampler = new QuotaSampler({
     vault,
@@ -55,6 +62,13 @@ beforeEach(() => {
     record: async (s) => {
       recorded.push(s);
     },
+    profileOrg: async (id) => bindings.get(id) ?? null,
+    bindOrg: async (id, org) => {
+      for (const [p, o] of bindings) if (o === org.uuid && p !== id) return p;
+      bindings.set(id, org.uuid);
+      return null;
+    },
+    orgBindings: async () => new Map([...bindings].map(([p, o]) => [o, p])),
     log,
     now: () => clock,
     random: () => 0.5,
@@ -221,5 +235,69 @@ describe("FileSessionVault", () => {
     expect(await v.read("claude-official")).toBeNull();
     expect(await v.list()).toEqual([]);
     expect(await v.remove("claude-official")).toBe(false);
+  });
+});
+
+describe("QuotaSampler · 组织绑定", () => {
+  const TEAM: ClaudeOrg = { uuid: "org-team", name: "Kimmy Inc.", rateLimitTier: "default_raven", capabilities: ["chat", "raven"] };
+  const MAX: ClaudeOrg = { uuid: "org-max", name: "Personal", rateLimitTier: "default_claude_max_5x", capabilities: ["chat", "claude_max"] };
+
+  it("唯一的组织自动绑定", async () => {
+    await vault.write("claude-official", KEY);
+    await sampler.tickAll();
+    expect(bindings.get("claude-official")).toBe("org-1");
+    const s = await sampler.status("claude-official");
+    expect(s.state).toBe("ok");
+    expect(s.orgUuid).toBe("org-1");
+    expect(s.orgs).toEqual([{ uuid: "org-1", name: "Solo", plan: "max_5x", boundTo: "claude-official" }]);
+  });
+
+  it("team + 个人 Max 两个组织：不猜，进入 org 状态，也不抓额度", async () => {
+    // 2026-09-27 实测形态：个人 Max 组织不带 raven，按 raven 猜会选中 team
+    claude.orgs = [TEAM, MAX];
+    await vault.write("claude-official", KEY);
+    await sampler.tickAll();
+    expect(recorded).toEqual([]);
+    expect(claude.calls.some((c) => c.startsWith("usage:"))).toBe(false);
+    const s = await sampler.status("claude-official");
+    expect(s.state).toBe("org");
+    expect(s.orgs?.map((o) => [o.name, o.plan])).toEqual([
+      ["Kimmy Inc.", "team"],
+      ["Personal", "max_5x"],
+    ]);
+
+    bindings.set("claude-official", "org-max");
+    await sampler.kick("claude-official");
+    expect(claude.calls.at(-1)).toBe(`usage:${KEY}:org-max`);
+    expect((await sampler.status("claude-official")).state).toBe("ok");
+  });
+
+  it("两个 profile 可以共用一个会话、各抓各的组织", async () => {
+    claude.orgs = [TEAM, MAX];
+    bindings.set("claude-official", "org-max");
+    bindings.set("claude-team", "org-team");
+    await vault.write("claude-official", KEY);
+    await vault.write("claude-team", KEY);
+    await sampler.tickAll();
+    expect(recorded.map((r) => r.profileId).sort()).toEqual(["claude-official", "claude-team"]);
+    expect(claude.calls).toContain(`usage:${KEY}:org-max`);
+    expect(claude.calls).toContain(`usage:${KEY}:org-team`);
+  });
+
+  it("绑定的组织不在了（退出了 team）：标 org，不当成会话失效去退避", async () => {
+    claude.orgs = [TEAM, MAX];
+    bindings.set("claude-official", "org-team");
+    await vault.write("claude-official", KEY);
+    await sampler.tickAll();
+    expect((await sampler.status("claude-official")).state).toBe("ok");
+
+    claude.orgs = [MAX];
+    claude.gone.add("org-team");
+    clock = at(10 * MIN);
+    await sampler.tickAll();
+    const s = await sampler.status("claude-official");
+    expect(s.state).toBe("org");
+    expect(s.error).toContain("不在");
+    expect(s.nextAttemptAt).toEqual(at(15 * MIN));
   });
 });

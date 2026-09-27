@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { QuotaAuthError, QuotaUnavailableError, type QuotaSnapshot } from "@ua/core";
+import { QuotaAuthError, QuotaUnavailableError, type ClaudeOrg, type QuotaSnapshot } from "@ua/core";
 import { buildApp, type UaApp } from "../src/app.js";
 import { MemorySessionVault } from "../src/quota-vault.js";
 import { MemoryStore } from "../src/store-memory.js";
@@ -17,12 +17,15 @@ class FakeClaude {
     if (this.mode === "down") throw new QuotaUnavailableError("GET x 返回 HTTP 503");
     if (key !== GOOD) throw new QuotaAuthError("GET x 返回 403，sessionKey 可能已失效", 403, "session");
   }
-  async orgId(key: string): Promise<string> {
+  orgs: ClaudeOrg[] = [{ uuid: "org-1", name: "Solo", rateLimitTier: "default_claude_max_5x", capabilities: ["claude_max"] }];
+  lastOrg: string | null = null;
+  async organizations(key: string): Promise<ClaudeOrg[]> {
     this.check(key);
-    return "org-1";
+    return this.orgs;
   }
-  async snapshot(key: string, _org: string, profileId: string, now = new Date()): Promise<QuotaSnapshot> {
+  async snapshot(key: string, org: string, profileId: string, now = new Date()): Promise<QuotaSnapshot> {
     this.check(key);
+    this.lastOrg = org;
     return { profileId, capturedAt: now, windows: [{ windowKind: "five_hour", utilizationPct: 37, resetsAt: null }], raw: {} };
   }
 }
@@ -138,6 +141,56 @@ describe("/v1/quota/session", () => {
     const get = await app.fastify.inject({ method: "GET", url: "/v1/quota/session?profile_id=claude-official", headers: AUTH });
     expect(get.json()).toMatchObject({ state: "disabled" });
     expect((await put(GOOD)).statusCode).toBe(404);
+  });
+});
+
+describe("/v1/quota/session · 组织", () => {
+  const TEAM: ClaudeOrg = { uuid: "org-team", name: "Kimmy Inc.", rateLimitTier: "default_raven", capabilities: ["chat", "raven"] };
+  const MAX: ClaudeOrg = { uuid: "org-max", name: "Personal", rateLimitTier: "default_claude_max_5x", capabilities: ["chat", "claude_max"] };
+
+  it("多个组织时先存会话、进入 org 状态并给出候选；选了之后只抓那一个", async () => {
+    claude.orgs = [TEAM, MAX];
+    const first = await put(GOOD);
+    expect(first.statusCode).toBe(200);
+    expect(first.json()).toMatchObject({ state: "org", org_uuid: null });
+    expect((first.json() as { orgs: { name: string; plan: string }[] }).orgs.map((o) => o.plan)).toEqual(["team", "max_5x"]);
+    expect(store.quota).toHaveLength(0);
+
+    // 只换组织不重贴 sessionKey
+    const pick = await app.fastify.inject({
+      method: "PUT",
+      url: "/v1/quota/session",
+      headers: AUTH,
+      payload: { profile_id: "claude-official", org_uuid: "org-max" },
+    });
+    expect(pick.statusCode).toBe(200);
+    expect(pick.json()).toMatchObject({ state: "ok", org_uuid: "org-max" });
+    expect(claude.lastOrg).toBe("org-max");
+    const prof = (await store.listProfiles()).find((p) => p.id === "claude-official");
+    expect(prof).toMatchObject({ orgUuid: "org-max", label: "Personal", plan: "max_5x" });
+  });
+
+  it("不在列表里的组织、已被别的 profile 占用的组织都拒绝", async () => {
+    claude.orgs = [TEAM, MAX];
+    await put(GOOD);
+    const body = (org: string, profile = "claude-official") => ({ profile_id: profile, org_uuid: org });
+    const nope = await app.fastify.inject({ method: "PUT", url: "/v1/quota/session", headers: AUTH, payload: body("org-x") });
+    expect(nope.statusCode).toBe(400);
+
+    await store.bindProfileOrg("claude-team", { uuid: "org-team", label: "Kimmy Inc.", plan: "team" });
+    const taken = await app.fastify.inject({ method: "PUT", url: "/v1/quota/session", headers: AUTH, payload: body("org-team") });
+    expect(taken.statusCode).toBe(400);
+    expect(taken.json()).toMatchObject({ error: { message: "该组织已绑定到 claude-team" } });
+  });
+
+  it("没保存过会话就只给 org_uuid：400", async () => {
+    const res = await app.fastify.inject({
+      method: "PUT",
+      url: "/v1/quota/session",
+      headers: AUTH,
+      payload: { profile_id: "claude-official", org_uuid: "org-1" },
+    });
+    expect(res.statusCode).toBe(400);
   });
 });
 

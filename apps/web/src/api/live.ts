@@ -122,10 +122,11 @@ export function createLiveApi(opts: { base: string; token?: string | undefined }
     quotaHistory: (p, signal) => get<QuotaHistory>("/v1/quota/history", { ...p }, signal),
     quotaSession: (profileId, signal) =>
       get<QuotaSessionStatus>("/v1/quota/session", { profile_id: profileId }, signal),
-    saveQuotaSession: (profileId, sessionKey) =>
+    saveQuotaSession: (profileId, change) =>
       send<QuotaSessionStatus>("PUT", "/v1/quota/session", undefined, {
         profile_id: profileId,
-        session_key: sessionKey,
+        ...(change.sessionKey ? { session_key: change.sessionKey } : {}),
+        ...(change.orgUuid ? { org_uuid: change.orgUuid } : {}),
       }),
     clearQuotaSession: (profileId) =>
       send<QuotaSessionStatus>("DELETE", "/v1/quota/session", { profile_id: profileId }),

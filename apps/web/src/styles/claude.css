@@ -432,6 +432,14 @@ body {
   font-size: 14px;
 }
 
+/* 会话弹窗里的组织选择：沿用输入框的形状，不吃顶栏 .select 的 180px 胶囊 */
+.dialog .select.gate-input {
+  max-width: none;
+  border-radius: 12px;
+  padding: 10px 30px 10px 12px;
+  font-weight: 400;
+}
+
 /* 陶土底配白字只有 3:1 左右，按钮文字过不了 4.5 —— 主按钮用墨色 */
 .gate-submit {
   border-radius: 999px;

@@ -51,6 +51,8 @@ export function makeConfig(over: {
   baseUrlProfiles?: Record<string, string>;
   providerProfiles?: Record<string, string>;
   accountProfiles?: Record<string, string>;
+  claudeJson?: string;
+  orgProfiles?: Record<string, string>;
   hashProjectPaths?: boolean;
 } = {}): ProbeConfig {
   const toml = `
@@ -68,6 +70,7 @@ machine_token = "tok"
 [attribution]
 cc_switch_db = ${JSON.stringify(over.ccSwitchDb ?? "/nonexistent/cc.db")}
 claude_settings = ${JSON.stringify(over.claudeSettings ?? "/nonexistent/settings.json")}
+claude_json = ${JSON.stringify(over.claudeJson ?? "/nonexistent/claude.json")}
 official_profile_id = "claude-official"
 
 [attribution.base_url_profiles]
@@ -82,6 +85,11 @@ ${Object.entries(over.providerProfiles ?? {})
 
 [attribution.account_profiles]
 ${Object.entries(over.accountProfiles ?? {})
+  .map(([k, v]) => `${JSON.stringify(k)} = ${JSON.stringify(v)}`)
+  .join("\n")}
+
+[attribution.org_profiles]
+${Object.entries(over.orgProfiles ?? {})
   .map(([k, v]) => `${JSON.stringify(k)} = ${JSON.stringify(v)}`)
   .join("\n")}
 `;

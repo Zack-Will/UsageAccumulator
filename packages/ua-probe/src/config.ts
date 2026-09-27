@@ -56,6 +56,16 @@ const attributionSchema = z.object({
   base_url_profiles: z.record(z.string()).default({}),
   /** JSONL 行上的 ownerAccountUuid → profile_id（L3） */
   account_profiles: z.record(z.string()).default({}),
+  /**
+   * Claude Code 的全局状态文件，`oauthAccount.organizationUuid` 是当前登录的订阅。
+   * 同一个账号可以在 team 与个人订阅之间切换，账号 UUID 不变、只有组织变 —— 所以按组织分 profile。
+   */
+  claude_json: z.string().default(join(homedir(), ".claude.json")),
+  /**
+   * claude.ai 组织 UUID → profile_id。为空时维持旧行为（官方 OAuth 一律归 official_profile_id）；
+   * 配了之后，没配到的组织会归到自动生成的 `claude-<前 8 位>`，**绝不混进已有 profile**。
+   */
+  org_profiles: z.record(z.string()).default({}),
   /** 未配置 env.ANTHROPIC_BASE_URL 时认为跑的是官方 OAuth，归到这个 profile */
   official_profile_id: z.string().default(""),
   /** cc-switch DB 的轮询间隔（WAL 轮询） */
@@ -220,6 +230,9 @@ official_profile_id = ${JSON.stringify(v.defaultProfileId)}
 
 # JSONL 行上的 ownerAccountUuid → profile_id（L3 兜底）
 [attribution.account_profiles]
+
+# ~/.claude.json 的 oauthAccount.organizationUuid → profile_id（切换订阅时按组织分开记）
+[attribution.org_profiles]
 
 # 额度默认由服务端直接抓（ARCHITECTURE §5.3）。这里是探针代抓的旧路径，只在服务端关了采集时才开
 [quota]

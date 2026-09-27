@@ -56,4 +56,6 @@ export interface Profile {
   accountUuid: string | null;
   baseUrl: string | null;
   plan: string | null;
+  /** 绑定的 claude.ai 组织；API key 类 profile 与尚未绑定的为 null */
+  orgUuid: string | null;
 }

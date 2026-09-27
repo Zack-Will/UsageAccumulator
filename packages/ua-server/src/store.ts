@@ -50,6 +50,13 @@ export interface Store {
   listProfiles(): Promise<Profile[]>;
   /** ingest 时为没见过的 profile 落一条占位行，写入路径绝不能因为陌生 profile 失败 */
   ensureProfiles(ids: string[]): Promise<void>;
+  /**
+   * 把 profile 绑到一个 claude.ai 组织，顺带写上组织名与档位。
+   * 该组织已绑在别的 profile 上时返回那个 profile 的 id、不做任何改动；成功返回 null。
+   */
+  bindProfileOrg(profileId: string, org: { uuid: string; label: string; plan: string | null }): Promise<string | null>;
+  /** 每个 profile 最近一条事件的时间；没有事件的 profile 不出现 */
+  latestEventAt(): Promise<Map<string, Date>>;
 
   /** ON CONFLICT DO NOTHING 批量 upsert，返回**新插入**的条数 */
   insertEvents(rows: EventRow[]): Promise<number>;

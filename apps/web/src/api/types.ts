@@ -26,6 +26,10 @@ export interface Profile {
   account_uuid: string | null;
   base_url: string | null;
   plan: string | null;
+  /** 绑定的 claude.ai 组织 */
+  org_uuid: string | null;
+  /** 最近有用量的那个；没有明确选择时默认跟它走 */
+  active: boolean;
 }
 
 export interface ProfilesResponse {
@@ -213,6 +217,8 @@ export interface DistributionBucket {
   project_slug?: string | null;
   /** 仅 by=session：这个会话在哪台机器 */
   machine_label?: string;
+  /** 仅 by=session：桌面端恢复会话产生的分叉合并了几个 session id */
+  session_count?: number;
 }
 
 export interface Distribution {
@@ -304,7 +310,16 @@ export interface QuotaHistoryParams extends TimeRangeParams {
  * none 未登录 · pending 存了还没抓过 · ok 正常 · auth 会话失效 · blocked 被 Cloudflare 拦
  * · error 暂时失败（下一轮自动重试）· disabled 服务端没开采集（额度只能靠探针代抓）
  */
-export type QuotaSessionState = "none" | "pending" | "ok" | "auth" | "blocked" | "error" | "disabled";
+export type QuotaSessionState = "none" | "pending" | "ok" | "auth" | "blocked" | "org" | "error" | "disabled";
+
+/** 会话能看到的一个 claude.ai 组织 */
+export interface QuotaOrg {
+  uuid: string;
+  name: string;
+  plan: string | null;
+  /** 已绑在哪个 profile 上 */
+  bound_to: string | null;
+}
 
 /** 只有状态，没有 sessionKey —— 服务端任何接口都不回显它。 */
 export interface QuotaSessionStatus {
@@ -314,6 +329,9 @@ export interface QuotaSessionStatus {
   last_attempt_at: Rfc3339 | null;
   next_attempt_at: Rfc3339 | null;
   error: string | null;
+  org_uuid: string | null;
+  /** null = 还没问过 claude.ai */
+  orgs: QuotaOrg[] | null;
 }
 
 export interface UaApi {
@@ -327,7 +345,7 @@ export interface UaApi {
   quotaHistory(p: QuotaHistoryParams, signal?: AbortSignal): Promise<QuotaHistory>;
   quotaSession(profileId: string, signal?: AbortSignal): Promise<QuotaSessionStatus>;
   /** 服务端先拿它去问 claude.ai，认了才保存；不认就抛 ApiError，message 可以直接给人看。 */
-  saveQuotaSession(profileId: string, sessionKey: string): Promise<QuotaSessionStatus>;
+  saveQuotaSession(profileId: string, change: { sessionKey?: string; orgUuid?: string }): Promise<QuotaSessionStatus>;
   clearQuotaSession(profileId: string): Promise<QuotaSessionStatus>;
   /** 返回 unsubscribe。连接状态通过 onStatus 上报，供顶栏「同步状态」使用。 */
   stream(

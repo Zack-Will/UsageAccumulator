@@ -11,6 +11,8 @@ export interface AttributionHints {
   tsMs: number;
   /** JSONL 行上的 ownerAccountUuid（L3）。assistant 行上常为空。 */
   ownerAccountUuid: string | null;
+  /** JSONL 行上的 ownerOrganizationUuid（L3，优先于账号）。同样常为空 */
+  ownerOrganizationUuid?: string | null;
 }
 
 export interface AttributionResult {
@@ -19,6 +21,28 @@ export interface AttributionResult {
 }
 
 const UUID_RE = /"ownerAccountUuid"\s*:\s*"([0-9a-fA-F-]{8,64})"/;
+const ORG_RE = /"ownerOrganizationUuid"\s*:\s*"([0-9a-fA-F-]{8,64})"/;
+
+/** 同 extractOwnerAccountUuid，取的是组织。 */
+export function extractOwnerOrganizationUuid(raw: string): string | null {
+  if (!raw.includes("ownerOrganizationUuid")) return null;
+  return ORG_RE.exec(raw)?.[1] ?? null;
+}
+
+/**
+ * 读 `~/.claude.json` 的 `oauthAccount.organizationUuid`：Claude Code 当前登录的是哪份订阅。
+ * 读不到（没登录 / 文件不在 / 不是 JSON）返回 null。只取这一个字段，别的（邮箱等）一概不碰。
+ */
+export function readOauthOrgUuid(claudeJsonPath: string): string | null {
+  try {
+    const doc = JSON.parse(readFileSync(claudeJsonPath, "utf8")) as Record<string, unknown>;
+    const acct = doc["oauthAccount"] as Record<string, unknown> | undefined;
+    const org = acct?.["organizationUuid"];
+    return typeof org === "string" && org ? org : null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * 从原始 JSONL 行里摘 ownerAccountUuid。
@@ -116,9 +140,10 @@ export class Attributor {
       profileId = this.cfg.attribution.base_url_profiles[liveBaseUrl] ?? liveBaseUrl;
       source = "settings.env.ANTHROPIC_BASE_URL";
     } else {
-      // 没有 env 段 = 跑的是官方 OAuth。这是本机实测确认的情形。
-      profileId = officialProfile;
-      source = "settings.no-env(official-oauth)";
+      // 没有 env 段 = 跑的是官方 OAuth。再看登录的是哪个组织（team / 个人订阅）
+      const org = readOauthOrgUuid(expandHome(this.cfg.attribution.claude_json));
+      profileId = this.profileForOrg(org) ?? officialProfile;
+      source = org ? `claude.json.oauthAccount(org=${org.slice(0, 8)})` : "settings.no-env(official-oauth)";
     }
 
     let mismatch: string | null = null;
@@ -163,7 +188,12 @@ export class Attributor {
       return { profileId: tl.profileId, level: "timeline" };
     }
 
-    // L3：ownerAccountUuid / 默认 profile
+    // L3：ownerOrganizationUuid / ownerAccountUuid / 默认 profile
+    const byOrg = this.profileForOrg(h.ownerOrganizationUuid ?? null);
+    if (byOrg) {
+      this.stats.fallback++;
+      return { profileId: byOrg, level: "fallback" };
+    }
     if (h.ownerAccountUuid) {
       const mapped = this.cfg.attribution.account_profiles[h.ownerAccountUuid];
       if (mapped) {
@@ -177,5 +207,16 @@ export class Attributor {
     }
     this.stats.unknown++;
     return { profileId: "", level: "unknown" };
+  }
+
+  /**
+   * 组织 → profile。没配 org_profiles 时返回 null（沿用 official_profile_id 的旧行为）；
+   * 配了但这个组织不在里面 → `claude-<前 8 位>`：新订阅单独成一个 profile，而不是悄悄并进旧的。
+   */
+  private profileForOrg(org: string | null): string | null {
+    if (!org) return null;
+    const map = this.cfg.attribution.org_profiles;
+    if (Object.keys(map).length === 0) return null;
+    return map[org] ?? `claude-${org.slice(0, 8).toLowerCase()}`;
   }
 }

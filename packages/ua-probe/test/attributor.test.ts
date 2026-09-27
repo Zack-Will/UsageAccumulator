@@ -1,7 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { Attributor, extractOwnerAccountUuid, readLiveBaseUrl } from "../src/attributor.js";
+import {
+  Attributor,
+  extractOwnerAccountUuid,
+  extractOwnerOrganizationUuid,
+  readLiveBaseUrl,
+  readOauthOrgUuid,
+} from "../src/attributor.js";
 import { CcSwitchReader } from "../src/ccswitch.js";
 import { ProbeStore } from "../src/store.js";
 import { cleanup, makeCcSwitchDb, makeConfig, silentLog, tmpDir } from "./helpers.js";
@@ -170,5 +176,72 @@ describe("辅助解析", () => {
 
   it("readLiveBaseUrl：文件不存在或无 env 段都返回 null（= 官方 OAuth）", () => {
     expect(readLiveBaseUrl("/definitely/not/here.json")).toBeNull();
+  });
+});
+
+describe("Attributor / 按组织切分订阅", () => {
+  // 2026-09-27 实测：账号 UUID 不变，从 team 组织切到个人 Max 组织
+  const TEAM = "29c62b23-6f17-4bd7-9f5e-83c69c138689";
+  const MAX = "c702d391-cd5f-4254-9667-3228ec63da4a";
+  let dir: string;
+  let claudeJson: string;
+
+  beforeEach(() => {
+    dir = tmpDir();
+    claudeJson = join(dir, ".claude.json");
+  });
+  afterEach(() => cleanup(dir));
+
+  const login = (org: string) =>
+    writeFileSync(claudeJson, JSON.stringify({ oauthAccount: { accountUuid: "b28d590b", organizationUuid: org, emailAddress: "x@y" } }));
+
+  function build(orgProfiles: Record<string, string>) {
+    const cfg = makeConfig({ claudeJson, orgProfiles });
+    const store = new ProbeStore(":memory:");
+    return { store, attr: new Attributor(cfg, store, silentLog) };
+  }
+
+  it("切换组织追加时间线点，前后的事件各归各的 profile", () => {
+    const { attr, store } = build({ [TEAM]: "claude-team", [MAX]: "claude-official" });
+    const t0 = attr.installedAt;
+    login(TEAM);
+    expect(attr.refreshTimeline(t0 + 1000).profileId).toBe("claude-team");
+    login(MAX);
+    const probe = attr.refreshTimeline(t0 + 5000);
+    expect(probe.profileId).toBe("claude-official");
+    expect(probe.source).toContain("c702d391");
+    expect(store.allTimeline().map((t) => t.profileId)).toEqual(["claude-team", "claude-official"]);
+    expect(attr.attribute({ requestId: "", tsMs: t0 + 2000, ownerAccountUuid: null }).profileId).toBe("claude-team");
+    expect(attr.attribute({ requestId: "", tsMs: t0 + 6000, ownerAccountUuid: null }).profileId).toBe("claude-official");
+    attr.close();
+  });
+
+  it("没配过的新组织单独成 profile，不并进已有的", () => {
+    const { attr } = build({ [TEAM]: "claude-team" });
+    login(MAX);
+    expect(attr.refreshTimeline(attr.installedAt + 1000).profileId).toBe("claude-c702d391");
+    attr.close();
+  });
+
+  it("没配 org_profiles：维持旧行为，一律归 official_profile_id", () => {
+    const { attr } = build({});
+    login(MAX);
+    expect(attr.refreshTimeline(attr.installedAt + 1000).profileId).toBe("claude-official");
+    attr.close();
+  });
+
+  it("L3：JSONL 行上的 ownerOrganizationUuid 优先于账号", () => {
+    const { attr } = build({ [TEAM]: "claude-team" });
+    const res = attr.attribute({ requestId: "", tsMs: attr.installedAt + 1000, ownerAccountUuid: "b28d590b", ownerOrganizationUuid: TEAM });
+    expect(res).toEqual({ profileId: "claude-team", level: "fallback" });
+    attr.close();
+  });
+
+  it("只取组织 UUID；读不到返回 null", () => {
+    login(MAX);
+    expect(readOauthOrgUuid(claudeJson)).toBe(MAX);
+    expect(readOauthOrgUuid(join(dir, "nope.json"))).toBeNull();
+    expect(extractOwnerOrganizationUuid(`{"ownerOrganizationUuid":"${TEAM}"}`)).toBe(TEAM);
+    expect(extractOwnerOrganizationUuid(`{"x":1}`)).toBeNull();
   });
 });

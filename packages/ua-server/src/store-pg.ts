@@ -101,7 +101,7 @@ export class PgStore implements Store {
 
   async listProfiles(): Promise<Profile[]> {
     const rows = await this.sql<Record<string, unknown>[]>`
-      SELECT id, kind, label, account_uuid, base_url, plan FROM profiles ORDER BY id`;
+      SELECT id, kind, label, account_uuid, base_url, plan, org_uuid FROM profiles ORDER BY id`;
     return rows.map((r) => ({
       id: String(r["id"]),
       kind: (r["kind"] === "api_key" ? "api_key" : "oauth") as Profile["kind"],
@@ -109,7 +109,35 @@ export class PgStore implements Store {
       accountUuid: r["account_uuid"] == null ? null : String(r["account_uuid"]),
       baseUrl: r["base_url"] == null ? null : String(r["base_url"]),
       plan: r["plan"] == null ? null : String(r["plan"]),
+      orgUuid: r["org_uuid"] == null ? null : String(r["org_uuid"]),
     }));
+  }
+
+  async bindProfileOrg(profileId: string, org: { uuid: string; label: string; plan: string | null }): Promise<string | null> {
+    const taken = await this.sql<{ id: string }[]>`
+      SELECT id FROM profiles WHERE org_uuid = ${org.uuid} AND id <> ${profileId} LIMIT 1`;
+    if (taken.length > 0) return taken[0]!.id;
+    await this.sql`
+      INSERT INTO profiles (id, label, org_uuid, plan)
+      VALUES (${profileId}, ${org.label || profileId}, ${org.uuid}, ${org.plan})
+      ON CONFLICT (id) DO UPDATE SET
+        org_uuid = EXCLUDED.org_uuid,
+        label    = CASE WHEN ${org.label} = '' THEN profiles.label ELSE EXCLUDED.label END,
+        plan     = COALESCE(EXCLUDED.plan, profiles.plan)`;
+    return null;
+  }
+
+  async latestEventAt(): Promise<Map<string, Date>> {
+    // 逐 profile 走 (profile_id, ts DESC) 索引取一行，不对整张事件表做 GROUP BY
+    const rows = await this.sql<{ id: string; ts: Date | null }[]>`
+      SELECT p.id, e.ts
+      FROM profiles p
+      LEFT JOIN LATERAL (
+        SELECT ts FROM usage_events WHERE profile_id = p.id ORDER BY ts DESC LIMIT 1
+      ) e ON true`;
+    const out = new Map<string, Date>();
+    for (const r of rows) if (r.ts) out.set(r.id, new Date(r.ts));
+    return out;
   }
 
   async ensureProfiles(ids: string[]): Promise<void> {

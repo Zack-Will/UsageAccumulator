@@ -1,5 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { checkClaudeResponse, ClaudeWebClient, QuotaAuthError, QuotaUnavailableError, type HttpGet } from "../src/index.js";
+import {
+  checkClaudeResponse,
+  ClaudeWebClient,
+  parseOrganizations,
+  parseUsageResponse,
+  planFromTier,
+  QuotaAuthError,
+  QuotaUnavailableError,
+  unambiguousOrg,
+  type HttpGet,
+} from "../src/index.js";
 
 const SESSION_INVALID = JSON.stringify({
   type: "error",
@@ -69,6 +79,61 @@ describe("ClaudeWebClient", () => {
     expect(orgId).toBe("org-code");
     expect(snap.windows).toEqual([
       { windowKind: "five_hour", utilizationPct: 12, resetsAt: new Date("2026-09-24T01:00:00Z") },
+    ]);
+  });
+});
+
+describe("组织列表", () => {
+  // 2026-09-27 实测形态：同一个 sessionKey 下 team + 个人 Max，Max 不带 raven
+  const ORGS = [
+    { uuid: "org-team", name: "Kimmy Inc.", rate_limit_tier: "default_raven", capabilities: ["chat", "raven"] },
+    { uuid: "org-max", name: "Personal", rate_limit_tier: "default_claude_max_5x", capabilities: ["chat", "claude_max"] },
+  ];
+
+  it("解析名称、档位与能力，跳过没有 uuid 的", () => {
+    const orgs = parseOrganizations([...ORGS, { name: "x" }]);
+    expect(orgs.map((o) => [o.uuid, o.name, o.rateLimitTier])).toEqual([
+      ["org-team", "Kimmy Inc.", "default_raven"],
+      ["org-max", "Personal", "default_claude_max_5x"],
+    ]);
+  });
+
+  it("档位映射成 plan", () => {
+    expect(planFromTier("default_claude_max_5x")).toBe("max_5x");
+    expect(planFromTier("default_claude_max_20x")).toBe("max_20x");
+    expect(planFromTier("default_raven")).toBe("team");
+    expect(planFromTier(null)).toBeNull();
+  });
+
+  it("team + Max 两个都能用 Claude Code：有歧义，不挑", () => {
+    expect(unambiguousOrg(parseOrganizations(ORGS))).toBeNull();
+    expect(unambiguousOrg(parseOrganizations([ORGS[1]]))?.uuid).toBe("org-max");
+    // 只有一个能用 Claude Code（另一个是纯 chat 的免费组织）时照样自动选
+    expect(unambiguousOrg(parseOrganizations([ORGS[1], { uuid: "org-free", capabilities: ["chat"] }]))?.uuid).toBe("org-max");
+  });
+});
+
+describe("parseUsageResponse · 只认 limits[]", () => {
+  it("个人 Max 响应（2026-09-27 实测形态）：美元额度与占位 key 不成窗口", () => {
+    const dollars = { utilization: 0, used_dollars: 0, limit_dollars: 250, remaining_dollars: 250, locked_reason: null };
+    const empty = { utilization: 0, resets_at: null, used_dollars: null, limit_dollars: null };
+    const w = (u: number, r: string) => ({ utilization: u, resets_at: r, used_dollars: null, limit_dollars: null });
+    const windows = parseUsageResponse({
+      five_hour: w(13, "2026-09-27T07:59:59Z"),
+      seven_day: w(2, "2026-09-30T17:59:59Z"),
+      iguana_necktie: { ...dollars, resets_at: "2026-11-05T07:59:00Z" },
+      nimbus_quill: empty,
+      extra_usage: { is_enabled: false, utilization: null },
+      limits: [
+        { kind: "session", percent: 13, resets_at: "2026-09-27T07:59:59Z" },
+        { kind: "weekly_all", percent: 2, resets_at: "2026-09-30T17:59:59Z" },
+        { kind: "weekly_scoped", scope: { model: { display_name: "Fable" } }, percent: 0, resets_at: "2026-09-30T18:00:00Z" },
+      ],
+    });
+    expect(windows.map((x) => [x.windowKind, x.utilizationPct])).toEqual([
+      ["five_hour", 13],
+      ["seven_day", 2],
+      ["seven_day_fable", 0],
     ]);
   });
 });

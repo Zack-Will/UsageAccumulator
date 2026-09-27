@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { QuotaSessionState, QuotaSessionStatus, UaApi } from "../api";
+import type { QuotaOrg, QuotaSessionState, QuotaSessionStatus, UaApi } from "../api";
 import { fmtWhen } from "../charts/base";
 import { Dot } from "./primitives";
 
@@ -13,7 +13,7 @@ import { Dot } from "./primitives";
 
 /** 顶栏上那颗点的颜色：会话出问题比「快照有点旧」更要紧。 */
 export function sessionTone(state: QuotaSessionState | undefined): "danger" | "warn" | null {
-  if (state === "auth" || state === "blocked") return "danger";
+  if (state === "auth" || state === "blocked" || state === "org") return "danger";
   if (state === "none" || state === "error") return "warn";
   return null;
 }
@@ -22,6 +22,7 @@ export function sessionTone(state: QuotaSessionState | undefined): "danger" | "w
 export function sessionBadge(state: QuotaSessionState | undefined): string {
   if (state === "auth") return "会话失效";
   if (state === "blocked") return "被拦截";
+  if (state === "org") return "未选组织";
   if (state === "none") return "未登录";
   return "额度更新";
 }
@@ -38,6 +39,8 @@ function statusLine(s: QuotaSessionStatus | null, nowMs: number): string {
       return s.last_ok_at ? `会话失效 · 最后正常 ${when(s.last_ok_at)}` : "会话失效";
     case "blocked":
       return "被 Cloudflare 拦截";
+    case "org":
+      return s.error ?? "未选组织";
     case "error":
       return s.next_attempt_at ? `暂时失败 · ${when(s.next_attempt_at)} 重试` : "暂时失败";
     case "none":
@@ -45,6 +48,20 @@ function statusLine(s: QuotaSessionStatus | null, nowMs: number): string {
     case "disabled":
       return "服务端未开启采集";
   }
+}
+
+/** `max_5x` → `Max 5x`，`team` → `Team`；认不出的原样给。 */
+export function planLabel(plan: string | null): string | null {
+  if (!plan) return null;
+  const m = /^max_(\d+x)$/.exec(plan);
+  if (m) return `Max ${m[1]}`;
+  return plan.charAt(0).toUpperCase() + plan.slice(1).replace(/_/g, " ");
+}
+
+function orgOption(o: QuotaOrg, profileId: string): string {
+  const plan = planLabel(o.plan);
+  const base = plan ? `${o.name} · ${plan}` : o.name;
+  return o.bound_to && o.bound_to !== profileId ? `${base} → ${o.bound_to}` : base;
 }
 
 function lineTone(state: QuotaSessionState | undefined): "ok" | "warn" | "danger" | "muted" {
@@ -71,10 +88,15 @@ export function QuotaSessionDialog({
   const [error, setError] = useState<string | null>(null);
   const [confirmClear, setConfirmClear] = useState(false);
   const [shown, setShown] = useState<QuotaSessionStatus | null>(status);
+  const [org, setOrg] = useState(status?.org_uuid ?? "");
   const confirmTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const trimmed = value.trim();
+  const orgChanged = org !== "" && org !== (shown?.org_uuid ?? "");
 
-  useEffect(() => setShown(status), [status]);
+  useEffect(() => {
+    setShown(status);
+    setOrg(status?.org_uuid ?? "");
+  }, [status]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -89,12 +111,16 @@ export function QuotaSessionDialog({
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (!trimmed || busy) return;
+    if ((!trimmed && !orgChanged) || busy) return;
     setBusy(true);
     setError(null);
     try {
-      const next = await api.saveQuotaSession(profileId, trimmed);
+      const next = await api.saveQuotaSession(profileId, {
+        ...(trimmed ? { sessionKey: trimmed } : {}),
+        ...(orgChanged ? { orgUuid: org } : {}),
+      });
       setValue("");
+      setOrg(next.org_uuid ?? "");
       onChanged();
       // 抓到了就收起；存上了但第一次没抓成功，留着让人看见是什么状态
       if (next.state === "ok") onClose();
@@ -128,6 +154,9 @@ export function QuotaSessionDialog({
 
   const state = shown?.state;
   const editable = state !== "disabled";
+  const orgs = shown?.orgs ?? [];
+  // 只有一个组织时没得选，不占地方；没绑定时即便一个也要显示出来
+  const showOrgs = editable && (orgs.length > 1 || (orgs.length > 0 && !shown?.org_uuid));
   return (
     <div
       className="dialog-backdrop"
@@ -161,14 +190,41 @@ export function QuotaSessionDialog({
               name="session-key"
               autoComplete="off"
               spellCheck={false}
-              autoFocus
+              autoFocus={state !== "org"}
               value={value}
               onChange={(e) => {
                 setValue(e.target.value);
                 setError(null);
               }}
             />
-            <button className="gate-submit" type="submit" disabled={!trimmed || busy}>
+            {showOrgs && (
+              <>
+                <label className="gate-label" htmlFor="qs-org">
+                  组织
+                </label>
+                <select
+                  id="qs-org"
+                  className="select gate-input"
+                  value={org}
+                  onChange={(e) => {
+                    setOrg(e.target.value);
+                    setError(null);
+                  }}
+                >
+                  {!shown?.org_uuid && (
+                    <option value="" disabled>
+                      —
+                    </option>
+                  )}
+                  {orgs.map((o) => (
+                    <option key={o.uuid} value={o.uuid} disabled={Boolean(o.bound_to && o.bound_to !== profileId)}>
+                      {orgOption(o, profileId)}
+                    </option>
+                  ))}
+                </select>
+              </>
+            )}
+            <button className="gate-submit" type="submit" disabled={(!trimmed && !orgChanged) || busy}>
               {busy ? "验证中…" : "保存"}
             </button>
           </>

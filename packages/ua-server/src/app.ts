@@ -5,8 +5,8 @@ import cors from "@fastify/cors";
 import fastifyStatic from "@fastify/static";
 import { z } from "zod";
 import type { Logger } from "pino";
-import type { ClaudeWebClient, PricingTable, QuotaSnapshot } from "@ua/core";
-import { EMPTY_PRICING, QuotaAuthError } from "@ua/core";
+import type { ClaudeOrg, ClaudeWebClient, PricingTable, QuotaSnapshot } from "@ua/core";
+import { EMPTY_PRICING, planFromTier, QuotaAuthError } from "@ua/core";
 import type { Config } from "./config.js";
 import { createLogger } from "./logger.js";
 import { EventBus, formatSse } from "./bus.js";
@@ -60,7 +60,7 @@ export interface BuildAppOptions {
    */
   quota?: {
     vault: SessionVault;
-    client: Pick<ClaudeWebClient, "orgId" | "snapshot">;
+    client: Pick<ClaudeWebClient, "organizations" | "snapshot">;
     intervalMs?: number;
     jitterMs?: number;
     authBackoffMs?: number[];
@@ -164,6 +164,42 @@ function parseRange(
   return { from, to };
 }
 
+/**
+ * 桌面端每恢复一次会话就换一个 session id，并把历史与标题原样复制过去 ——
+ * 同一段对话在「按会话」里会碎成好几行，每行都只有一小截，看着像没计全（2026-09-27：
+ * 「手绘架构图转飞书画板」在 Max 视图里碎成 3 行）。
+ * 同标题 + 同项目 + 同机器视为同一段对话，合到其中最早出现的那个 id 上；没有标题的不合并。
+ */
+export function mergeForkedSessions(
+  rows: EventRow[],
+  titles: Map<string, string>,
+): { rows: EventRow[]; count: Map<string, number> } {
+  const first = new Map<string, { sid: string; ts: number }>();
+  const members = new Map<string, Set<string>>();
+  const groupOf = (e: EventRow["event"]): string | null => {
+    const title = e.sessionId ? titles.get(e.sessionId) : undefined;
+    return title ? JSON.stringify([title, e.projectSlug, e.machineId]) : null;
+  };
+  for (const r of rows) {
+    const g = groupOf(r.event);
+    if (!g) continue;
+    const ts = r.event.ts.getTime();
+    const cur = first.get(g);
+    if (!cur || ts < cur.ts || (ts === cur.ts && r.event.sessionId < cur.sid)) first.set(g, { sid: r.event.sessionId, ts });
+    const set = members.get(g) ?? new Set<string>();
+    set.add(r.event.sessionId);
+    members.set(g, set);
+  }
+  const count = new Map<string, number>();
+  for (const [g, f] of first) count.set(f.sid, members.get(g)!.size);
+  const out = rows.map((r) => {
+    const g = groupOf(r.event);
+    const canon = g ? first.get(g)!.sid : r.event.sessionId;
+    return canon === r.event.sessionId ? r : { ...r, event: { ...r.event, sessionId: canon } };
+  });
+  return { rows: out, count };
+}
+
 export function buildApp(opts: BuildAppOptions) {
   const { store, config } = opts;
   const pricing = opts.pricing ?? EMPTY_PRICING;
@@ -232,12 +268,18 @@ export function buildApp(opts: BuildAppOptions) {
     bus.publish({ name: "window_update", profileId: snapshot.profileId, data: current });
   }
 
+  const orgBinding = (org: ClaudeOrg) => ({ uuid: org.uuid, label: org.name, plan: planFromTier(org.rateLimitTier) });
+
   const sampler = opts.quota
     ? new QuotaSampler({
         vault: opts.quota.vault,
         client: opts.quota.client,
         // machine_id 留空 = 服务端自己抓的（探针上报的带着上报机器的 id）
         record: (snap) => recordQuota(snap, null),
+        profileOrg: async (id) => (await store.listProfiles()).find((p) => p.id === id)?.orgUuid ?? null,
+        bindOrg: (id, org) => store.bindProfileOrg(id, orgBinding(org)),
+        orgBindings: async () =>
+          new Map((await store.listProfiles()).flatMap((p) => (p.orgUuid ? [[p.orgUuid, p.id] as const] : []))),
         log,
         now,
         ...(opts.quota.intervalMs !== undefined ? { intervalMs: opts.quota.intervalMs } : {}),
@@ -297,7 +339,17 @@ export function buildApp(opts: BuildAppOptions) {
     if (raw && raw.length > 0) return raw;
     const profiles = await store.listProfiles();
     if (profiles.length === 1) return profiles[0]!.id;
+    // 多个 profile 时回落到「最近有用量的那个」：只认默认值的客户端（安卓小部件）换了订阅也不会 400
+    const active = await activeProfileId();
+    if (active) return active;
     throw new HttpError(400, "bad_request", "profile_id is required");
+  }
+
+  /** 最近一条用量事件落在哪个 profile，就是当前在用的那个；一条事件都没有时为 null。 */
+  async function activeProfileId(): Promise<string | null> {
+    let best: [string, Date] | null = null;
+    for (const [id, ts] of await store.latestEventAt()) if (!best || ts > best[1]) best = [id, ts];
+    return best?.[0] ?? null;
   }
 
   // ── GET /healthz
@@ -531,15 +583,20 @@ export function buildApp(opts: BuildAppOptions) {
   // ★ 写（PUT / DELETE）只认看板身份；探针的 machine token 不能改会话。
   // ★ 先验再存：claude.ai 不认的会话不落盘，免得把一个好的换成坏的。
   const quotaSessionQuery = z.object({ profile_id: z.string().optional() });
-  const quotaSessionBody = z.object({
-    profile_id: z.string().optional(),
-    session_key: z
-      .string()
-      .trim()
-      .min(16, "sessionKey 太短")
-      .max(4096, "sessionKey 太长")
-      .regex(/^[\x21-\x7e]+$/, "sessionKey 里不应有空白或非 ASCII 字符"),
-  });
+  const quotaSessionBody = z
+    .object({
+      profile_id: z.string().optional(),
+      // 只换组织时可以不带：沿用已保存的会话
+      session_key: z
+        .string()
+        .trim()
+        .min(16, "sessionKey 太短")
+        .max(4096, "sessionKey 太长")
+        .regex(/^[\x21-\x7e]+$/, "sessionKey 里不应有空白或非 ASCII 字符")
+        .optional(),
+      org_uuid: z.string().trim().min(1).max(128).optional(),
+    })
+    .refine((b) => b.session_key !== undefined || b.org_uuid !== undefined, "session_key 与 org_uuid 至少给一个");
 
   function requireDashboard(req: FastifyRequest): void {
     const auth = (req as FastifyRequest & { auth?: { kind: string } }).auth;
@@ -562,6 +619,8 @@ export function buildApp(opts: BuildAppOptions) {
       last_attempt_at: s.lastAttemptAt ? s.lastAttemptAt.toISOString() : null,
       next_attempt_at: s.nextAttemptAt ? s.nextAttemptAt.toISOString() : null,
       error: s.error,
+      org_uuid: s.orgUuid,
+      orgs: s.orgs?.map((o) => ({ uuid: o.uuid, name: o.name, plan: o.plan, bound_to: o.boundTo })) ?? null,
     };
   }
 
@@ -572,6 +631,8 @@ export function buildApp(opts: BuildAppOptions) {
     lastAttemptAt: null,
     nextAttemptAt: null,
     error: null,
+    orgUuid: null,
+    orgs: null,
   });
 
   app.get("/v1/quota/session", async (req, reply) => {
@@ -588,9 +649,11 @@ export function buildApp(opts: BuildAppOptions) {
       throw new HttpError(400, "bad_request", parsed.error.issues[0]?.message ?? "invalid body");
     }
     const profileId = await sessionProfile(parsed.data.profile_id);
-    const sessionKey = parsed.data.session_key;
+    const sessionKey = parsed.data.session_key ?? (await opts.quota.vault.read(profileId));
+    if (!sessionKey) throw new HttpError(400, "bad_request", "还没有保存会话，先给 session_key");
+    let orgs: ClaudeOrg[];
     try {
-      await opts.quota.client.orgId(sessionKey);
+      orgs = await opts.quota.client.organizations(sessionKey);
     } catch (err) {
       if (err instanceof QuotaAuthError && err.reason === "session") {
         throw new HttpError(400, "bad_request", "claude.ai 不认这个 sessionKey");
@@ -600,8 +663,25 @@ export function buildApp(opts: BuildAppOptions) {
       }
       throw new HttpError(502, "upstream", `暂时连不上 claude.ai：${(err as Error).message}`);
     }
-    await opts.quota.vault.write(profileId, sessionKey);
-    log.info({ profileId }, "claude.ai 会话已更新");
+    // 显式选了组织：必须在这个会话能看到的列表里，且没被别的 profile 占用。
+    // 没选：交给采样器 —— 已绑定的沿用，无歧义的自动绑，有歧义的进入 org 状态等人选。
+    const wanted = parsed.data.org_uuid;
+    let orgChanged = false;
+    if (wanted) {
+      const org = orgs.find((o) => o.uuid === wanted);
+      if (!org) throw new HttpError(400, "bad_request", "这个会话的账号下没有该组织");
+      const before = (await store.listProfiles()).find((p) => p.id === profileId)?.orgUuid ?? null;
+      const taken = await store.bindProfileOrg(profileId, orgBinding(org));
+      if (taken) throw new HttpError(400, "bad_request", `该组织已绑定到 ${taken}`);
+      orgChanged = before !== org.uuid;
+      if (orgChanged) log.info({ profileId, org: org.name }, "profile 改绑组织");
+    }
+    if (parsed.data.session_key) {
+      await opts.quota.vault.write(profileId, sessionKey);
+      log.info({ profileId }, "claude.ai 会话已更新");
+    }
+    // 换了组织：旧组织的退避与状态不能带过来
+    if (orgChanged) sampler.forget(profileId);
     return reply.send(sessionDto(await sampler.kick(profileId)));
   });
 
@@ -618,6 +698,7 @@ export function buildApp(opts: BuildAppOptions) {
   // ── GET /v1/profiles —— 注意键是 `id`，不是 `profile_id`
   app.get("/v1/profiles", async (_req, reply) => {
     const profiles = await store.listProfiles();
+    const active = profiles.length > 1 ? await activeProfileId() : (profiles[0]?.id ?? null);
     return reply.send({
       profiles: profiles.map((p) => ({
         id: p.id,
@@ -626,6 +707,9 @@ export function buildApp(opts: BuildAppOptions) {
         account_uuid: p.accountUuid,
         base_url: p.baseUrl,
         plan: p.plan,
+        org_uuid: p.orgUuid,
+        // 当前在用的那个（最近有用量）。客户端没有明确选择时默认跟它走
+        active: p.id === active,
       })),
     });
   });
@@ -741,7 +825,16 @@ export function buildApp(opts: BuildAppOptions) {
     const q = parseQuery(distributionSchema, req.query);
     const profileId = await resolveProfileId(q.profile_id);
     const { from, to } = parseRange(q, now(), 7 * 24 * 60 * 60 * 1000);
-    const rows = await store.eventsInRange(profileId, from, to);
+    let rows = await store.eventsInRange(profileId, from, to);
+    /** by=session：合并后每一桶由几个 session id 组成 */
+    let mergedCount: Map<string, number> | null = null;
+    let sessionTitles = new Map<string, string>();
+    if (q.by === "session") {
+      sessionTitles = await store.sessionTitles([...new Set(rows.map((r) => r.event.sessionId).filter(Boolean))]);
+      const merged = mergeForkedSessions(rows, sessionTitles);
+      rows = merged.rows;
+      mergedCount = merged.count;
+    }
     const buckets = buildDistribution(rows, q.by as DistributionBy, q.bucket as SeriesBucket);
 
     // CONTRACT §2.1a：key 是稳定标识（跨端点一致，分类色板按它登记），label 只管展示。
@@ -749,7 +842,7 @@ export function buildApp(opts: BuildAppOptions) {
     // 让前端退回显示 key —— 硬塞一个等于 key 的 label 只会让调用方误以为拿到了人名。
     let labelOf: ((key: string) => string | undefined) | null = null;
     /** by=session 的桶另带「在哪个项目、哪台机器」：只看标题分不清同名的两个会话 */
-    let sessionExtra: ((key: string) => { project_slug: string | null; machine_label: string }) | null = null;
+    let sessionExtra: ((key: string) => { project_slug: string | null; machine_label: string; session_count: number }) | null = null;
     if (q.by === "machine") {
       const names = new Map(
         (await store.listMachines()).map((m) => [m.id, machineLabel(m.id, m.hostname)]),
@@ -759,8 +852,7 @@ export function buildApp(opts: BuildAppOptions) {
         return l && l !== key ? l : undefined;
       };
     } else if (q.by === "session") {
-      const titles = await store.sessionTitles(buckets.map((b) => b.key));
-      labelOf = (key) => titles.get(key);
+      labelOf = (key) => sessionTitles.get(key);
       const machines = new Map(
         (await store.listMachines()).map((m) => [m.id, machineLabel(m.id, m.hostname)]),
       );
@@ -775,6 +867,7 @@ export function buildApp(opts: BuildAppOptions) {
         return {
           project_slug: w?.project ?? null,
           machine_label: w ? (machines.get(w.machine) ?? w.machine) : "",
+          session_count: mergedCount?.get(key) ?? 1,
         };
       };
     } else if (q.by === "project") {

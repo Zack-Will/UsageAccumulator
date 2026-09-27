@@ -1,7 +1,7 @@
 import { dedupKey, parseLine, projectSlugFromPath, type ParseWarning } from "@ua/core";
 import type { ProbeConfig } from "./config.js";
 import type { Logger } from "./logger.js";
-import { Attributor, extractOwnerAccountUuid } from "./attributor.js";
+import { Attributor, extractOwnerAccountUuid, extractOwnerOrganizationUuid } from "./attributor.js";
 import { readNewLines } from "./scanner.js";
 import type { ProbeStore } from "./store.js";
 import { toWireEvent } from "./wire.js";
@@ -72,6 +72,7 @@ export class Ingestor {
           requestId: event.requestId,
           tsMs: event.ts.getTime(),
           ownerAccountUuid: extractOwnerAccountUuid(raw),
+          ownerOrganizationUuid: extractOwnerOrganizationUuid(raw),
         });
         event.profileId = attr.profileId;
         event.attributionLevel = attr.level;

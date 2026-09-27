@@ -3,7 +3,7 @@ import type { DataSource, Profile, QuotaSessionStatus, StreamStatus } from "../a
 import { fmtClock } from "../charts/base";
 import { hrefFor, ROUTES, type RouteId } from "../hooks/useRoute";
 import { Dot, Segmented } from "./primitives";
-import { sessionBadge, sessionTone } from "./QuotaSession";
+import { planLabel, sessionBadge, sessionTone } from "./QuotaSession";
 
 export const RANGES = [
   { value: "5h", label: "5h", ms: 5 * 3600_000 },
@@ -115,7 +115,7 @@ export function TopBar(props: {
       >
         {props.profiles.map((p) => (
           <option key={p.id} value={p.id}>
-            {p.label}
+            {planLabel(p.plan) ?? p.label}
           </option>
         ))}
       </select>

@@ -148,7 +148,7 @@ Idempotency-Key: <批次内容的 sha256 前 32 位>
 | `POST` | `/v1/ingest/events` | body: gzip NDJSON，每行一个 UsageEvent。→ `200 {"accepted":N,"deduped":M,"invalid":K}`（`invalid` = 跳过的坏行；坏行不得毁掉整批） |
 | `POST` | `/v1/ingest/quota` | body: QuotaSnapshot JSON → `200 {"ok":true}` |
 | `POST` | `/v1/enroll` | body: `{"enroll_token","hostname","os","provisional_machine_id"}` → `200 {"machine_id","machine_token"}` |
-| `GET` | `/v1/profiles` | → `{"profiles":[{"id","kind","label","account_uuid","base_url","plan"}]}`（注意键是 `id` 不是 `profile_id`） |
+| `GET` | `/v1/profiles` | → `{"profiles":[{"id","kind","label","account_uuid","base_url","plan","org_uuid","active"}]}`（注意键是 `id` 不是 `profile_id`）。`active` 恰有一个为 `true`：最近有用量的那个。**所有带 `profile_id` 参数的接口**在不传它、且 profile 多于一个时回落到 active，不再 400 |
 | `GET` | `/v1/machines` | **全局**清单（不按 profile 过滤——一台机器可给多个 profile 上报）。→ `{"machines":[{"machine_id","label","hostname","os","last_seen_at","revoked":false}]}`。被吊销的机器照常列出并带 `revoked:true`，隐藏会让人以为机器凭空消失 |
 | `GET` | `/v1/windows/current?profile_id=&burn_points=` | 当前 5h/7d 窗口状态 + 预测（见 2.1）。`burn_points`（2–240，缺省 240）限制燃尽 / 预测曲线的点数，只要数字的客户端传 2 |
 | `GET` | `/v1/timeline?profile_id=&from=&to=` | 甘特图数据：每机器的活跃区间 |
@@ -219,6 +219,9 @@ Idempotency-Key: <批次内容的 sha256 前 32 位>
 //     by=project     → key = project_slug（可能是 HMAC 化的），label = 可读别名
 //     by=hour        → key = 小时起点的 RFC3339 时刻，label 缺省
 //     by=attribution → key = attribution_level，label 缺省
+//     by=session     → key = session_id，label = 会话标题；另带 project_slug / machine_label / session_count。
+//                      桌面端每恢复一次会话就换一个 id 并复制标题：同标题 + 同项目 + 同机器的几个 id
+//                      合成一桶，key 取其中最早出现的那个，session_count = 合并了几个 id（没标题的不合并）
 { "profile_id": "...", "by": "machine", "from": "...", "to": "...",
   "buckets": [ { "key": "9f2c1a7e-...", "label": "mbp-local", "events": 128,
                  "input_tokens": 0, "output_tokens": 0, "cache_read_tokens": 0,
@@ -282,11 +285,16 @@ Idempotency-Key: <批次内容的 sha256 前 32 位>
 // GET / PUT / DELETE 的响应同形 —— 只有状态，任何接口都不回显 sessionKey
 {
   "profile_id": "claude-official",
-  "state": "ok",               // none | pending | ok | auth | blocked | error | disabled
+  "state": "ok",               // none | pending | ok | auth | blocked | org | error | disabled
   "last_ok_at": "2026-09-23T12:05:00Z",
   "last_attempt_at": "2026-09-23T12:05:00Z",
   "next_attempt_at": "2026-09-23T12:10:31Z",
-  "error": null                 // 给人看的失败原因，绝不含凭证
+  "error": null,                // 给人看的失败原因，绝不含凭证
+  "org_uuid": "c702d391-…",     // 这个 profile 绑定的 claude.ai 组织；没绑为 null
+  "orgs": [                     // 这个会话能看到的组织；还没问过 claude.ai 时为 null
+    { "uuid": "c702d391-…", "name": "…", "plan": "max_5x", "bound_to": "claude-official" },
+    { "uuid": "29c62b23-…", "name": "Kimmy Inc.", "plan": "team", "bound_to": "claude-team" }
+  ]
 }
 ```
 
@@ -297,6 +305,7 @@ Idempotency-Key: <批次内容的 sha256 前 32 位>
 | `ok` | 最近一次成功 | 按间隔继续 |
 | `auth` | claude.ai 不认这个会话 | 退避 15 分钟 → 1 小时 → 6 小时，等人重新登录 |
 | `blocked` | 被 Cloudflare 质询 | 同样退避；换会话也没用 |
+| `org` | 会话有效，但不知道抓哪个组织：账号下有多个、或绑定的那个已不在 | 不抓，按正常间隔再看；等看板选组织 |
 | `error` | 网络 / 5xx / 响应变形 | 下一轮照常重试，不进退避阶梯 |
 | `disabled` | 服务端关了采集（`UA_QUOTA_SAMPLING=false`） | 只收探针上报；PUT / DELETE 返回 `404` |
 
@@ -304,6 +313,13 @@ Idempotency-Key: <批次内容的 sha256 前 32 位>
 所以响应里的 `state` 通常已经是 `ok`。不认 → `400 bad_request`（不会顶掉原来那个好的）；
 连不上或被质询 → `502 upstream`。
 格式明显不对（短于 16、含空白或非 ASCII）直接 `400`，不去问 claude.ai。
+
+**组织绑定**：profile 对应的是**一个组织**（一份订阅），不是一个账号 —— 同一个 sessionKey 可以同时看到
+team 组织与个人订阅组织，两边额度毫不相干（2026-09-27 实测：个人 Max 组织不带 `raven` 能力，按能力猜会选中 team）。
+绑定存在 `profiles.org_uuid`（唯一），服务端**不猜**：已绑定的沿用；没绑定且只有一个无歧义候选时自动绑；
+否则进入 `org` 状态。PUT body 为 `{"profile_id","session_key"?,"org_uuid"?}`，二者至少给一个：
+只给 `org_uuid` 表示沿用已保存的会话、只换组织。组织不在该会话的列表里、或已绑到别的 profile → `400`。
+多个 profile 可以各存一份同样的 sessionKey，各抓各的组织。
 
 **存放**：`UA_CLAUDE_SESSION_DIR` 下一个 profile 一个文件（目录 0700、文件 0600），**不进数据库**。
 服务端每一轮都重新读文件，所以在机器上直接覆盖它也立刻生效，退避随之清零。

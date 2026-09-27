@@ -106,6 +106,38 @@ describe("GET /v1/distribution?by=session", () => {
   });
 });
 
+describe("GET /v1/distribution?by=session：桌面端恢复会话产生的分叉合成一行", () => {
+  const LARK = "-Users-me-Repos-Lark";
+  const at = (m: number) => new Date(Date.UTC(2026, 8, 23, 3, m));
+
+  it("同标题 + 同项目 + 同机器：合到最早的 id 上，事件与费用相加", async () => {
+    await store.insertEvents([
+      { event: makeEvent({ machineId, sessionId: "fork-b", projectSlug: LARK, ts: at(20) }), costUsd: 2 },
+      { event: makeEvent({ machineId, sessionId: "fork-a", projectSlug: LARK, ts: at(10) }), costUsd: 1 },
+      { event: makeEvent({ machineId, sessionId: "fork-c", projectSlug: LARK, ts: at(30) }), costUsd: 4 },
+    ]);
+    await postTitles(["fork-a", "fork-b", "fork-c"].map((id) => ({ session_id: id, title: "手绘架构图转飞书画板" })));
+    const rows = (await dist("session")).filter((b) => b.label === "手绘架构图转飞书画板");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ key: "fork-a", events: 3, cost_usd: 7, session_count: 3, project_slug: LARK });
+  });
+
+  it("同名但不在同一个项目的不合并；没有标题的不合并", async () => {
+    await store.insertEvents([
+      { event: makeEvent({ machineId, sessionId: "x1", projectSlug: LARK, ts: at(1) }), costUsd: 1 },
+      { event: makeEvent({ machineId, sessionId: "x2", projectSlug: "-Users-me-Repos-Other", ts: at(2) }), costUsd: 1 },
+      { event: makeEvent({ machineId, sessionId: "u1", projectSlug: LARK, ts: at(3) }), costUsd: 1 },
+      { event: makeEvent({ machineId, sessionId: "u2", projectSlug: LARK, ts: at(4) }), costUsd: 1 },
+    ]);
+    await postTitles([
+      { session_id: "x1", title: "同名" },
+      { session_id: "x2", title: "同名" },
+    ]);
+    const keys = (await dist("session")).map((b) => b.key).sort();
+    expect(keys).toEqual(["u1", "u2", "x1", "x2"]);
+  });
+});
+
 describe("GET /v1/distribution?by=project：临时工作区用会话标题命名", () => {
   it("★ 以前显示的是目录名的随机后缀「105cae」，现在是里面那个会话的标题", async () => {
     await seed();

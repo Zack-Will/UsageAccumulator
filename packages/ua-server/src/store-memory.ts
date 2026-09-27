@@ -44,9 +44,29 @@ export class MemoryStore implements Store {
           accountUuid: null,
           baseUrl: null,
           plan: null,
+          orgUuid: null,
         });
       }
     }
+  }
+
+  async bindProfileOrg(profileId: string, org: { uuid: string; label: string; plan: string | null }): Promise<string | null> {
+    for (const p of this.profiles.values()) {
+      if (p.id !== profileId && p.orgUuid === org.uuid) return p.id;
+    }
+    await this.ensureProfiles([profileId]);
+    const p = this.profiles.get(profileId)!;
+    this.profiles.set(profileId, { ...p, orgUuid: org.uuid, label: org.label || p.label, plan: org.plan ?? p.plan });
+    return null;
+  }
+
+  async latestEventAt(): Promise<Map<string, Date>> {
+    const out = new Map<string, Date>();
+    for (const { event } of this.events.values()) {
+      const cur = out.get(event.profileId);
+      if (!cur || event.ts > cur) out.set(event.profileId, event.ts);
+    }
+    return out;
   }
 
   async insertEvents(rows: EventRow[]): Promise<number> {

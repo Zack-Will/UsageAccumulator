@@ -63,7 +63,19 @@ export const MOCK_PROFILES: Profile[] = [
     label: "Claude 官方订阅",
     account_uuid: "b14c8d02-91ef-4a77-8c31-2f6d90a4e115",
     base_url: null,
-    plan: "max_20x",
+    plan: "max_5x",
+    org_uuid: "c702d391-0000-4000-8000-000000000001",
+    active: true,
+  },
+  {
+    id: "claude-team",
+    kind: "oauth",
+    label: "Kimmy Inc.",
+    account_uuid: "b14c8d02-91ef-4a77-8c31-2f6d90a4e115",
+    base_url: null,
+    plan: "team",
+    org_uuid: "29c62b23-0000-4000-8000-000000000002",
+    active: false,
   },
   {
     id: "gw-anyrouter",
@@ -72,6 +84,8 @@ export const MOCK_PROFILES: Profile[] = [
     account_uuid: null,
     base_url: "https://anyrouter.example.com",
     plan: null,
+    org_uuid: null,
+    active: false,
   },
 ];
 
@@ -652,9 +666,14 @@ function buildCalibration(profileId: string, nowMs: number): Calibration {
 
 // ── 数据源 ──────────────────────────────────────────────────────────────────
 /**
- * claude.ai 会话的 mock 状态。`?scenario=session-auth` / `session-none` / `session-blocked`
+ * claude.ai 会话的 mock 状态。`?scenario=session-auth` / `session-none` / `session-blocked` / `session-org`
  * 用来预览顶栏与弹窗在出问题时的样子。
  */
+const MOCK_ORGS = [
+  { uuid: "29c62b23-0000-4000-8000-000000000002", name: "Kimmy Inc.", plan: "team", bound_to: "claude-team" },
+  { uuid: "c702d391-0000-4000-8000-000000000001", name: "Personal", plan: "max_5x", bound_to: "claude-official" },
+];
+
 function mockSession(state: QuotaSessionState): QuotaSessionStatus {
   const now = Date.now();
   return {
@@ -668,7 +687,11 @@ function mockSession(state: QuotaSessionState): QuotaSessionStatus {
         ? "GET /api/organizations/{id}/usage 返回 403，sessionKey 可能已失效"
         : state === "blocked"
           ? "GET /api/organizations 被 Cloudflare 质询（403）"
-          : null,
+          : state === "org"
+            ? "这个账号下有 2 个组织，需要选一个"
+            : null,
+    org_uuid: state === "org" || state === "none" ? null : MOCK_ORGS[1]!.uuid,
+    orgs: state === "none" ? null : state === "org" ? MOCK_ORGS.map((o) => ({ ...o, bound_to: o.plan === "team" ? "claude-team" : null })) : MOCK_ORGS,
   };
 }
 
@@ -676,7 +699,7 @@ export function createMockApi(opts?: { latencyMs?: number }): UaApi {
   const latency = opts?.latencyMs ?? 180;
   const scenario = mockScenario();
   let session = mockSession(
-    scenario === "session-auth" ? "auth" : scenario === "session-none" ? "none" : scenario === "session-blocked" ? "blocked" : "ok",
+    scenario === "session-auth" ? "auth" : scenario === "session-none" ? "none" : scenario === "session-blocked" ? "blocked" : scenario === "session-org" ? "org" : "ok",
   );
   const wait = <T>(v: T, signal?: AbortSignal): Promise<T> =>
     new Promise<T>((resolve, reject) => {
@@ -697,11 +720,13 @@ export function createMockApi(opts?: { latencyMs?: number }): UaApi {
     calibration: (profileId, signal) => wait(buildCalibration(profileId, Date.now()), signal),
     quotaHistory: (p, signal) => wait(buildQuotaHistory(p), signal),
     quotaSession: (profileId, signal) => wait({ ...session, profile_id: profileId }, signal),
-    saveQuotaSession: async (profileId, sessionKey) => {
+    saveQuotaSession: async (profileId, { sessionKey, orgUuid }) => {
       await wait(null);
       // 和真服务端一样先验再存：mock 里只认 sk-ant- 开头的
-      if (!sessionKey.startsWith("sk-ant-")) throw new ApiError(400, "bad_request", "claude.ai 不认这个 sessionKey");
-      session = mockSession("ok");
+      if (sessionKey !== undefined && !sessionKey.startsWith("sk-ant-")) {
+        throw new ApiError(400, "bad_request", "claude.ai 不认这个 sessionKey");
+      }
+      session = mockSession(orgUuid || session.org_uuid ? "ok" : "org");
       return { ...session, profile_id: profileId };
     },
     clearQuotaSession: async (profileId) => {
