@@ -185,10 +185,37 @@ Idempotency-Key: <批次内容的 sha256 前 32 位>
     },
     "projected_curve": [                        // ★ 预测曲线，由服务端算，前端不得自行外推
       { "ts": "...", "p25": 63.0, "mid": 64.2, "p75": 66.1 }
+    ],
+    "attribution": {                            // 有多少额度不是本地 Claude Code 吃的
+      "other_pct_lower_bound": 4.0,             // 差额法：安静区间里的上升（下界）
+      "ambiguous_pct": 50.0,                    // 差额法判不了的（本地当时有活动）
+      "unobserved_pct": 0.0,                    // 窗口开头没采到的
+      "quiet_spans": 2, "has_sampling_gap": false, "usable": true,
+      "non_code_pct": 2.6,                      // 官方拆分的非 Code 用量，折成本窗口刻度；拿不到为 null
+      "other_pct": 5.1,                         // 最佳估计：7d = non_code_pct；5h = 两者合成；没有拆分 = 下界
+      "local_utilization_pct": 56.9             // = utilization_pct − other_pct，「满额约」的分母
+    }
+  }],
+  "products": {                                 // 官方「本周按产品」拆分；team 组织没有，为 null
+    "as_of": "2026-09-29T03:54:23Z",
+    "weekly_pct": 9.0,                          // 这份拆分那一刻的 7d 利用率
+    "rows": [
+      { "key": "claude_code", "label": "Claude Code", "share_pct": 97, "pct": 8.73 },  // share 占本周已用量（官方整数）
+      { "key": "chat",        "label": "Chats",       "share_pct": 3,  "pct": 0.27 }   // pct 占周限额 = weekly × share / 100
     ]
-  }]
+  }
 }
 ```
+
+**非本地用量的两条路径**（算法见 `@ua/core` 的 `attribution.ts` / `products.ts`）：
+
+| 窗口 | `other_pct` 怎么来 |
+|---|---|
+| 7d，有拆分 | 直接等于 `non_code_pct`。7d 一格就是 1 个整点，安静时段里零点几的聊天就能把计数推过整数线，差额法会把整点记到别处 |
+| 5h，有拆分 | `max(non_code_pct, 差额法下界 + 拆分在「判不了」区间里的部分)`。5h 没有官方拆分，`non_code_pct` = 周刻度的非 Code 增量 × 历史估出的 5h/7d 刻度比（Max 5x 实测约 9.4） |
+| 没有拆分（team 组织） | 等于 `other_pct_lower_bound`，与以前一致 |
+
+周刻度的非 Code 累计量要先做单调拟合（PAVA）再相减：份额是整数，Code 在涨、聊天没动时份额会被稀释，直接相减会得到负数。
 
 **`projected_curve` 必须由服务端计算，前端不得自行外推。** 原因：5h 窗口是线性速率外推（§7.1），但 **7d 窗口按 §7.2 用的是「按星期几的日历模式」**，线性外推会系统性偏离。曲线从 `now` 开始、到窗口结束，点密度与 `burn_curve` 一致。
 

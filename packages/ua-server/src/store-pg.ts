@@ -5,6 +5,7 @@ import type {
   EventRow,
   LatestQuotaWindow,
   MachineRecord,
+  QuotaBreakdownRow,
   Store,
 } from "./store.js";
 
@@ -258,6 +259,22 @@ export class PgStore implements Store {
    * 非 Anthropic 模型（公司 Mac 上实测到 qwen3.7-plus）。那些 token 不吃 Claude 额度，
    * 算进来会让「这段时间本地有动静」在实际没动静时也成立，把别处的消耗吞掉。
    */
+  async quotaBreakdowns(profileId: string, since: Date): Promise<QuotaBreakdownRow[]> {
+    // raw 是整份响应、每个窗口一行各存一份；只取 seven_day 那行就够了
+    const rows = await this.sql<Record<string, unknown>[]>`
+      SELECT captured_at, utilization_pct, raw->'seven_day_breakdown' AS breakdown
+      FROM quota_snapshots
+      WHERE profile_id = ${profileId} AND window_kind = 'seven_day'
+        AND captured_at >= ${since}
+        AND jsonb_typeof(raw->'seven_day_breakdown') = 'object'
+      ORDER BY captured_at`;
+    return rows.map((r) => ({
+      ts: r["captured_at"] as Date,
+      weeklyPct: n(r["utilization_pct"]),
+      breakdown: r["breakdown"],
+    }));
+  }
+
   async quotaEventTimestamps(profileId: string, from: Date, to: Date): Promise<Date[]> {
     const rows = await this.sql<Record<string, unknown>[]>`
       SELECT ts FROM usage_events

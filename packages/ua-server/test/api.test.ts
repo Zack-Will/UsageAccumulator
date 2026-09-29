@@ -360,6 +360,114 @@ describe("POST /v1/ingest/quota", () => {
   });
 });
 
+describe("GET /v1/windows/current · 官方按产品拆分", () => {
+  // 7 个采样点：7d 35→41，5h 50→62（刻度比 = 12/6 = 2）；Code 份额 100→90，非 Code 0→4.1 个周百分点
+  const codeShares = [100, 98, 96, 95, 94, 92, 90];
+  let withEvents = true;
+  beforeEach(async () => {
+    for (let i = 6; i >= 0; i--) {
+      const k = 6 - i;
+      const code = codeShares[k]!;
+      await store.insertQuotaSnapshot({
+        profileId: "claude-official",
+        capturedAt: new Date(NOW.getTime() - i * 5 * 60_000),
+        windows: [
+          { windowKind: "five_hour", utilizationPct: 50 + k * 2, resetsAt: new Date(NOW.getTime() + 108 * 60_000) },
+          { windowKind: "seven_day", utilizationPct: 35 + k, resetsAt: new Date(NOW.getTime() + 3 * 24 * 3600_000) },
+        ],
+        raw: {
+          seven_day_breakdown: {
+            as_of: new Date(NOW.getTime() - i * 5 * 60_000).toISOString(),
+            window_started_at: new Date(NOW.getTime() - 4 * 24 * 3600_000).toISOString(),
+            rows: [
+              { key: "claude_code", display_name: "Claude Code", percent: code },
+              { key: "chat", display_name: "Chats", percent: 100 - code },
+              { key: "cowork", display_name: "Cowork", percent: 0 },
+            ],
+          },
+        },
+      });
+      // 每个区间里本地都有活动：差额法全部判不了
+      if (withEvents) await store.insertEvents([
+        { event: makeEvent({ messageId: `m-bd-${i}`, ts: new Date(NOW.getTime() - i * 5 * 60_000 - 60_000), model: "claude-opus-5" }), costUsd: null },
+      ]);
+    }
+  });
+
+  it("透出官方拆分，并折成占周限额的百分点", async () => {
+    const res = await app.fastify.inject({ method: "GET", url: "/v1/windows/current?profile_id=claude-official", headers: AUTH });
+    const products = res.json().products;
+    expect(products.weekly_pct).toBe(41);
+    expect(products.rows.map((r: { key: string; share_pct: number; pct: number }) => [r.key, r.share_pct, r.pct])).toEqual([
+      ["claude_code", 90, 36.9],
+      ["chat", 10, 4.1],
+      ["cowork", 0, 0],
+    ]);
+  });
+
+  it("边写代码边聊天：差额法判不了的部分由拆分补上", async () => {
+    const res = await app.fastify.inject({ method: "GET", url: "/v1/windows/current?profile_id=claude-official", headers: AUTH });
+    const byKind = (k: string) => res.json().windows.find((w: { window_kind: string }) => w.window_kind === k);
+
+    const week = byKind("seven_day").attribution;
+    expect(week.other_pct_lower_bound).toBe(0);
+    expect(week.non_code_pct).toBeCloseTo(4.1);
+    expect(week.other_pct).toBeCloseTo(4.1);
+    expect(week.local_utilization_pct).toBeCloseTo(41 - 4.1);
+    // 拆分覆盖整周，与采样覆盖无关
+    expect(week.usable).toBe(true);
+
+    // 5h 没有拆分，按 5h/7d 刻度比（2）折过来；窗口开头没采到，只算第一个点之后的增量
+    const five = byKind("five_hour").attribution;
+    expect(five.non_code_pct).toBeCloseTo(8.2);
+    expect(five.other_pct).toBeCloseTo(8.2);
+    expect(five.local_utilization_pct).toBeCloseTo(62 - 8.2);
+  });
+
+  it("7d 以拆分为准：安静时段的整点跳变多半是量化，不能压过官方计量", async () => {
+    withEvents = false;
+    await store.close();
+    store = new MemoryStore();
+    await app.fastify.close();
+    app = buildApp({ store, config: testConfig(), pricing: parsePricingFile({ "claude-opus-5": PRICE }).table, now: () => NOW });
+    for (let i = 6; i >= 0; i--) {
+      const k = 6 - i;
+      await store.insertQuotaSnapshot({
+        profileId: "claude-official",
+        capturedAt: new Date(NOW.getTime() - i * 5 * 60_000),
+        windows: [{ windowKind: "seven_day", utilizationPct: 35 + k, resetsAt: new Date(NOW.getTime() + 3 * 24 * 3600_000) }],
+        raw: {
+          seven_day_breakdown: {
+            window_started_at: new Date(NOW.getTime() - 4 * 24 * 3600_000).toISOString(),
+            rows: [
+              { key: "claude_code", percent: codeShares[k]! },
+              { key: "chat", percent: 100 - codeShares[k]! },
+            ],
+          },
+        },
+      });
+    }
+    withEvents = true;
+    const res = await app.fastify.inject({ method: "GET", url: "/v1/windows/current?profile_id=claude-official", headers: AUTH });
+    const week = res.json().windows.find((w: { window_kind: string }) => w.window_kind === "seven_day").attribution;
+    expect(week.other_pct_lower_bound).toBe(6); // 差额法：6 个点全在安静时段
+    expect(week.other_pct).toBeCloseTo(4.1); // 官方：非 Code 只有 4.1
+  });
+});
+
+describe("GET /v1/windows/current · 没有拆分（team 组织）", () => {
+  beforeEach(seedQuota);
+
+  it("退回纯差额法，products 为 null 而不是全 0", async () => {
+    const res = await app.fastify.inject({ method: "GET", url: "/v1/windows/current?profile_id=claude-official", headers: AUTH });
+    expect(res.json().products).toBeNull();
+    const five = res.json().windows.find((w: { window_kind: string }) => w.window_kind === "five_hour").attribution;
+    expect(five.non_code_pct).toBeNull();
+    expect(five.other_pct).toBe(five.other_pct_lower_bound);
+    expect(five.local_utilization_pct).toBe(62 - five.other_pct_lower_bound);
+  });
+});
+
 describe("GET /v1/windows/current", () => {
   beforeEach(seedQuota);
 

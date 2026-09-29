@@ -1158,4 +1158,11 @@ button.sync:focus-visible {
   .btable .btable__barcol {
     display: none;
   }
+  /* 按产品只有三列，份额条就是主角，手机上也留着：名字一行，下面条 + 占周限额 */
+  .btable--products .btable__barcol {
+    display: block;
+    flex: 1 1 0;
+    min-width: 0;
+    margin-left: 16px;
+  }
 }

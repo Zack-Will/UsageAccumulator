@@ -6,7 +6,7 @@
  */
 import { palette, type Tokens } from "./tokens";
 
-export type ColorDomain = "machine" | "model" | "project" | "attribution";
+export type ColorDomain = "machine" | "model" | "project" | "attribution" | "product";
 
 const order = new Map<ColorDomain, Map<string, number>>();
 

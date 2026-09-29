@@ -21,6 +21,14 @@ export interface LatestQuotaWindow {
   capturedAt: Date;
 }
 
+export interface QuotaBreakdownRow {
+  ts: Date;
+  /** 同一次快照里 seven_day 的 utilization_pct */
+  weeklyPct: number;
+  /** `raw.seven_day_breakdown` 原文 */
+  breakdown: unknown;
+}
+
 export interface CalibrationRecord {
   profileId: string;
   windowKind: string;
@@ -65,6 +73,11 @@ export interface Store {
   insertQuotaSnapshot(s: QuotaSnapshot, machineId?: string | null): Promise<void>;
   latestQuotaWindows(profileId: string): Promise<LatestQuotaWindow[]>;
   quotaSamples(profileId: string, windowKind: string, since: Date, until?: Date): Promise<QuotaSample[]>;
+  /**
+   * seven_day 的利用率 + 同一次快照里官方的「按产品」拆分原文（`raw.seven_day_breakdown`）。
+   * 拆分为 null 的快照（team 组织、老响应）不返回。解析归调用方（@ua/core products.ts）。
+   */
+  quotaBreakdowns(profileId: string, since: Date): Promise<QuotaBreakdownRow[]>;
 
   eventsInRange(profileId: string, from: Date, to: Date): Promise<EventRow[]>;
 

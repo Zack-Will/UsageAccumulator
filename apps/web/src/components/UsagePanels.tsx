@@ -1,4 +1,4 @@
-import type { DistributionBucket } from "../api";
+import type { DistributionBucket, Products } from "../api";
 import { bucketCacheHitPct, byCostThenTokens, type UsageTotals } from "../api/derive";
 import { fmtPct, fmtTokens } from "../charts/base";
 import { Card, Cost, Mono, Placeholder } from "./primitives";
@@ -220,5 +220,58 @@ function RestRow({ rest, totalCost }: { rest: DistributionBucket[]; totalCost: n
         <Cost usd={cost} unpriced={unpriced} />
       </td>
     </tr>
+  );
+}
+
+/**
+ * 官方「本周按产品」拆分：与 claude.ai / Claude Code 的 usage 页同一组数。
+ *
+ * 份额是官方给的（占本周已用量），「占周限额」是我们乘出来的（× 7d 利用率），
+ * 后者才能和窗口卡上的百分比对上。与明细表同一个形状。
+ */
+export function ProductsCard({
+  products,
+  colors,
+  span,
+  mdSpan,
+}: {
+  products: Products;
+  colors: Map<string, string>;
+  span: number;
+  mdSpan?: number;
+}) {
+  return (
+    <Card title="本周按产品" span={span} mdSpan={mdSpan}>
+      <table className="btable btable--products">
+        <thead>
+          <tr>
+            <th scope="col" className="btable__name" />
+            <th scope="col" className="btable__barcol">份额</th>
+            <th scope="col">占周限额</th>
+          </tr>
+        </thead>
+        <tbody>
+          {products.rows.map((r) => {
+            const color = colors.get(r.key);
+            return (
+              <tr key={r.key}>
+                <th scope="row" className="btable__name" title={r.key}>
+                  <span className="btable__swatch" style={{ background: color }} />
+                  <span className="btable__label">{r.label}</span>
+                </th>
+                <td className="btable__barcol">
+                  <span className="btable__track">
+                    <span className="btable__fill" style={{ width: `${r.share_pct}%`, background: color }} />
+                  </span>
+                  <span className="btable__pct">{fmtPct(r.share_pct, 0)}</span>
+                </td>
+                {/* 不到 1 个点时留一位小数：聊天常是零点几，取整成 0% 等于没说 */}
+                <td className="btable__cost">{fmtPct(r.pct, r.pct > 0 && r.pct < 1 ? 1 : 0)}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </Card>
   );
 }
