@@ -219,6 +219,12 @@ export function WindowCard({
     cost?.usd != null && cost.usd > 0 && localPct > 0 ? cost.usd / (localPct / 100) : null;
   /** 只在真的测到别处的消耗时才占一行字；测到 0 就什么都不说。空闲窗口里没有「窗口内」 */
   const otherPct = idle ? 0 : (attr?.other_pct ?? attr?.other_pct_lower_bound ?? 0);
+  /**
+   * ★ 显示成「占本窗口已用量的份额」，不是占限额的百分点。
+   * 以前写的是 other_pct 本身（占限额）：7d 用了 15%、其中 23% 是 Cowork/聊天时显示「3% 非 Code」，
+   * 旁边「本周按产品」卡却写着 Claude Code 77% —— 两个带 % 的数口径不同，读起来就是算错了。
+   */
+  const otherShare = w.utilization_pct > 0 ? Math.min(100, (otherPct / w.utilization_pct) * 100) : 0;
 
   const etaTone = remain === null ? "muted" : remain < 45 * 60_000 ? "danger" : "warn";
 
@@ -301,9 +307,11 @@ export function WindowCard({
             <span className="quota__v quota__v--strong">
               {fullWindowCost !== null ? `$${fullWindowCost.toFixed(0)}` : "—"}
             </span>
-            {/* 官方拆分折出来的常是零点几：不到 1 个点时留一位小数，别四舍五入成「0% 非 Code」 */}
-            {otherPct >= 0.05 ? (
-              <Mono tone="muted">{otherPct.toFixed(otherPct < 1 ? 1 : 0)}% 非 Code</Mono>
+            {/* 不到 1% 时留一位小数，别四舍五入成「0% 非 Code」 */}
+            {otherShare >= 0.05 ? (
+              <span title={`占限额 ${otherPct.toFixed(2)} 个百分点`}>
+                <Mono tone="muted">{otherShare.toFixed(otherShare < 1 ? 1 : 0)}% 非 Code</Mono>
+              </span>
             ) : (
               <Mono tone="muted">&nbsp;</Mono>
             )}
