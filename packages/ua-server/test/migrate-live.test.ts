@@ -93,3 +93,67 @@ describe.skipIf(!url)("quotaSamples 的时间上界", () => {
     await expect(store.quotaSamples("p-quota", "seven_day", since, past)).resolves.toHaveLength(0);
   });
 });
+
+/**
+ * insertEvents 的「更完整就覆盖」。
+ *
+ * 为什么必须打真库：判断覆盖的 WHERE、区分新插入与覆盖的 `xmax = 0`、以及
+ * 语义兜底行仍走 DO NOTHING 的分流，全在 SQL 里 —— 内存 store 只是照着抄了一份。
+ * 2026-10-02：子代理消息的流式中途值被先到先得存了进来，输出量少记约 26 倍。
+ */
+describe.skipIf(!url)("insertEvents：同一条消息用量更完整就覆盖", () => {
+  const sql = postgres(url ?? "", { max: 5, onnotice: () => {} });
+  afterAll(async () => { await sql.end({ timeout: 5 }); });
+
+  const base = {
+    messageId: "msg_live", requestId: "req_live", semanticId: "sem_live", machineId: "m-a",
+    appType: "claude" as const, profileId: "p-live", attributionLevel: "timeline" as const,
+    ts: new Date("2026-10-01T12:00:00Z"), model: "claude-opus-5-5",
+    inputTokens: 2, outputTokens: 7, thinkingTokens: 0, cacheReadTokens: 50_000,
+    cacheWrite5mTokens: 1_000, cacheWrite1hTokens: 0, sessionId: "s", projectSlug: null,
+    gitBranch: null, entrypoint: null, serviceTier: null, isSidechain: true,
+    outputFinal: false as boolean | null, backfill: false,
+  };
+
+  it("中途值 → 最终值覆盖；再来中途值不回退；machine_id 归先到的", async () => {
+    await runMigrations(sql, dir, silent);
+    await sql`DELETE FROM usage_events WHERE message_id = 'msg_live'`;
+    const store = new PgStore(sql);
+    await store.ensureProfiles(["p-live"]);
+
+    expect(await store.insertEvents([{ event: base, costUsd: 0.01 }])).toEqual({ inserted: 1, updated: 0 });
+    expect(
+      await store.insertEvents([
+        { event: { ...base, machineId: "m-b", outputTokens: 1500, outputFinal: true }, costUsd: 0.04 },
+      ]),
+    ).toEqual({ inserted: 0, updated: 1 });
+    expect(await store.insertEvents([{ event: base, costUsd: 0.01 }])).toEqual({ inserted: 0, updated: 0 });
+
+    const [row] = await sql<{ output_tokens: string; output_final: boolean; cost_usd: string; machine_id: string }[]>`
+      SELECT output_tokens, output_final, cost_usd, machine_id FROM usage_events WHERE message_id = 'msg_live'`;
+    expect(Number(row!.output_tokens)).toBe(1500);
+    expect(row!.output_final).toBe(true);
+    expect(Number(row!.cost_usd)).toBeCloseTo(0.04, 6);
+    expect(row!.machine_id).toBe("m-a");
+  });
+
+  it("输出量相同时，确知的 output_final 覆盖旧探针留下的 NULL", async () => {
+    await sql`DELETE FROM usage_events WHERE message_id = 'msg_live'`;
+    const store = new PgStore(sql);
+    await store.insertEvents([{ event: { ...base, outputFinal: null }, costUsd: 0.01 }]);
+    expect(await store.insertEvents([{ event: base, costUsd: 0.01 }])).toEqual({ inserted: 0, updated: 1 });
+    const [row] = await sql<{ output_final: boolean | null }[]>`
+      SELECT output_final FROM usage_events WHERE message_id = 'msg_live'`;
+    expect(row!.output_final).toBe(false);
+  });
+
+  it("request_id 为空的语义兜底行仍是 DO NOTHING，不报错", async () => {
+    await sql`DELETE FROM usage_events WHERE semantic_id = 'sem_live_empty'`;
+    const store = new PgStore(sql);
+    const ev = { ...base, messageId: "msg_live_empty", requestId: "", semanticId: "sem_live_empty" };
+    expect(await store.insertEvents([{ event: ev, costUsd: 0.01 }])).toEqual({ inserted: 1, updated: 0 });
+    expect(
+      await store.insertEvents([{ event: { ...ev, outputTokens: 1500, outputFinal: true }, costUsd: 0.04 }]),
+    ).toEqual({ inserted: 0, updated: 0 });
+  });
+});

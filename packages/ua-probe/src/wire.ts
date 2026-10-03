@@ -29,6 +29,8 @@ export interface WireUsageEvent {
   entrypoint: string | null;
   service_tier: string | null;
   is_sidechain: boolean;
+  /** output_tokens 是不是最终值；false = 最终行没写进 JSONL，只是下界（CONTRACT §1.1） */
+  output_final: boolean | null;
   backfill: boolean;
 }
 
@@ -69,6 +71,7 @@ export function toWireEvent(
     entrypoint: e.entrypoint,
     service_tier: e.serviceTier,
     is_sidechain: e.isSidechain,
+    output_final: e.outputFinal,
     backfill: e.backfill,
   };
 }

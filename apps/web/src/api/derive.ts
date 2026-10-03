@@ -188,19 +188,23 @@ export interface CostSummary {
   usd: number | null;
   /** 有多少事件缺价 —— >0 时数字旁必须带标记。 */
   unpricedEvents: number;
+  /** 有多少事件的输出量只是下界（最终用量没写进 JSONL）—— >0 时 usd 也是下界。 */
+  partialOutputEvents: number;
   totalEvents: number;
 }
 
 export function costSummary(buckets: DistributionBucket[]): CostSummary {
   let usd: number | null = null;
   let unpriced = 0;
+  let partial = 0;
   let events = 0;
   for (const b of buckets) {
     if (b.cost_usd !== null) usd = (usd ?? 0) + b.cost_usd;
     unpriced += b.unpriced_events;
+    partial += b.partial_output_events ?? 0;
     events += b.events;
   }
-  return { usd, unpricedEvents: unpriced, totalEvents: events };
+  return { usd, unpricedEvents: unpriced, partialOutputEvents: partial, totalEvents: events };
 }
 
 // ── 占比 ────────────────────────────────────────────────────────────────────

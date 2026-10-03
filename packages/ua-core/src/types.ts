@@ -30,6 +30,17 @@ export interface UsageEvent {
   entrypoint: string | null;
   serviceTier: string | null;
   isSidechain: boolean;
+  /**
+   * outputTokens 是不是这条消息的最终值。
+   *
+   * ★ 子代理转录把一条消息按 content block 拆成多行写，只有带 `stop_reason`
+   * （或 usage 里有 `iterations`）的那一行才是 message_delta 合并后的最终用量；
+   * 其余行的 output_tokens 只是流式中途值（实测 2~7）。很多子代理消息压根没写出
+   * 最终行 —— 那时 outputTokens 只是**下界**，必须标出来，不能当真值。
+   *
+   * null = 旧探针上报、不知道。
+   */
+  outputFinal: boolean | null;
   backfill: boolean;
 }
 

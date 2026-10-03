@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { calibrate, type CalibObservation } from "../src/calibration.js";
-import { dedupKey, semanticId } from "../src/dedup.js";
+import { dedupKey, semanticId, usageRank } from "../src/dedup.js";
 import { parseLine } from "../src/jsonl.js";
 import { FIVE_HOURS_MS, multiMachineOverlap, projectWindow, segmentBlocks, sessionCutRate } from "../src/windows.js";
 import type { UsageEvent } from "../src/types.js";
@@ -35,6 +35,33 @@ function line(over: Record<string, unknown> = {}, usage: Record<string, unknown>
 }
 
 describe("parseLine", () => {
+  it("output_final：带 stop_reason 或 iterations 的才是最终行，子代理的流式中途行不是", () => {
+    // 子代理转录：一条消息拆成多行，前几行是精简 usage（无 iterations、无 stop_reason）
+    const partial = JSON.parse(line({ isSidechain: true }, { output_tokens: 7 })) as any;
+    delete partial.message.usage.output_tokens_details;
+    expect(parseLine(JSON.stringify(partial), CTX).event!.outputFinal).toBe(false);
+
+    const byStop = JSON.parse(JSON.stringify(partial));
+    byStop.message.stop_reason = "tool_use";
+    expect(parseLine(JSON.stringify(byStop), CTX).event!.outputFinal).toBe(true);
+
+    const byIterations = JSON.parse(JSON.stringify(partial));
+    byIterations.message.usage.iterations = [];
+    expect(parseLine(JSON.stringify(byIterations), CTX).event!.outputFinal).toBe(true);
+  });
+
+  it("usageRank：先比 output_tokens，相等时最终行 > 非最终 > 不知道", () => {
+    expect(usageRank({ outputTokens: 1500, outputFinal: false })).toBeGreaterThan(
+      usageRank({ outputTokens: 7, outputFinal: true }),
+    );
+    expect(usageRank({ outputTokens: 7, outputFinal: true })).toBeGreaterThan(
+      usageRank({ outputTokens: 7, outputFinal: false }),
+    );
+    expect(usageRank({ outputTokens: 7, outputFinal: false })).toBeGreaterThan(
+      usageRank({ outputTokens: 7, outputFinal: null }),
+    );
+  });
+
   it("拆开 5m / 1h 缓存写入", () => {
     const { event, warnings } = parseLine(line(), CTX);
     expect(event).not.toBeNull();
@@ -89,7 +116,7 @@ function ev(tsIso: string, over: Partial<UsageEvent> = {}): UsageEvent {
     machineId: "m1", appType: "claude", profileId: "p1", attributionLevel: "timeline",
     ts: new Date(tsIso), model: "claude-opus-5", inputTokens: 0, outputTokens: 0, thinkingTokens: 0,
     cacheReadTokens: 0, cacheWrite5mTokens: 0, cacheWrite1hTokens: 0, sessionId: "s1",
-    projectSlug: null, gitBranch: null, entrypoint: null, serviceTier: null, isSidechain: false, backfill: false,
+    projectSlug: null, gitBranch: null, entrypoint: null, serviceTier: null, isSidechain: false, outputFinal: true, backfill: false,
     ...over,
   };
 }

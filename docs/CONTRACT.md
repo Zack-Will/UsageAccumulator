@@ -48,6 +48,7 @@
   "entrypoint": "claude-desktop",                // claude-desktop | cli
   "service_tier": "standard",
   "is_sidechain": false,
+  "output_final": true,                          // output_tokens 是否为最终值；false = 只是下界；旧探针不报 → 服务端存 null
   "backfill": false                              // 首次全量导入时为 true
 }
 ```
@@ -72,7 +73,10 @@
 | `entrypoint` | `entrypoint` |
 | `service_tier` | `message.usage.service_tier` |
 | `is_sidechain` | `isSidechain` |
+| `output_final` | `message.stop_reason` 非空，或 `message.usage` 带 `iterations` |
 
+> **同一条消息在 JSONL 里有多行**（按 content block 拆开写），input / cache 各行相同，`output_tokens` 只增不减。主线会话每行都是最终值；**子代理转录只有最后一行是最终值**，前面各行是流式中途值（实测 2~7），而且很多子代理消息根本没写出最终行（2026-10-02 实测 NAS 一个 Workflow 会话 3905 条里 2055 条）。所以 `output_final = false` 的 `output_tokens` 与成本都只是**下界**。
+>
 > `cache_creation_input_tokens` 是 5m + 1h 的**总和**，仅作校验用，不入库。若 `cache_creation` 对象缺失，退化为全部计入 `cache_write_5m_tokens` 并记一条 warn。
 
 ### 1.2 去重
@@ -87,7 +91,13 @@ semantic_id = sha256(session_id | ts_ms | model | input | output | cache_read | 
 
 **线格式规定**：`semantic_id` **永远填写**，不因 `request_id` 存在而省略。`request_id` 缺失时填空字符串 `""`，不要填 null、不要拿 semantic_id 冒充 request_id。服务端据此选择主键路径。
 
-服务端 `ON CONFLICT DO NOTHING`。**同一次请求会被多台机器上报**（ssh 场景），这是预期行为。
+**同一个键可能被报多次**：ssh 场景下多台机器各报一份；同一条消息的多行也是同一个键（见 1.1）。两处去重（探针本地队列、服务端入库）都按「用量更完整」取大，**不是先到先得**：
+
+```
+usage_rank = output_tokens × 3 + (output_final 为 true → 2，false → 1，null → 0)
+```
+
+服务端对有 `request_id` 的行 `ON CONFLICT (message_id, request_id) DO UPDATE`：新来的 `usage_rank` 更大时覆盖全部 token 列、`output_final` 与 `cost_usd`，其余列（`machine_id`、`profile_id` 等）仍归先到的那份。`request_id` 为空的语义兜底行仍是 `DO NOTHING`——`semantic_id` 里含 output，同一条消息的不同行本来就是不同的键。
 
 实测口径（见 ARCHITECTURE §2.0）：28,794 条原始事件去重后剩 10,423 条，**64% 是重复**；其中跨机重复仅 441 条。探针会先在本地去重一轮（实测吃掉 56%），服务端仍须自己再去一次，不得假设上游已去干净。
 
@@ -145,7 +155,7 @@ Idempotency-Key: <批次内容的 sha256 前 32 位>
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| `POST` | `/v1/ingest/events` | body: gzip NDJSON，每行一个 UsageEvent。→ `200 {"accepted":N,"deduped":M,"invalid":K}`（`invalid` = 跳过的坏行；坏行不得毁掉整批） |
+| `POST` | `/v1/ingest/events` | body: gzip NDJSON，每行一个 UsageEvent。→ `200 {"accepted":N,"updated":U,"deduped":M,"invalid":K}`（`updated` = 库里已有、这次用量更完整而被覆盖的；`invalid` = 跳过的坏行；坏行不得毁掉整批） |
 | `POST` | `/v1/ingest/quota` | body: QuotaSnapshot JSON → `200 {"ok":true}` |
 | `POST` | `/v1/enroll` | body: `{"enroll_token","hostname","os","provisional_machine_id"}` → `200 {"machine_id","machine_token"}` |
 | `GET` | `/v1/profiles` | → `{"profiles":[{"id","kind","label","account_uuid","base_url","plan","org_uuid","active"}]}`（注意键是 `id` 不是 `profile_id`）。`active` 恰有一个为 `true`：最近有用量的那个。**所有带 `profile_id` 参数的接口**在不传它、且 profile 多于一个时回落到 active，不再 400 |
@@ -255,6 +265,7 @@ Idempotency-Key: <批次内容的 sha256 前 32 位>
                  "cache_write_5m_tokens": 0, "cache_write_1h_tokens": 0, "total_tokens": 0,
                  "cost_usd": null,             // null = 该桶无任何有报价的模型
                  "unpriced_events": 12,        // >0 = 成本不完整，前端必须与「成本为 0」区分开
+                 "partial_output_events": 3,   // >0 = 有事件的 output_final = false，output_tokens 与 cost_usd 都是下界
                  "series": [ { "ts": "2026-09-21T13:00:00Z", "total_tokens": 8123, "events": 12,
                                 "cost_usd": 0.4213, "unpriced_events": 0 } ] } ] }
 //   series 仅在 bucket=hour|day 时出现

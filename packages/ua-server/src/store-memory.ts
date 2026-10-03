@@ -1,4 +1,4 @@
-import { dedupKey, type Profile, type QuotaSample, type QuotaSnapshot } from "@ua/core";
+import { dedupKey, usageRank, type Profile, type QuotaSample, type QuotaSnapshot } from "@ua/core";
 import type {
   CalibrationRecord,
   EventRow,
@@ -70,15 +70,36 @@ export class MemoryStore implements Store {
     return out;
   }
 
-  async insertEvents(rows: EventRow[]): Promise<number> {
+  async insertEvents(rows: EventRow[]): Promise<{ inserted: number; updated: number }> {
     let inserted = 0;
+    let updated = 0;
     for (const row of rows) {
       const key = dedupKey(row.event);
-      if (this.events.has(key)) continue;
-      this.events.set(key, row);
-      inserted++;
+      const cur = this.events.get(key);
+      if (!cur) {
+        this.events.set(key, row);
+        inserted++;
+        continue;
+      }
+      // 语义兜底的键里含 output_tokens，比不出谁更完整（与 store-pg 一致）
+      if (!row.event.requestId || usageRank(row.event) <= usageRank(cur.event)) continue;
+      const e = row.event;
+      this.events.set(key, {
+        event: {
+          ...cur.event,
+          inputTokens: e.inputTokens,
+          outputTokens: e.outputTokens,
+          thinkingTokens: e.thinkingTokens,
+          cacheReadTokens: e.cacheReadTokens,
+          cacheWrite5mTokens: e.cacheWrite5mTokens,
+          cacheWrite1hTokens: e.cacheWrite1hTokens,
+          outputFinal: e.outputFinal,
+        },
+        costUsd: row.costUsd,
+      });
+      updated++;
     }
-    return inserted;
+    return { inserted, updated };
   }
 
   async insertQuotaSnapshot(s: QuotaSnapshot, machineId: string | null = null): Promise<void> {

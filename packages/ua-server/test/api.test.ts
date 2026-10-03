@@ -234,6 +234,57 @@ describe("POST /v1/ingest/events", () => {
     expect(res.json()).toMatchObject({ accepted: 1, deduped: 2 });
   });
 
+  it("子代理的最终行晚到：同一条消息用量更完整就覆盖，更差的不覆盖", async () => {
+    const e = makeEvent({ isSidechain: true, model: "claude-opus-5", outputTokens: 7, outputFinal: false });
+    const post = (ev: typeof e) =>
+      app.fastify.inject({
+        method: "POST",
+        url: "/v1/ingest/events",
+        headers: { ...AUTH, "content-type": "application/x-ndjson" },
+        payload: ingestBody([toWire(ev)]),
+      });
+    expect((await post(e)).json()).toMatchObject({ accepted: 1, updated: 0, deduped: 0 });
+    const partialCost = [...store.events.values()][0]!.costUsd!;
+
+    expect((await post({ ...e, outputTokens: 1500, outputFinal: true })).json()).toMatchObject({
+      accepted: 0,
+      updated: 1,
+      deduped: 0,
+    });
+    const row = [...store.events.values()][0]!;
+    expect(row.event.outputTokens).toBe(1500);
+    expect(row.event.outputFinal).toBe(true);
+    expect(row.costUsd!).toBeGreaterThan(partialCost);
+
+    // 再来一行中途值（比如另一台机器、或重扫）：不能把最终值顶回去
+    expect((await post(e)).json()).toMatchObject({ accepted: 0, updated: 0, deduped: 1 });
+    expect([...store.events.values()][0]!.event.outputTokens).toBe(1500);
+  });
+
+  it("批内同一条消息的多行：留用量最完整的那行，不是第一行", async () => {
+    const e = makeEvent({ isSidechain: true, outputTokens: 7, outputFinal: false });
+    const res = await app.fastify.inject({
+      method: "POST",
+      url: "/v1/ingest/events",
+      headers: { ...AUTH, "content-type": "application/x-ndjson" },
+      payload: ingestBody([toWire(e), toWire({ ...e, outputTokens: 1500, outputFinal: true }), toWire(e)]),
+    });
+    expect(res.json()).toMatchObject({ accepted: 1, deduped: 2 });
+    expect([...store.events.values()][0]!.event.outputTokens).toBe(1500);
+  });
+
+  it("旧探针不报 output_final：存成 null（不知道），不当成最终值", async () => {
+    const wire = toWire(makeEvent());
+    delete wire["output_final"];
+    await app.fastify.inject({
+      method: "POST",
+      url: "/v1/ingest/events",
+      headers: { ...AUTH, "content-type": "application/x-ndjson" },
+      payload: ingestBody([wire]),
+    });
+    expect([...store.events.values()][0]!.event.outputFinal).toBeNull();
+  });
+
   it("accepts uncompressed NDJSON too", async () => {
     const res = await app.fastify.inject({
       method: "POST",
@@ -909,6 +960,20 @@ describe("GET /v1/timeline and /v1/distribution", () => {
     expect(res.statusCode).toBe(200);
     expect(res.json().by).toBe("attribution");
     expect(res.json().buckets.map((b: { key: string }) => b.key)).toEqual(["timeline"]);
+  });
+
+  it("partial_output_events 只数确知是下界的事件（output_final = false）", async () => {
+    await store.insertEvents([
+      { event: makeEvent({ outputFinal: false }), costUsd: 1 },
+      { event: makeEvent({ outputFinal: null }), costUsd: 1 },
+    ]);
+    const res = await app.fastify.inject({
+      method: "GET",
+      url: "/v1/distribution?profile_id=claude-official&by=model",
+      headers: AUTH,
+    });
+    const total = res.json().buckets.reduce((s: number, b: { partial_output_events: number }) => s + b.partial_output_events, 0);
+    expect(total).toBe(1);
   });
 
   it("omits series unless bucket is requested", async () => {

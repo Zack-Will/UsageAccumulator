@@ -47,7 +47,7 @@ export function UsageSummary({
             <div className="usum__big usum__big--end">
               <span className="usum__unit">≈</span>
               <span className="usum__cost">
-                <Cost usd={totals.cost.usd} unpriced={totals.cost.unpricedEvents} />
+                <Cost usd={totals.cost.usd} unpriced={totals.cost.unpricedEvents} partial={totals.cost.partialOutputEvents} />
               </span>
             </div>
           </div>
@@ -182,7 +182,7 @@ export function BreakdownTable({
                   </td>
                   <td className="btable__hit" data-label="命中">{hit === null ? "—" : fmtPct(hit, 0)}</td>
                   <td className="btable__cost">
-                    <Cost usd={b.cost_usd} unpriced={b.unpriced_events} />
+                    <Cost usd={b.cost_usd} unpriced={b.unpriced_events} partial={b.partial_output_events} />
                   </td>
                 </tr>
               );
@@ -201,6 +201,7 @@ function RestRow({ rest, totalCost }: { rest: DistributionBucket[]; totalCost: n
   const priced = rest.filter((b) => b.cost_usd !== null);
   const cost = priced.length ? priced.reduce((a, b) => a + (b.cost_usd ?? 0), 0) : null;
   const unpriced = rest.reduce((a, b) => a + b.unpriced_events, 0);
+  const partial = rest.reduce((a, b) => a + (b.partial_output_events ?? 0), 0);
   const share = cost !== null && totalCost > 0 ? (cost / totalCost) * 100 : null;
   return (
     <tr className="btable__rest">
@@ -217,7 +218,7 @@ function RestRow({ rest, totalCost }: { rest: DistributionBucket[]; totalCost: n
       </td>
       <td className="btable__hit" data-label="命中">—</td>
       <td className="btable__cost">
-        <Cost usd={cost} unpriced={unpriced} />
+        <Cost usd={cost} unpriced={unpriced} partial={partial} />
       </td>
     </tr>
   );

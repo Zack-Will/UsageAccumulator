@@ -235,6 +235,11 @@ export interface DistributionBucket {
   cost_usd: number | null;
   /** >0 = 成本不完整，前端必须给视觉提示。 */
   unpriced_events: number;
+  /**
+   * >0 = 有事件的最终用量没写进 JSONL，output_tokens 与 cost_usd 都是下界。
+   * 旧服务端不带这个字段 —— 缺省按 0 处理。
+   */
+  partial_output_events?: number;
   /** 仅在 bucket=hour|day 时出现。 */
   series?: BucketSeriesPoint[];
   /** 仅 by=session：这个会话在哪个项目目录（可能已 HMAC 化；临时工作区也在这里） */

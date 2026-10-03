@@ -464,6 +464,8 @@ function bucket(
     total_tokens: totalTokens,
     cost_usd: priced ? Math.round(totalTokens * 0.0000042 * 10000) / 10000 : null,
     unpriced_events: unpriced,
+    // 子代理的最终用量常常没写进 JSONL：让 Opus 桶带一些，看板的「≥」才有东西可显示
+    partial_output_events: priced && key.includes("opus") ? Math.round(events * 0.15) : 0,
   };
 }
 

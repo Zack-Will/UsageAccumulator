@@ -84,6 +84,7 @@ describe("wire 格式（CONTRACT §1.1）", () => {
     entrypoint: "claude-desktop",
     serviceTier: "standard",
     isSidechain: false,
+    outputFinal: true,
     backfill: false,
   };
 
@@ -170,6 +171,35 @@ describe("Ingestor 端到端（解析 → 归属 → 队列）", () => {
     const attr = new Attributor(cfg, store, silentLog);
     return { cfg, store, attr, ing: new Ingestor(cfg, store, attr, silentLog) };
   }
+
+  it("子代理的一条消息多行：队列留最终行；已发走的中途值在最终行到来时重新入队", async () => {
+    // 子代理转录：前几行是流式中途值（无 stop_reason / iterations），最后一行才是最终用量
+    const partial = assistantLine({ isSidechain: true }, { output_tokens: 7 });
+    const final = assistantLine({ isSidechain: true }, { output_tokens: 1500, iterations: [] });
+    const { ing, store } = build();
+
+    writeFileSync(file, [partial, partial, final].join("\n") + "\n");
+    await ing.ingestFile(file, { backfill: false }, emptyStats());
+    let rows = store.takeEvents(10);
+    expect(rows).toHaveLength(1);
+    expect(JSON.parse(rows[0]!.payload)).toMatchObject({ output_tokens: 1500, output_final: true });
+    store.ackEvents(rows.map((r) => r.id));
+
+    // 另一条消息：中途值先被读到并发走，最终行下一轮才写出来
+    const p2 = assistantLine({ isSidechain: true, requestId: "req_2" }, { output_tokens: 5 });
+    const f2 = assistantLine({ isSidechain: true, requestId: "req_2" }, { output_tokens: 900, iterations: [] });
+    appendFileSync(file, p2 + "\n");
+    await ing.ingestFile(file, { backfill: false }, emptyStats());
+    rows = store.takeEvents(10);
+    expect(JSON.parse(rows[0]!.payload)).toMatchObject({ output_tokens: 5, output_final: false });
+    store.ackEvents(rows.map((r) => r.id));
+
+    appendFileSync(file, f2 + "\n");
+    await ing.ingestFile(file, { backfill: false }, emptyStats());
+    rows = store.takeEvents(10);
+    expect(rows).toHaveLength(1);
+    expect(JSON.parse(rows[0]!.payload)).toMatchObject({ output_tokens: 900, output_final: true });
+  });
 
   it("解析 assistant 行入队，非 assistant 行忽略，project_slug 取目录名", async () => {
     writeFileSync(

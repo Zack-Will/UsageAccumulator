@@ -295,7 +295,11 @@ export function WindowCard({
               <Mono tone="muted">—</Mono>
             ) : (
               <span className="quota__v">
-                <Cost usd={buckets.length === 0 ? 0 : cost!.usd} unpriced={cost?.unpricedEvents ?? 0} />
+                <Cost
+                  usd={buckets.length === 0 ? 0 : cost!.usd}
+                  unpriced={cost?.unpricedEvents ?? 0}
+                  partial={cost?.partialOutputEvents ?? 0}
+                />
               </span>
             )}
             <Mono tone="muted">
@@ -305,7 +309,10 @@ export function WindowCard({
           <div className="quota__money-col quota__money-col--end">
             <span className="quota__k">满额约</span>
             <span className="quota__v quota__v--strong">
-              {fullWindowCost !== null ? `$${fullWindowCost.toFixed(0)}` : "—"}
+              {/* 已花是下界（有事件的最终输出量没写进 JSONL）→ 满额约也是下界 */}
+              {fullWindowCost !== null
+                ? `${(cost?.partialOutputEvents ?? 0) > 0 ? "≥" : ""}$${fullWindowCost.toFixed(0)}`
+                : "—"}
             </span>
             {/* 不到 1% 时留一位小数，别四舍五入成「0% 非 Code」 */}
             {otherShare >= 0.05 ? (

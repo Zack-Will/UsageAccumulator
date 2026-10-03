@@ -66,8 +66,11 @@ export interface Store {
   /** 每个 profile 最近一条事件的时间；没有事件的 profile 不出现 */
   latestEventAt(): Promise<Map<string, Date>>;
 
-  /** ON CONFLICT DO NOTHING 批量 upsert，返回**新插入**的条数 */
-  insertEvents(rows: EventRow[]): Promise<number>;
+  /**
+   * 批量 upsert。同一个 dedupKey 已存在时，新来的用量更完整（usageRank 更大）就覆盖
+   * 用量与成本，否则丢弃。返回新插入与被覆盖的条数。
+   */
+  insertEvents(rows: EventRow[]): Promise<{ inserted: number; updated: number }>;
 
   /** machineId = 采集机器（CONTRACT §1.3），仅供追溯，可为空 */
   insertQuotaSnapshot(s: QuotaSnapshot, machineId?: string | null): Promise<void>;

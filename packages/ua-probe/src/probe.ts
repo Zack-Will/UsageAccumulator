@@ -12,6 +12,9 @@ import { QuotaFetcher, macNotifier } from "./quota-fetcher.js";
 import { expandHome } from "./paths.js";
 import { scanFileTitles } from "./session-titles.js";
 
+/** meta 键：子代理最终用量修正的一次性重扫是否已完成 */
+const FINAL_USAGE_RESCAN = "final_usage_rescan_v1";
+
 export function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
     if (ms <= 0) return resolve();
@@ -217,6 +220,20 @@ export class Probe {
     }
   }
 
+  /**
+   * 一次性重扫：清空游标，让启动扫描把所有 JSONL 从头再读一遍。
+   *
+   * 旧版本入队是先到先得，子代理消息存下的是流式中途的 output_tokens。现在队列和
+   * 服务端都改成「更完整就覆盖」，重读一遍就能把历史修正过来，顺带补上 output_final。
+   * 标记在扫描完成后才写：中途被杀，下次启动再来一遍，重读是幂等的。
+   */
+  private beginFinalUsageRescan(): boolean {
+    if (this.store.getMeta(FINAL_USAGE_RESCAN)) return false;
+    const cleared = this.store.clearCursors();
+    this.log.info({ cursors: cleared }, "子代理最终用量修正：清空游标，全量重读");
+    return true;
+  }
+
   /** backfill：首次全量解析 + 限速上报（每批 1000、间隔 200ms）。 */
   async runBackfill(): Promise<IngestStats> {
     this.log.info({ roots: this.cfg.resolvedScanRoots }, "backfill 开始：全量解析历史 JSONL");
@@ -245,8 +262,11 @@ export class Probe {
   async start(): Promise<void> {
     this.attributor.refreshTimeline();
 
-    const first = await this.scanAll(false);
-    this.log.info({ files: first.files, events: first.events, enqueued: first.enqueued }, "启动扫描完成");
+    const rescan = this.beginFinalUsageRescan();
+    const first = await this.scanAll(rescan);
+    // 被打断的扫描不算数：没读完的文件游标还是空的，下次启动接着重读
+    if (rescan && !this.abort.signal.aborted) this.store.setMeta(FINAL_USAGE_RESCAN, new Date().toISOString());
+    this.log.info({ files: first.files, events: first.events, enqueued: first.enqueued, rescan }, "启动扫描完成");
     // 老会话补标题放后台：几百 MB 的日志要扫几秒，不该挡住启动
     void this.backfillSessionTitles().catch((err: unknown) =>
       this.log.warn({ err: String(err) }, "补标题失败，下次启动再试"),

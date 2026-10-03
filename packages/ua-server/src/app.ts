@@ -494,11 +494,12 @@ export function buildApp(opts: BuildAppOptions) {
     }));
 
     await store.ensureProfiles([...new Set(rows.map((r) => r.event.profileId))]);
-    const inserted = await store.insertEvents(rows);
+    const { inserted, updated } = await store.insertEvents(rows);
     const total = decoded.events.length + decoded.dedupedInBatch;
-    const deduped = total - inserted;
+    // updated：库里已有、但这次报来的用量更完整而被覆盖的（子代理的最终行晚到）
+    const deduped = total - inserted - updated;
 
-    if (inserted > 0) {
+    if (inserted + updated > 0) {
       // last_ts = 该 profile 本批最新事件的时间戳，前端据此知道数据推进到哪了
       const byProfile = new Map<string, { count: number; lastTs: number }>();
       for (const r of rows) {
@@ -525,8 +526,8 @@ export function buildApp(opts: BuildAppOptions) {
     }
 
     // 只记数字与维度，绝不记正文（CONTRACT §4）
-    req.log.info({ accepted: inserted, deduped, invalid: decoded.invalid }, "ingest events");
-    return reply.send({ accepted: inserted, deduped, invalid: decoded.invalid });
+    req.log.info({ accepted: inserted, updated, deduped, invalid: decoded.invalid }, "ingest events");
+    return reply.send({ accepted: inserted, updated, deduped, invalid: decoded.invalid });
   });
 
   // ── POST /v1/ingest/quota
@@ -915,6 +916,8 @@ export function buildApp(opts: BuildAppOptions) {
         // null = 这一桶里没有任何有报价的模型；unpriced_events > 0 表示成本不完整
         cost_usd: b.costUsd,
         unpriced_events: b.unpricedEvents,
+        // > 0：这一桶有事件的最终用量没写进 JSONL，output_tokens 与 cost_usd 是下界
+        partial_output_events: b.partialOutputEvents,
         // series 只在 bucket=hour|day 时出现
         ...(b.series ? { series: b.series } : {}),
       })),

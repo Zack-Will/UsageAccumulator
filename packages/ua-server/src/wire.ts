@@ -1,6 +1,6 @@
 import { gunzipSync } from "node:zlib";
 import { z } from "zod";
-import { dedupKey, semanticId, type QuotaSnapshot, type UsageEvent } from "@ua/core";
+import { dedupKey, semanticId, usageRank, type QuotaSnapshot, type UsageEvent } from "@ua/core";
 
 /**
  * 线上格式 → 内部类型。字段名以 CONTRACT §1 为准，一个字母都不能自己发明。
@@ -35,6 +35,8 @@ export const usageEventWireSchema = z.object({
   entrypoint: z.string().nullish(),
   service_tier: z.string().nullish(),
   is_sidechain: z.coerce.boolean().default(false),
+  // 旧探针不报 → null（不知道），不能默认成 true 冒充「已确认是最终值」
+  output_final: z.boolean().nullish(),
   backfill: z.coerce.boolean().default(false),
 });
 
@@ -119,6 +121,7 @@ export function wireToEvent(w: UsageEventWire): UsageEvent | null {
     entrypoint: w.entrypoint ?? null,
     serviceTier: w.service_tier ?? null,
     isSidechain: w.is_sidechain,
+    outputFinal: w.output_final ?? null,
     backfill: w.backfill,
   };
 }
@@ -148,18 +151,19 @@ export interface DecodedBatch {
   events: UsageEvent[];
   /** 解析失败的行数（跳过而不是整批拒绝：一行坏掉不该让整批 1000 条重传） */
   invalid: number;
-  /** 批内自身重复（探针重发、ssh 双写），这些也算 deduped */
+  /** 批内自身重复（探针重发、ssh 双写、同一条消息的多行），这些也算 deduped */
   dedupedInBatch: number;
 }
 
 /**
  * gzip NDJSON → UsageEvent[]。纯函数，无 IO、无数据库。
  * 批内先按 @ua/core 的 dedupKey 收敛一次，能少打一大半数据库。
+ * 收敛时留用量更完整的那份（usageRank 取大），不是先到的那份。
  */
 export function decodeEventBatch(body: Buffer): DecodedBatch {
   const text = maybeGunzip(body).toString("utf8");
   const events: UsageEvent[] = [];
-  const seen = new Set<string>();
+  const seen = new Map<string, number>(); // dedupKey → events 里的下标
   let invalid = 0;
   let dedupedInBatch = 0;
 
@@ -184,11 +188,13 @@ export function decodeEventBatch(body: Buffer): DecodedBatch {
       continue;
     }
     const key = dedupKey(ev);
-    if (seen.has(key)) {
+    const at = seen.get(key);
+    if (at !== undefined) {
       dedupedInBatch++;
+      if (usageRank(ev) > usageRank(events[at]!)) events[at] = ev;
       continue;
     }
-    seen.add(key);
+    seen.set(key, events.length);
     events.push(ev);
   }
   return { events, invalid, dedupedInBatch };

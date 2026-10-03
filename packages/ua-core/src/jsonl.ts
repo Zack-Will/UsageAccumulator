@@ -122,6 +122,7 @@ export function parseLine(raw: string, ctx: ParseContext): ParseResult {
     entrypoint: typeof d["entrypoint"] === "string" ? d["entrypoint"] : null,
     serviceTier: typeof usage["service_tier"] === "string" ? usage["service_tier"] : null,
     isSidechain: d["isSidechain"] === true,
+    outputFinal: typeof message["stop_reason"] === "string" || "iterations" in usage,
     backfill: ctx.backfill ?? false,
   };
   return { event, warnings };

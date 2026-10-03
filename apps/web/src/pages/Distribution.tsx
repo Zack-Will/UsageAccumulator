@@ -107,7 +107,7 @@ export function Distribution({ api, t, profileId, from, to, nonce }: Props) {
           projectCost ? (
             <span className="aside-row">
               <Mono tone="muted">{projects.data?.buckets.length ?? 0}</Mono>
-              <Cost usd={projectCost.usd} unpriced={projectCost.unpricedEvents} />
+              <Cost usd={projectCost.usd} unpriced={projectCost.unpricedEvents} partial={projectCost.partialOutputEvents} />
             </span>
           ) : undefined
         }
