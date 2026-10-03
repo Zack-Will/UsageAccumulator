@@ -145,6 +145,19 @@ export class MemoryStore implements Store {
     return out.sort((a, b) => a.ts.getTime() - b.ts.getTime());
   }
 
+  async quotaWindowResets(profileId: string, windowKind: string, since: Date, until: Date): Promise<Date[]> {
+    const seen = new Map<number, Date>();
+    for (const { snapshot } of this.quota) {
+      if (snapshot.profileId !== profileId || snapshot.capturedAt < since || snapshot.capturedAt >= until) continue;
+      for (const w of snapshot.windows) {
+        if (w.windowKind !== windowKind || !w.resetsAt) continue;
+        const k = Math.round(w.resetsAt.getTime() / 600_000) * 600_000;
+        seen.set(k, new Date(k));
+      }
+    }
+    return [...seen.values()].sort((a, b) => a.getTime() - b.getTime());
+  }
+
   async quotaBreakdowns(profileId: string, since: Date): Promise<QuotaBreakdownRow[]> {
     const out: QuotaBreakdownRow[] = [];
     for (const { snapshot } of this.quota) {

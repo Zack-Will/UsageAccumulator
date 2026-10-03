@@ -471,8 +471,9 @@ describe("GET /v1/windows/current · 官方按产品拆分", () => {
     // 5h 没有拆分，按 5h/7d 刻度比（2）折过来；窗口开头没采到，只算第一个点之后的增量
     const five = byKind("five_hour").attribution;
     expect(five.non_code_pct).toBeCloseTo(8.2);
-    expect(five.other_pct).toBeCloseTo(8.2);
-    expect(five.local_utilization_pct).toBeCloseTo(62 - 8.2);
+    // 逐段认领（每段都没超过 5h 的 +2）合计 8.2，再扣一格取整误差 41% × 1% × 2 = 0.82
+    expect(five.other_pct).toBeCloseTo(8.2 - 0.82);
+    expect(five.local_utilization_pct).toBeCloseTo(62 - (8.2 - 0.82));
   });
 
   it("7d 以拆分为准：安静时段的整点跳变多半是量化，不能压过官方计量", async () => {

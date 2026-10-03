@@ -81,6 +81,11 @@ export interface Store {
    * 拆分为 null 的快照（team 组织、老响应）不返回。解析归调用方（@ua/core products.ts）。
    */
   quotaBreakdowns(profileId: string, since: Date): Promise<QuotaBreakdownRow[]>;
+  /**
+   * 某类窗口在 [since, until) 内出现过的重置时刻，升序、去重。
+   * 官方每次响应的 resets_at 有几百毫秒抖动，按 10 分钟取整认作同一个窗口。
+   */
+  quotaWindowResets(profileId: string, windowKind: string, since: Date, until: Date): Promise<Date[]>;
 
   eventsInRange(profileId: string, from: Date, to: Date): Promise<EventRow[]>;
 

@@ -27,6 +27,7 @@ import {
   type ProjectedCurvePoint,
   type WindowMetrics,
 } from "./aggregate.js";
+import { countsTowardQuota } from "./pricing.js";
 import type { Store } from "./store.js";
 
 /**
@@ -78,6 +79,11 @@ export interface CurrentWindowDto {
    * 判定口径与局限见 @ua/core 的 attribution.ts。
    */
   attribution: AttributionDto;
+  /**
+   * 「满额约」的历史参考（见 fullCostReference）。只有 five_hour 有；
+   * 其他窗口、或最近两周没有本地占比 ≥ 30% 的已结束窗口时为 null。
+   */
+  full_cost_reference: FullCostReferenceDto | null;
 }
 
 export interface AttributionDto {
@@ -155,15 +161,16 @@ const RATIO_LOOKBACK_MS = 14 * 24 * 60 * 60 * 1000;
  * 官方拆分 → 各窗口可用的「非 Code 增量」函数，外加给看板的原样拆分。
  * team 组织没有拆分，直接返回空，一切退回纯差额法，也省掉估刻度比的两次查询。
  */
-async function loadNonCode(store: Store, profileId: string, now: Date) {
-  const rows = await store.quotaBreakdowns(profileId, new Date(now.getTime() - SEVEN_DAYS_MS - FIVE_HOURS_MS));
+export async function loadNonCode(store: Store, profileId: string, now: Date) {
+  // 回看与刻度比同长：历史满额参考要对过去两周的 5h 窗口逐个做同一套归因
+  const rows = await store.quotaBreakdowns(profileId, new Date(now.getTime() - RATIO_LOOKBACK_MS - FIVE_HOURS_MS));
   const samples: BreakdownSample[] = [];
   for (const r of rows) {
     const b = parseProductBreakdown(r.breakdown);
     if (b) samples.push({ ts: r.ts, weeklyPct: r.weeklyPct, breakdown: b });
   }
   const last = samples[samples.length - 1];
-  if (!last) return { scaleOf: () => null, increase: null, products: null };
+  if (!last) return { scaleOf: () => null, quantumOf: () => null, quantumAt: () => null, increase: null, products: null };
 
   const series = nonCodeSeries(samples);
   const increase = series.length > 0 ? increaseIndex(series) : null;
@@ -175,6 +182,24 @@ async function loadNonCode(store: Store, profileId: string, now: Date) {
   // 拆分只针对「全部模型」的周限额；按模型限定的窗口（7d Fable）与它不是一个分母
   const scaleOf = (kind: string): number | null =>
     kind === "seven_day" ? 1 : kind === "five_hour" && ratio ? ratio.ratio : null;
+  /**
+   * 份额跳一格（1%）折成本窗口的点数 = 当前 7d 已用 × 1% × 刻度比。
+   * 份额是「占本周已用」的整数百分比，周越往后一格越大：7d 用到 36% 时一格 ≈ 3.4 个 5h 点。
+   */
+  const quantumOf = (kind: string): number | null => {
+    const scale = scaleOf(kind);
+    return scale === null ? null : (last.weeklyPct / 100) * scale;
+  };
+  /** 同上，但按 t 那一刻的 7d 已用量算（回看历史窗口用）；t 之前没有拆分时为 null */
+  const quantumAt = (kind: string, t: Date): number | null => {
+    const scale = scaleOf(kind);
+    let at: BreakdownSample | undefined;
+    for (const x of samples) {
+      if (x.ts > t) break;
+      at = x;
+    }
+    return scale === null || !at ? null : (at.weeklyPct / 100) * scale;
+  };
 
   const products: ProductsDto = {
     as_of: (last.breakdown.asOf ?? last.ts).toISOString(),
@@ -186,7 +211,108 @@ async function loadNonCode(store: Store, profileId: string, now: Date) {
       pct: (last.weeklyPct * r.sharePct) / 100,
     })),
   };
-  return { scaleOf, increase, products };
+  return { scaleOf, quantumOf, quantumAt, increase, products };
+}
+
+/**
+ * 「满额约」的历史参考（只给 5h）：最近若干个已结束窗口里，本地 Code 吃掉的每个百分点值多少钱。
+ *
+ * 为什么要它：当前窗口用量小时，「已花 ÷ 本地占比」的分母只有几个点，整数取整（±0.5）
+ * 加上归属判不清的一两个点，外推误差动辄 ±20% 以上 —— 2026-10-03 一个 7% 的窗口外推出 $302，
+ * 而这个订阅 5h 满额通常在 $100 上下。分母够大的窗口（本地 ≥ 30%）取整误差 < 2%，
+ * 拿它们的中位数当参考，比在小分母上硬外推可靠得多。
+ *
+ * ★ 它随负载类型变：子代理为主的窗口每块钱吃额度更快（实测 5h/7d 刻度比 12 vs 主线 8.5），
+ *   所以只取最近几个窗口，跟着用法走。子代理输出缺失（output_final = false）会让已花偏小，
+ *   一并报出 partial_output_events，让前端知道它可能偏低。
+ */
+export interface FullCostReferenceDto {
+  /** 中位数：每个窗口「已花 ÷ 本地占比」 */
+  usd: number;
+  /** 参与的窗口数 */
+  windows: number;
+  /** 这些窗口里最终用量没写进 JSONL 的事件数；> 0 时 usd 偏低 */
+  partial_output_events: number;
+}
+
+/** 窗口结束时本地占比至少这么多才拿来当参考：取整误差 ±0.5 点在 30 点里 < 2% */
+export const REFERENCE_MIN_LOCAL_PCT = 30;
+/** 只取最近这么多个合格窗口：负载类型变了，参考值要跟得上 */
+const REFERENCE_MAX_WINDOWS = 8;
+const REFERENCE_CACHE_MS = 10 * 60_000;
+const referenceCache = new WeakMap<Store, Map<string, { at: number; value: FullCostReferenceDto | null }>>();
+
+type NonCode = Awaited<ReturnType<typeof loadNonCode>>;
+
+export async function fullCostReference(
+  store: Store,
+  profileId: string,
+  now: Date,
+  nonCode: NonCode,
+  opts: { lookbackMs?: number; cache?: boolean } = {},
+): Promise<FullCostReferenceDto | null> {
+  const useCache = opts.cache ?? true;
+  let perStore = referenceCache.get(store);
+  if (!perStore) {
+    perStore = new Map();
+    referenceCache.set(store, perStore);
+  }
+  const hit = perStore.get(profileId);
+  if (useCache && hit && now.getTime() - hit.at >= 0 && now.getTime() - hit.at < REFERENCE_CACHE_MS) return hit.value;
+
+  const kind = "five_hour";
+  const since = new Date(now.getTime() - (opts.lookbackMs ?? RATIO_LOOKBACK_MS));
+  const resets = (await store.quotaWindowResets(profileId, kind, since, now)).filter(
+    (r) => r <= now && r.getTime() - FIVE_HOURS_MS >= since.getTime(),
+  );
+  let value: FullCostReferenceDto | null = null;
+  if (resets.length > 0) {
+    const allSamples = await store.quotaSamples(profileId, kind, since, now);
+    const rows = await store.eventsInRange(profileId, since, now);
+    const scale = nonCode.scaleOf(kind);
+    const nonCodeIn =
+      scale !== null && nonCode.increase ? (f: Date, t: Date) => scale * nonCode.increase!(f, t) : null;
+
+    const picks: { usd: number; partial: number }[] = [];
+    for (const end of resets) {
+      const start = new Date(end.getTime() - FIVE_HOURS_MS);
+      const samples = allSamples.filter((x) => x.ts >= start && x.ts < end);
+      if (samples.length === 0) continue;
+      let spend = 0;
+      let priced = 0;
+      let partial = 0;
+      const evTs: { ts: Date }[] = [];
+      for (const r of rows) {
+        const e = r.event;
+        if (e.ts < start || e.ts >= end || !countsTowardQuota(e.model)) continue;
+        evTs.push({ ts: e.ts });
+        if (r.costUsd !== null) {
+          spend += r.costUsd;
+          priced++;
+        }
+        if (e.outputFinal === false) partial++;
+      }
+      if (priced === 0 || spend <= 0) continue;
+      const util = samples[samples.length - 1]!.pct;
+      const attr = attributeQuota(samples, evTs, nonCodeIn ? { nonCode: nonCodeIn, windowStart: start } : {});
+      const other = fuseOtherPct(attr, nonCodeIn ? nonCode.quantumAt(kind, end) : null, util);
+      const local = util - other;
+      if (local < REFERENCE_MIN_LOCAL_PCT) continue;
+      picks.push({ usd: spend / (local / 100), partial });
+    }
+    const recent = picks.slice(-REFERENCE_MAX_WINDOWS);
+    if (recent.length > 0) {
+      const sorted = recent.map((p) => p.usd).sort((a, b) => a - b);
+      const mid = sorted.length >> 1;
+      value = {
+        usd: sorted.length % 2 ? sorted[mid]! : (sorted[mid - 1]! + sorted[mid]!) / 2,
+        windows: recent.length,
+        partial_output_events: recent.reduce((a, p) => a + p.partial, 0),
+      };
+    }
+  }
+  perStore.set(profileId, { at: now.getTime(), value });
+  return value;
 }
 
 /** 本地窗口偏移只对 5h 量级的窗口有意义（ARCHITECTURE §6.2 的块算法）；7d 不算，太贵也没意义。 */
@@ -232,6 +358,8 @@ export async function computeCurrentWindows(
   const latest = await store.latestQuotaWindows(profileId);
   const windows: CurrentWindowDto[] = [];
   const nonCode = await loadNonCode(store, profileId, now);
+  const hasFiveHour = latest.some((w) => w.windowKind === "five_hour");
+  const reference = hasFiveHour ? await fullCostReference(store, profileId, now, nonCode) : null;
 
   for (const w of latest) {
     const windowMs = inferWindowMs(w.windowKind);
@@ -298,7 +426,11 @@ export async function computeCurrentWindows(
     const scale = nonCode.scaleOf(w.windowKind);
     const increase = nonCode.increase;
     const nonCodeIn = scale !== null && increase ? (f: Date, t: Date) => scale * increase(f, t) : null;
-    const attr = attributeQuota(samples, evTs.map((ts) => ({ ts })), nonCodeIn ? { nonCode: nonCodeIn } : {});
+    const attr = attributeQuota(
+      samples,
+      evTs.map((ts) => ({ ts })),
+      nonCodeIn ? { nonCode: nonCodeIn, windowStart } : {},
+    );
     const nonCodePct = nonCodeIn ? nonCodeIn(windowStart, now) : null;
     // ★ 7d 有拆分时直接以拆分为准，不再叠差额法：7d 一格就是 1 个整点，真实用量停在 3.97 时
     //   安静时段里 0.05 点的聊天就能把计数推过整数线，差额法会把整整 1 点记到别处。
@@ -307,7 +439,7 @@ export async function computeCurrentWindows(
     const otherPct =
       scale === 1 && nonCodePct !== null
         ? Math.max(0, Math.min(w.utilizationPct, nonCodePct))
-        : fuseOtherPct(attr, nonCodePct, w.utilizationPct);
+        : fuseOtherPct(attr, nonCodeIn ? nonCode.quantumOf(w.windowKind) : null, w.utilizationPct);
     const usable = attributionIsUsable(attr) || (scale === 1 && nonCodePct !== null);
 
     const burnCurve = downsample(samples, maxBurnPoints).map((s) => ({
@@ -351,6 +483,7 @@ export async function computeCurrentWindows(
         other_pct: otherPct,
         local_utilization_pct: Math.max(0, w.utilizationPct - otherPct),
       },
+      full_cost_reference: w.windowKind === "five_hour" ? reference : null,
       projected_curve: buildProjectedCurve({
         now,
         windowEnd,

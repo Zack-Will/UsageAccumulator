@@ -151,7 +151,7 @@ describe("fuseOtherPct", () => {
     const r = attributeQuota(samples, [{ ts: min(2) }], { nonCode: () => 1.5 });
     expect(r.otherPctLowerBound).toBe(0);
     expect(r.nonCodeInAmbiguousPct).toBe(1.5);
-    expect(fuseOtherPct(r, 1.5, 14)).toBe(1.5);
+    expect(fuseOtherPct(r, 0, 14)).toBe(1.5);
   });
 
   it("安静时段别的机器在跑 Code：拆分看不见，差额法补上；两者重叠部分不重复算", () => {
@@ -164,12 +164,41 @@ describe("fuseOtherPct", () => {
     const r = attributeQuota(samples, [{ ts: min(8) }], { nonCode: chat, quietLeadMs: 4 * 60_000 });
     expect(r.otherPctLowerBound).toBe(3);
     expect(r.nonCodeInAmbiguousPct).toBe(0.5);
-    // 拆分合计 1.5；差额法 3 + 判不了区间里的 0.5 = 3.5
-    expect(fuseOtherPct(r, 1.5, 15)).toBe(3.5);
+    // 差额法 3 + 判不了区间里的 0.5 = 3.5（安静区间里那 1 点聊天已在差额法里，不重复算）
+    expect(fuseOtherPct(r, 0, 15)).toBe(3.5);
   });
 
-  it("不超过官方百分比本身", () => {
-    const r = attributeQuota([{ ts: min(0), pct: 1 }], []);
-    expect(fuseOtherPct(r, 4, 1)).toBe(1);
+  it("窗口开头没采到的部分：拆分可以认领，但不超过那段的上升", () => {
+    const r = attributeQuota([{ ts: min(10), pct: 1 }], [], { nonCode: () => 4, windowStart: min(0) });
+    expect(r.unobservedPct).toBe(1);
+    expect(r.nonCodeInUnobservedPct).toBe(1);
+    expect(fuseOtherPct(r, 0, 1)).toBe(1);
+  });
+
+  it("份额跳格那段 5h 一动没动：一点都不算（2026-10-03 线上：7% 的窗口记了 4 点非 Code）", () => {
+    const samples = [
+      { ts: min(0), pct: 2 },
+      { ts: min(5), pct: 2 }, // Cowork 份额 1→2：折成 5h ≈ 3.4 点，但 5h 没涨
+      { ts: min(10), pct: 3 }, // 本地在跑 Code
+    ];
+    const tick = (f: Date) => (f.getTime() === min(0).getTime() ? 3.4 : 0);
+    const r = attributeQuota(samples, [{ ts: min(4) }, { ts: min(9) }], { nonCode: tick });
+    expect(r.nonCodeInAmbiguousPct).toBe(0);
+    expect(fuseOtherPct(r, 3.4, 3)).toBe(0);
+  });
+
+  it("不到一格的拆分增量当取整噪声；超过一格的部分才认", () => {
+    const samples = [
+      { ts: min(0), pct: 10 },
+      { ts: min(5), pct: 14 },
+      { ts: min(10), pct: 18 },
+    ];
+    const events = [{ ts: min(4) }, { ts: min(9) }];
+    const small = attributeQuota(samples, events, { nonCode: () => 1 });
+    expect(small.nonCodeInAmbiguousPct).toBe(2);
+    expect(fuseOtherPct(small, 3.4, 18)).toBe(0);
+    // 每段都被拆分认领 3 点（各自不超过该段的 +4）：合计 6，扣一格 3.4 → 2.6
+    const big = attributeQuota(samples, events, { nonCode: () => 3 });
+    expect(fuseOtherPct(big, 3.4, 18)).toBeCloseTo(2.6);
   });
 });
