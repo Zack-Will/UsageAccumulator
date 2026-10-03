@@ -205,6 +205,11 @@ Idempotency-Key: <批次内容的 sha256 前 32 位>
       "non_code_pct": 2.6,                      // 官方拆分的非 Code 用量，折成本窗口刻度；拿不到为 null
       "other_pct": 5.1,                         // 最佳估计：7d = non_code_pct；5h = 两者合成；没有拆分 = 下界
       "local_utilization_pct": 56.9             // = utilization_pct − other_pct，「满额约」的分母
+    },
+    "full_cost_reference": {                    // 只有 five_hour；没有合格的历史窗口时为 null
+      "usd": 80.0,                              // 最近 ≤8 个「本地占比 ≥ 30%」已结束窗口的「已花 ÷ 本地占比」中位数
+      "windows": 5,
+      "partial_output_events": 1453             // > 0：其中有事件的最终输出没写进 JSONL，usd 偏低
     }
   }],
   "products": {                                 // 官方「本周按产品」拆分；team 组织没有，为 null
@@ -223,8 +228,12 @@ Idempotency-Key: <批次内容的 sha256 前 32 位>
 | 窗口 | `other_pct` 怎么来 |
 |---|---|
 | 7d，有拆分 | 直接等于 `non_code_pct`。7d 一格就是 1 个整点，安静时段里零点几的聊天就能把计数推过整数线，差额法会把整点记到别处 |
-| 5h，有拆分 | `max(non_code_pct, 差额法下界 + 拆分在「判不了」区间里的部分)`。5h 没有官方拆分，`non_code_pct` = 周刻度的非 Code 增量 × 历史估出的 5h/7d 刻度比（Max 5x 实测约 9.4） |
+| 5h，有拆分 | `差额法下界 + max(0, 拆分在「判不了」区间与窗口开头的部分 − 一格)`。拆分**逐区间以该区间 5h 的实际上升为上限**，不用 `non_code_pct` 总量；「一格」= 份额跳 1% 折成 5h 的点数（7d 已用 × 1% × 刻度比），小于一格的变化当取整噪声。5h 没有官方拆分，`non_code_pct` = 周刻度的非 Code 增量 × 历史估出的 5h/7d 刻度比（Max 5x 14 天平均约 9.4，但随负载变：主线约 8.5、子代理约 12），仅供参考 |
 | 没有拆分（team 组织） | 等于 `other_pct_lower_bound`，与以前一致 |
+
+> 2026-10-03：7d 用到 36% 时 Cowork 份额 1→2，折成 5h 是 3.4 点，那段 5h 一动没动；旧公式 `max(non_code_pct, …)` 仍把 7% 的窗口记成 4 点非 Code，「满额约」外推出 $302。
+
+**「满额约」**：前端按 `已花 ÷ local_utilization_pct` 外推；本地占比 < 20% 时改用 `full_cost_reference`（弱化显示）——分母只有几个点时取整与归属误差在 ±20% 以上。
 
 周刻度的非 Code 累计量要先做单调拟合（PAVA）再相减：份额是整数，Code 在涨、聊天没动时份额会被稀释，直接相减会得到负数。
 

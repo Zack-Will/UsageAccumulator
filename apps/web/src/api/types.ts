@@ -116,6 +116,20 @@ export interface WindowState {
   stale: boolean;
   metrics: OverlapMetrics;
   attribution: Attribution;
+  /**
+   * 「满额约」的历史参考（只有 five_hour）：最近若干个本地占比 ≥ 30% 的已结束窗口里，
+   * 「已花 ÷ 本地占比」的中位数。当前窗口用量太小、外推不可信时用它。
+   * 旧服务端不带 → 缺省按 null。
+   */
+  full_cost_reference?: FullCostReference | null;
+}
+
+export interface FullCostReference {
+  usd: number;
+  /** 参与的窗口数 */
+  windows: number;
+  /** > 0：这些窗口里有事件的最终输出量没写进 JSONL，usd 偏低 */
+  partial_output_events: number;
 }
 
 /**

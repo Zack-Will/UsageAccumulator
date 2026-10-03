@@ -299,6 +299,16 @@ export class PgStore implements Store {
    * 非 Anthropic 模型（公司 Mac 上实测到 qwen3.7-plus）。那些 token 不吃 Claude 额度，
    * 算进来会让「这段时间本地有动静」在实际没动静时也成立，把别处的消耗吞掉。
    */
+  async quotaWindowResets(profileId: string, windowKind: string, since: Date, until: Date): Promise<Date[]> {
+    const rows = await this.sql<{ reset: Date }[]>`
+      SELECT DISTINCT to_timestamp(round(extract(epoch FROM resets_at) / 600) * 600) AS reset
+      FROM quota_snapshots
+      WHERE profile_id = ${profileId} AND window_kind = ${windowKind} AND resets_at IS NOT NULL
+        AND captured_at >= ${since} AND captured_at < ${until}
+      ORDER BY 1`;
+    return rows.map((r) => (r.reset instanceof Date ? r.reset : new Date(String(r.reset))));
+  }
+
   async quotaBreakdowns(profileId: string, since: Date): Promise<QuotaBreakdownRow[]> {
     // raw 是整份响应、每个窗口一行各存一份；只取 seven_day 那行就够了
     const rows = await this.sql<Record<string, unknown>[]>`

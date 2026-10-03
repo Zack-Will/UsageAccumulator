@@ -53,6 +53,11 @@ export interface AttributionOptions {
    * 就能拆出一部分：本地有活动的同时在聊天，只看时间戳是分不开的。
    */
   nonCode?: (from: Date, to: Date) => number;
+  /**
+   * 窗口起点。给了它，窗口开头到第一个采样点之间（unobservedPct）也能按拆分认领一部分，
+   * 同样以那段的上升为上限。
+   */
+  windowStart?: Date;
 }
 
 export interface AttributionResult {
@@ -73,6 +78,8 @@ export interface AttributionResult {
   ambiguousPct: number;
   /** 判不了的那些区间里，按官方拆分属于非 Code 的部分（逐区间以该区间的上升为上限）；没给 nonCode 时恒为 0 */
   nonCodeInAmbiguousPct: number;
+  /** 窗口开头没采到的那段里，按官方拆分属于非 Code 的部分（以 unobservedPct 为上限）；没给 nonCode / windowStart 时恒为 0 */
+  nonCodeInUnobservedPct: number;
   /** 支撑下界的安静区间数（有上升且确定无本地活动）*/
   quietSpans: number;
   /** 评估过的相邻采样对总数；为 0 说明这个窗口压根没采到东西 */
@@ -88,6 +95,7 @@ export const EMPTY_ATTRIBUTION: AttributionResult = {
   otherPctLowerBound: 0,
   ambiguousPct: 0,
   nonCodeInAmbiguousPct: 0,
+  nonCodeInUnobservedPct: 0,
   quietSpans: 0,
   hasSamplingGap: false,
 };
@@ -118,6 +126,9 @@ export function attributeQuota(
   if (s.length === 0) return out;
   // 窗口开头到第一个采样点之间的消耗：看不见，只能承认看不见
   out.unobservedPct = s[0]!.pct > 0 ? s[0]!.pct : 0;
+  if (opts.nonCode && opts.windowStart && out.unobservedPct > 0 && s[0]!.ts > opts.windowStart) {
+    out.nonCodeInUnobservedPct = Math.min(out.unobservedPct, Math.max(0, opts.nonCode(opts.windowStart, s[0]!.ts)));
+  }
   if (s.length < 2) return out;
 
   for (let i = 1; i < s.length; i++) {
@@ -193,15 +204,22 @@ export function localPctUpperBound(observedPct: number, r: AttributionResult): n
  *   · 差额法：安静区间里的上升 —— 什么来源都算（聊天、没装探针的机器），但只看得见安静时段；
  *   · 官方拆分：非 Code 产品的用量 —— 任何时段都看得见，但看不见别的机器上的 Code。
  *
- * 两者在「安静时段的聊天」上重叠，所以不能直接相加。取
- *     max( 拆分总量,  差额法下界 + 拆分在「判不了」区间里的那部分 )
- * 前一项补上差额法看不见的（边写代码边聊天、窗口开头没采到的），
- * 后一项补上拆分看不见的（安静时段里别的机器在跑 Code）。
+ * 两者在「安静时段的聊天」上重叠，所以取
+ *     差额法下界 + max(0, 拆分在「判不了」区间与窗口开头的部分 − 一格量化误差)
  *
- * nonCodePct 为 null（team 组织没有拆分、5h 刻度比还估不出来）时就是纯差额法。
- * ★ 拆分是整数份额折出来的估计，所以合成后**不再是严格下界**，只是更接近真值。
+ * ★ 拆分只能**逐区间、以该区间本窗口的实际上升为上限**地用，不能拿它的窗口总量：
+ *   份额是「占本周已用」的整数百分比，跳一格 = 7d 已用 × 1%，折到 5h 再乘刻度比（≈ 9.4）。
+ *   7d 用到 36% 时一格就是 3.4 个 5h 点。2026-10-03 线上：Cowork 份额 1→2 那一刻 5h 一动没动，
+ *   旧公式 max(拆分总量, …) 仍记了 4 个点非 Code，7% 的窗口里本地只剩 3%，满额约冲到 $302。
+ *
+ * ★ `quantum` = 份额跳一格折成本窗口的点数。窗口内拆分的增量是两次取整之差，误差可达一格，
+ *   所以先扣掉一格再认：小于一格的变化当取整噪声。拿不准时归回本地，满额约只会偏低。
+ *
+ * quantum 为 null（team 组织没有拆分、5h 刻度比还估不出来）时就是纯差额法。
+ * 拆分是整数份额折出来的估计，所以合成后**不再是严格下界**，只是更接近真值。
  */
-export function fuseOtherPct(r: AttributionResult, nonCodePct: number | null, utilizationPct: number): number {
-  const v = nonCodePct === null ? r.otherPctLowerBound : Math.max(nonCodePct, r.otherPctLowerBound + r.nonCodeInAmbiguousPct);
-  return Math.max(0, Math.min(utilizationPct, v));
+export function fuseOtherPct(r: AttributionResult, quantum: number | null, utilizationPct: number): number {
+  const fromBreakdown =
+    quantum === null ? 0 : Math.max(0, r.nonCodeInAmbiguousPct + r.nonCodeInUnobservedPct - Math.max(0, quantum));
+  return Math.max(0, Math.min(utilizationPct, r.otherPctLowerBound + fromBreakdown));
 }

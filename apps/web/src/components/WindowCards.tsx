@@ -45,6 +45,9 @@ export const isActiveWindow = (w: WindowState): boolean => Number.isFinite(msOf(
  * 整张卡就被当成噪音筛掉了 —— 顶部只剩两张，下一张卡被栅格自动排版挤上第一行，
  * 第二行凭空空出一块。而「5h 窗口空闲」本身就是一条有用的信息。
  */
+/** 本地占比低于它时「满额约」不外推、改用历史参考：20 点里 ±0.5 的取整误差约 2.5%，再小就不可信了 */
+const FULL_COST_MIN_LOCAL_PCT = 20;
+
 export const CORE_WINDOW_KINDS = ["five_hour", "seven_day", "seven_day_fable", "seven_day_opus"] as const;
 
 export function displayWindows(all: readonly WindowState[]): WindowState[] {
@@ -215,8 +218,17 @@ export function WindowCard({
    */
   const attr = w.attribution;
   const localPct = attr ? attr.local_utilization_pct : w.utilization_pct;
-  const fullWindowCost =
+  const extrapolated =
     cost?.usd != null && cost.usd > 0 && localPct > 0 ? cost.usd / (localPct / 100) : null;
+  /**
+   * ★ 本地占比太小时不外推，改用历史参考（服务端 full_cost_reference）。
+   * 分母只有几个点时，整数取整（±0.5）加上一两个归属判不清的点，外推误差在 ±20% 以上 ——
+   * 2026-10-03 一个 7% 的 5h 窗口外推出 $302，而这个订阅 5h 满额通常在 $100 上下。
+   */
+  const ref = w.full_cost_reference ?? null;
+  const useRef = ref !== null && localPct < FULL_COST_MIN_LOCAL_PCT;
+  const fullWindowCost = useRef ? ref.usd : extrapolated;
+  const fullWindowPartial = useRef ? ref.partial_output_events : (cost?.partialOutputEvents ?? 0);
   /** 只在真的测到别处的消耗时才占一行字；测到 0 就什么都不说。空闲窗口里没有「窗口内」 */
   const otherPct = idle ? 0 : (attr?.other_pct ?? attr?.other_pct_lower_bound ?? 0);
   /**
@@ -308,11 +320,12 @@ export function WindowCard({
           </div>
           <div className="quota__money-col quota__money-col--end">
             <span className="quota__k">满额约</span>
-            <span className="quota__v quota__v--strong">
+            <span
+              className={`quota__v quota__v--strong${useRef ? " quota__v--ref" : ""}`}
+              title={useRef ? `最近 ${ref.windows} 个窗口的中位数` : undefined}
+            >
               {/* 已花是下界（有事件的最终输出量没写进 JSONL）→ 满额约也是下界 */}
-              {fullWindowCost !== null
-                ? `${(cost?.partialOutputEvents ?? 0) > 0 ? "≥" : ""}$${fullWindowCost.toFixed(0)}`
-                : "—"}
+              {fullWindowCost !== null ? `${fullWindowPartial > 0 ? "≥" : ""}$${fullWindowCost.toFixed(0)}` : "—"}
             </span>
             {/* 不到 1% 时留一位小数，别四舍五入成「0% 非 Code」 */}
             {otherShare >= 0.05 ? (
