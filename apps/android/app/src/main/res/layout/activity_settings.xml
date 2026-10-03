@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/ua_bg"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingHorizontal="24dp"
+        android:paddingVertical="16dp">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/settings_title"
+            android:textColor="@color/ua_text"
+            android:textSize="24sp"
+            android:textStyle="bold" />
+
+        <TextView
+            style="@style/UaField"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:labelFor="@+id/server"
+            android:text="服务器地址" />
+
+        <EditText
+            android:id="@+id/server"
+            style="@style/UaInput"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="https://"
+            android:importantForAutofill="no"
+            android:inputType="textUri" />
+
+        <TextView
+            style="@style/UaField"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:labelFor="@+id/token"
+            android:text="访问 token（可选）" />
+
+        <EditText
+            android:id="@+id/token"
+            style="@style/UaInput"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:importantForAutofill="no"
+            android:inputType="textPassword" />
+
+        <TextView
+            android:id="@+id/message"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:textColor="@color/ua_danger"
+            android:textSize="13sp"
+            android:visibility="gone" />
+
+        <Button
+            android:id="@+id/save"
+            style="@style/UaButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="保存" />
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:layout_marginVertical="16dp"
+            android:background="@color/ua_border" />
+
+        <Button
+            android:id="@+id/pin_widget"
+            style="@style/UaButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="添加卡片小部件" />
+
+        <Button
+            android:id="@+id/pin_list"
+            style="@style/UaButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="添加列表小部件" />
+
+        <Button
+            android:id="@+id/logout"
+            style="@style/UaButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="退出登录" />
+    </LinearLayout>
+</ScrollView>

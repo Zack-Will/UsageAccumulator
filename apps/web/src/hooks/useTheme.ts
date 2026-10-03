@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { THEME_CLASS, type ThemeName } from "@ua/tokens";
+import { syncAppTheme } from "../app-bridge";
 
 const LS_KEY = "ua.theme";
 
@@ -21,6 +22,7 @@ export function useTheme(): [ThemeName, (t: ThemeName) => void] {
     el.classList.remove(THEME_CLASS.dark, THEME_CLASS.light);
     el.classList.add(THEME_CLASS[theme]);
     el.style.colorScheme = theme;
+    syncAppTheme(theme);
     try {
       globalThis.localStorage?.setItem(LS_KEY, theme);
     } catch {

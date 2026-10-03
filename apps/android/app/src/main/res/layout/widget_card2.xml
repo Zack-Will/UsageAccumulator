@@ -1,0 +1,340 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  由 apps/android/scripts/gen-widget-layouts.py 生成（卡片 ×2 · compact），不要手改。
+  layout/ 与 layout-night/ 各一份，只差文字位图的浅色 / 深色哪张可见。
+  小米规范：根布局必须是 @android:id/background，且背景不能全透明。
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@android:id/background"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/widget_bg"
+    android:gravity="center_vertical"
+    android:orientation="horizontal"
+    android:padding="10dp">
+
+    <LinearLayout
+        android:id="@+id/c0"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:orientation="vertical">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <FrameLayout
+                android:id="@+id/c0_label"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1">
+                <ImageView android:id="@+id/c0_label_d" android:layout_width="wrap_content" android:layout_height="wrap_content" android:scaleType="matrix" />
+                <ImageView android:id="@+id/c0_label_n" android:layout_width="wrap_content" android:layout_height="wrap_content" android:scaleType="matrix" android:visibility="gone" />
+            </FrameLayout>
+
+            <FrameLayout
+                android:id="@+id/c0_status"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="6dp">
+                <ImageView android:id="@+id/c0_status_d" android:layout_width="wrap_content" android:layout_height="wrap_content" android:scaleType="matrix" />
+                <ImageView android:id="@+id/c0_status_n" android:layout_width="wrap_content" android:layout_height="wrap_content" android:scaleType="matrix" android:visibility="gone" />
+            </FrameLayout>
+        </LinearLayout>
+
+        <!-- 底边对齐：大数字位图在基线下留了与「预计」同样的高度，底边齐即基线齐 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:gravity="bottom"
+            android:orientation="horizontal">
+
+            <FrameLayout
+                android:id="@+id/c0_pct"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content">
+                <ImageView android:id="@+id/c0_pct_d" android:layout_width="wrap_content" android:layout_height="wrap_content" android:scaleType="matrix" />
+                <ImageView android:id="@+id/c0_pct_n" android:layout_width="wrap_content" android:layout_height="wrap_content" android:scaleType="matrix" android:visibility="gone" />
+            </FrameLayout>
+
+            <FrameLayout
+                android:layout_width="0dp"
+                android:layout_height="1dp"
+                android:layout_weight="1" />
+
+            <LinearLayout
+                android:id="@+id/c0_proj"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:gravity="bottom"
+                android:orientation="horizontal">
+
+                <FrameLayout
+                    android:id="@+id/c0_proj_label"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginEnd="4dp">
+                    <ImageView android:id="@+id/c0_proj_label_d" android:layout_width="wrap_content" android:layout_height="wrap_content" android:scaleType="matrix" />
+                    <ImageView android:id="@+id/c0_proj_label_n" android:layout_width="wrap_content" android:layout_height="wrap_content" android:scaleType="matrix" android:visibility="gone" />
+                </FrameLayout>
+
+                <FrameLayout
+                    android:id="@+id/c0_proj_val"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content">
+                    <ImageView android:id="@+id/c0_proj_val_d" android:layout_width="wrap_content" android:layout_height="wrap_content" android:scaleType="matrix" />
+                    <ImageView android:id="@+id/c0_proj_val_n" android:layout_width="wrap_content" android:layout_height="wrap_content" android:scaleType="matrix" android:visibility="gone" />
+                </FrameLayout>
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- 额度条 + 比它高出一截的时间刻度（看板 .qbar / .qbar__pace） -->
+        <FrameLayout
+            android:layout_width="match_parent"
+            android:layout_height="12dp"
+            android:layout_marginTop="4dp">
+
+            <ProgressBar
+                android:id="@+id/c0_bar_ok"
+                style="@style/UaWidgetBar"
+                android:layout_width="match_parent"
+                android:layout_height="8dp"
+                android:layout_gravity="center_vertical"
+                android:maxHeight="8dp"
+                android:minHeight="8dp"
+                android:progressDrawable="@drawable/qbar_ok"
+                android:visibility="gone" />
+            <ProgressBar
+                android:id="@+id/c0_bar_warn"
+                style="@style/UaWidgetBar"
+                android:layout_width="match_parent"
+                android:layout_height="8dp"
+                android:layout_gravity="center_vertical"
+                android:maxHeight="8dp"
+                android:minHeight="8dp"
+                android:progressDrawable="@drawable/qbar_warn"
+                android:visibility="gone" />
+            <ProgressBar
+                android:id="@+id/c0_bar_danger"
+                style="@style/UaWidgetBar"
+                android:layout_width="match_parent"
+                android:layout_height="8dp"
+                android:layout_gravity="center_vertical"
+                android:maxHeight="8dp"
+                android:minHeight="8dp"
+                android:progressDrawable="@drawable/qbar_danger"
+                android:visibility="gone" />
+            <ProgressBar
+                android:id="@+id/c0_bar_muted"
+                style="@style/UaWidgetBar"
+                android:layout_width="match_parent"
+                android:layout_height="8dp"
+                android:layout_gravity="center_vertical"
+                android:maxHeight="8dp"
+                android:minHeight="8dp"
+                android:progressDrawable="@drawable/qbar_muted"
+                android:visibility="gone" />
+
+            <ProgressBar
+                android:id="@+id/c0_pace"
+                style="@style/UaWidgetBar"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:maxHeight="12dp"
+                android:minHeight="12dp"
+                android:progressDrawable="@drawable/qbar_pace"
+                android:visibility="gone" />
+        </FrameLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <ImageView
+                android:id="@+id/c0_dot"
+                android:layout_width="6dp"
+                android:layout_height="6dp"
+                android:layout_marginEnd="6dp"
+                android:importantForAccessibility="no"
+                android:visibility="gone" />
+
+            <FrameLayout
+                android:id="@+id/c0_eta"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content">
+                <ImageView android:id="@+id/c0_eta_d" android:layout_width="wrap_content" android:layout_height="wrap_content" android:scaleType="matrix" />
+                <ImageView android:id="@+id/c0_eta_n" android:layout_width="wrap_content" android:layout_height="wrap_content" android:scaleType="matrix" android:visibility="gone" />
+            </FrameLayout>
+        </LinearLayout>
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/c1"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:layout_marginStart="20dp"
+        android:orientation="vertical">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <FrameLayout
+                android:id="@+id/c1_label"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1">
+                <ImageView android:id="@+id/c1_label_d" android:layout_width="wrap_content" android:layout_height="wrap_content" android:scaleType="matrix" />
+                <ImageView android:id="@+id/c1_label_n" android:layout_width="wrap_content" android:layout_height="wrap_content" android:scaleType="matrix" android:visibility="gone" />
+            </FrameLayout>
+
+            <FrameLayout
+                android:id="@+id/c1_status"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="6dp">
+                <ImageView android:id="@+id/c1_status_d" android:layout_width="wrap_content" android:layout_height="wrap_content" android:scaleType="matrix" />
+                <ImageView android:id="@+id/c1_status_n" android:layout_width="wrap_content" android:layout_height="wrap_content" android:scaleType="matrix" android:visibility="gone" />
+            </FrameLayout>
+        </LinearLayout>
+
+        <!-- 底边对齐：大数字位图在基线下留了与「预计」同样的高度，底边齐即基线齐 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:gravity="bottom"
+            android:orientation="horizontal">
+
+            <FrameLayout
+                android:id="@+id/c1_pct"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content">
+                <ImageView android:id="@+id/c1_pct_d" android:layout_width="wrap_content" android:layout_height="wrap_content" android:scaleType="matrix" />
+                <ImageView android:id="@+id/c1_pct_n" android:layout_width="wrap_content" android:layout_height="wrap_content" android:scaleType="matrix" android:visibility="gone" />
+            </FrameLayout>
+
+            <FrameLayout
+                android:layout_width="0dp"
+                android:layout_height="1dp"
+                android:layout_weight="1" />
+
+            <LinearLayout
+                android:id="@+id/c1_proj"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:gravity="bottom"
+                android:orientation="horizontal">
+
+                <FrameLayout
+                    android:id="@+id/c1_proj_label"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginEnd="4dp">
+                    <ImageView android:id="@+id/c1_proj_label_d" android:layout_width="wrap_content" android:layout_height="wrap_content" android:scaleType="matrix" />
+                    <ImageView android:id="@+id/c1_proj_label_n" android:layout_width="wrap_content" android:layout_height="wrap_content" android:scaleType="matrix" android:visibility="gone" />
+                </FrameLayout>
+
+                <FrameLayout
+                    android:id="@+id/c1_proj_val"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content">
+                    <ImageView android:id="@+id/c1_proj_val_d" android:layout_width="wrap_content" android:layout_height="wrap_content" android:scaleType="matrix" />
+                    <ImageView android:id="@+id/c1_proj_val_n" android:layout_width="wrap_content" android:layout_height="wrap_content" android:scaleType="matrix" android:visibility="gone" />
+                </FrameLayout>
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- 额度条 + 比它高出一截的时间刻度（看板 .qbar / .qbar__pace） -->
+        <FrameLayout
+            android:layout_width="match_parent"
+            android:layout_height="12dp"
+            android:layout_marginTop="4dp">
+
+            <ProgressBar
+                android:id="@+id/c1_bar_ok"
+                style="@style/UaWidgetBar"
+                android:layout_width="match_parent"
+                android:layout_height="8dp"
+                android:layout_gravity="center_vertical"
+                android:maxHeight="8dp"
+                android:minHeight="8dp"
+                android:progressDrawable="@drawable/qbar_ok"
+                android:visibility="gone" />
+            <ProgressBar
+                android:id="@+id/c1_bar_warn"
+                style="@style/UaWidgetBar"
+                android:layout_width="match_parent"
+                android:layout_height="8dp"
+                android:layout_gravity="center_vertical"
+                android:maxHeight="8dp"
+                android:minHeight="8dp"
+                android:progressDrawable="@drawable/qbar_warn"
+                android:visibility="gone" />
+            <ProgressBar
+                android:id="@+id/c1_bar_danger"
+                style="@style/UaWidgetBar"
+                android:layout_width="match_parent"
+                android:layout_height="8dp"
+                android:layout_gravity="center_vertical"
+                android:maxHeight="8dp"
+                android:minHeight="8dp"
+                android:progressDrawable="@drawable/qbar_danger"
+                android:visibility="gone" />
+            <ProgressBar
+                android:id="@+id/c1_bar_muted"
+                style="@style/UaWidgetBar"
+                android:layout_width="match_parent"
+                android:layout_height="8dp"
+                android:layout_gravity="center_vertical"
+                android:maxHeight="8dp"
+                android:minHeight="8dp"
+                android:progressDrawable="@drawable/qbar_muted"
+                android:visibility="gone" />
+
+            <ProgressBar
+                android:id="@+id/c1_pace"
+                style="@style/UaWidgetBar"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:maxHeight="12dp"
+                android:minHeight="12dp"
+                android:progressDrawable="@drawable/qbar_pace"
+                android:visibility="gone" />
+        </FrameLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <ImageView
+                android:id="@+id/c1_dot"
+                android:layout_width="6dp"
+                android:layout_height="6dp"
+                android:layout_marginEnd="6dp"
+                android:importantForAccessibility="no"
+                android:visibility="gone" />
+
+            <FrameLayout
+                android:id="@+id/c1_eta"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content">
+                <ImageView android:id="@+id/c1_eta_d" android:layout_width="wrap_content" android:layout_height="wrap_content" android:scaleType="matrix" />
+                <ImageView android:id="@+id/c1_eta_n" android:layout_width="wrap_content" android:layout_height="wrap_content" android:scaleType="matrix" android:visibility="gone" />
+            </FrameLayout>
+        </LinearLayout>
+    </LinearLayout>
+</LinearLayout>

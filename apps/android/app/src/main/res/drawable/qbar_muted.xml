@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  看板的额度条（.qbar）：轨道 + 浅色「重置时预计」段（secondaryProgress）+ 实色「已用」段（progress）。
+  用 scale 而不是 clip：clip 会把右端的圆头切平，scale 按比例缩放整条胶囊，圆头保留。
+  每种状态色一份 drawable，布局里四根条按状态只显示一根——不在运行时染色，深浅色由资源自动切换。
+-->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:id="@android:id/background">
+        <shape>
+            <corners android:radius="4dp" />
+            <solid android:color="@color/ua_ring_track" />
+        </shape>
+    </item>
+    <item android:id="@android:id/secondaryProgress">
+        <scale android:scaleGravity="left|fill_vertical" android:scaleWidth="100%">
+            <shape>
+                <corners android:radius="4dp" />
+                <solid android:color="@color/ua_muted_p" />
+            </shape>
+        </scale>
+    </item>
+    <item android:id="@android:id/progress">
+        <scale android:scaleGravity="left|fill_vertical" android:scaleWidth="100%">
+            <shape>
+                <corners android:radius="4dp" />
+                <solid android:color="@color/ua_muted_g" />
+            </shape>
+        </scale>
+    </item>
+</layer-list>

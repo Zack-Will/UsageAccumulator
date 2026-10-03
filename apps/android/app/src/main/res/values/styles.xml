@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.Ua" parent="@android:style/Theme.DeviceDefault.DayNight">
+        <item name="android:windowBackground">@color/ua_bg</item>
+        <item name="android:colorAccent">@color/ua_accent</item>
+        <item name="android:colorPrimary">@color/ua_accent</item>
+        <!-- 标题栏自己画：targetSdk 36 强制全面屏，系统标题栏会被状态栏压住 -->
+        <item name="android:windowActionBar">false</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
+
+    <style name="UaField">
+        <item name="android:textSize">13sp</item>
+        <item name="android:textColor">@color/ua_text_2</item>
+        <item name="android:layout_marginTop">20dp</item>
+    </style>
+
+    <style name="UaInput">
+        <item name="android:textSize">16sp</item>
+        <item name="android:textColor">@color/ua_text</item>
+        <item name="android:singleLine">true</item>
+    </style>
+
+    <style name="UaButton" parent="@android:style/Widget.DeviceDefault.Button.Borderless.Colored">
+        <item name="android:textColor">@color/ua_accent</item>
+    </style>
+
+    <!-- 小部件：对齐 claude.css 的 .card__title、.num（xl 档）、.quota__eta。字号按密度写在生成的布局里 -->
+    <style name="UaWidgetTitle">
+        <item name="android:includeFontPadding">false</item>
+        <item name="android:textColor">@color/ua_text_2</item>
+        <item name="android:fontFamily">sans-serif-medium</item>
+        <item name="android:maxLines">1</item>
+        <item name="android:ellipsize">end</item>
+    </style>
+
+    <style name="UaWidgetProjLabel">
+        <item name="android:textColor">@color/ua_text_3</item>
+        <item name="android:maxLines">1</item>
+    </style>
+
+    <style name="UaWidgetProjValue">
+        <item name="android:textColor">@color/ua_text_2</item>
+        <item name="android:fontFamily">sans-serif-medium</item>
+        <item name="android:fontFeatureSettings">tnum</item>
+        <item name="android:maxLines">1</item>
+    </style>
+
+    <style name="UaWidgetEta">
+        <item name="android:includeFontPadding">false</item>
+        <item name="android:textColor">@color/ua_text_3</item>
+        <item name="android:fontFeatureSettings">tnum</item>
+        <item name="android:maxLines">1</item>
+        <item name="android:ellipsize">end</item>
+    </style>
+
+    <style name="UaWidgetStatus">
+        <item name="android:includeFontPadding">false</item>
+        <item name="android:textColor">@color/ua_text_3</item>
+        <item name="android:fontFeatureSettings">tnum</item>
+        <item name="android:maxLines">1</item>
+        <item name="android:ellipsize">end</item>
+    </style>
+
+    <!-- 父样式选不带着色的老 Horizontal：Material 版会按主题色给 progress 层染色，盖掉我们自己的状态色 -->
+    <style name="UaWidgetBar" parent="@android:style/Widget.ProgressBar.Horizontal">
+        <item name="android:max">100</item>
+        <item name="android:indeterminate">false</item>
+        <item name="android:indeterminateOnly">false</item>
+        <item name="android:minHeight">8dp</item>
+        <item name="android:maxHeight">8dp</item>
+    </style>
+</resources>

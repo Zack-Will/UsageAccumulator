@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">UsageAccumulator</string>
+    <string name="settings_title">设置</string>
+    <string name="widget_small_label">额度</string>
+    <string name="widget_wide_label">额度 · 双卡</string>
+    <string name="widget_list_label">额度 · 列表</string>
+    <string name="widget_small_desc">最吃紧的窗口</string>
+    <string name="widget_wide_desc">5h / 7d 窗口</string>
+    <string name="widget_list_desc">全部窗口</string>
+</resources>

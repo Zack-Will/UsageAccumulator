@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 长按桌面图标的「设置」：不依赖网页端有没有部署带设置按钮的版本 -->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:enabled="true"
+        android:icon="@drawable/ic_launcher_fg"
+        android:shortcutId="settings"
+        android:shortcutShortLabel="@string/settings_title">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetClass="space.zackwill.ua.SettingsActivity"
+            android:targetPackage="space.zackwill.ua" />
+    </shortcut>
+</shortcuts>

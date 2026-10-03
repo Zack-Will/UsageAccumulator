@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  App 升级后先推一次这个空布局，再推真实布局（见 PackageReplacedReceiver）。
+  小米桌面在布局 id 不变时不重新加载，而是把新版的指令套到旧版已经画好的界面上；
+  升级后控件 id 全变了，指令落到错的控件上，就出现新旧两版叠在一起、字体一半没换的样子。
+-->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@android:id/background"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/widget_bg" />

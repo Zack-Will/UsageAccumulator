@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 取自 apps/web/src/styles/claude.css（:root / .t-dark），改那边时同步这里 -->
+<resources>
+    <color name="ua_bg">#1F1E1C</color>
+    <color name="ua_surface">#262624</color>
+    <color name="ua_border">#393834</color>
+    <color name="ua_ring_track">#383733</color>
+    <color name="ua_track">#2B2A27</color>
+    <color name="ua_text">#F5F4EE</color>
+    <color name="ua_text_2">#CFCCC2</color>
+    <color name="ua_text_3">#A6A399</color>
+    <color name="ua_text_4">#8F8C83</color>
+    <color name="ua_ok">#A9BE8C</color>
+    <color name="ua_warn">#E6B46F</color>
+    <color name="ua_danger">#EF8F82</color>
+    <color name="ua_ok_g">#93AC70</color>
+    <color name="ua_warn_g">#E39A4F</color>
+    <color name="ua_danger_g">#E26A55</color>
+    <color name="ua_accent">#D97757</color>
+    <color name="ua_ok_p">#5293AC70</color>
+    <color name="ua_warn_p">#52E39A4F</color>
+    <color name="ua_danger_p">#52E26A55</color>
+    <color name="ua_muted_g">#8F8C83</color>
+    <color name="ua_muted_p">#528F8C83</color>
+    <color name="ua_pace">#8CF5F4EE</color>
+</resources>

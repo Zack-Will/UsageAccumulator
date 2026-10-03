@@ -1,0 +1,12 @@
+[versions]
+agp = "9.2.1"
+junit = "4.13.2"
+json = "20250517"
+
+[libraries]
+junit = { group = "junit", name = "junit", version.ref = "junit" }
+# 单测跑在 JVM 上，android.jar 里的 org.json 只是桩，要换成真实现
+json = { group = "org.json", name = "json", version.ref = "json" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }

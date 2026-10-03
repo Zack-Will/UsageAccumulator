@@ -1,0 +1,542 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  由 apps/android/scripts/gen-widget-layouts.py 生成（列表 · roomy），不要手改。
+  layout/ 与 layout-night/ 各一份，只差文字位图的浅色 / 深色哪张可见。
+  小米规范：根布局必须是 @android:id/background，且背景不能全透明。
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@android:id/background"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/widget_bg"
+    android:orientation="vertical"
+    android:padding="16dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <FrameLayout
+            android:id="@+id/list_title"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1">
+            <ImageView android:id="@+id/list_title_d" android:layout_width="wrap_content" android:layout_height="wrap_content" android:scaleType="matrix" android:visibility="gone" />
+            <ImageView android:id="@+id/list_title_n" android:layout_width="wrap_content" android:layout_height="wrap_content" android:scaleType="matrix" />
+        </FrameLayout>
+
+        <FrameLayout
+            android:id="@+id/list_status"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content">
+            <ImageView android:id="@+id/list_status_d" android:layout_width="wrap_content" android:layout_height="wrap_content" android:scaleType="matrix" android:visibility="gone" />
+            <ImageView android:id="@+id/list_status_n" android:layout_width="wrap_content" android:layout_height="wrap_content" android:scaleType="matrix" />
+        </FrameLayout>
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:orientation="vertical">
+
+        <LinearLayout
+            android:id="@+id/r0"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_marginTop="6dp"
+            android:layout_weight="1"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:visibility="gone">
+
+            <FrameLayout
+                android:layout_width="60dp"
+                android:layout_height="wrap_content">
+
+                <FrameLayout
+                    android:id="@+id/r0_label"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="start|center_vertical">
+                    <ImageView android:id="@+id/r0_label_d" android:layout_width="wrap_content" android:layout_height="wrap_content" android:scaleType="matrix" android:visibility="gone" />
+                    <ImageView android:id="@+id/r0_label_n" android:layout_width="wrap_content" android:layout_height="wrap_content" android:scaleType="matrix" />
+                </FrameLayout>
+            </FrameLayout>
+
+            <FrameLayout
+                android:layout_width="54dp"
+                android:layout_height="wrap_content">
+
+                <FrameLayout
+                    android:id="@+id/r0_pct"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="start|center_vertical">
+                    <ImageView android:id="@+id/r0_pct_d" android:layout_width="wrap_content" android:layout_height="wrap_content" android:scaleType="matrix" android:visibility="gone" />
+                    <ImageView android:id="@+id/r0_pct_n" android:layout_width="wrap_content" android:layout_height="wrap_content" android:scaleType="matrix" />
+                </FrameLayout>
+            </FrameLayout>
+
+            <FrameLayout
+                android:layout_width="0dp"
+                android:layout_height="14dp"
+                android:layout_weight="1">
+
+                <ProgressBar
+                    android:id="@+id/r0_bar_ok"
+                    style="@style/UaWidgetBar"
+                    android:layout_width="match_parent"
+                    android:layout_height="8dp"
+                    android:layout_gravity="center_vertical"
+                    android:maxHeight="8dp"
+                    android:minHeight="8dp"
+                    android:progressDrawable="@drawable/qbar_ok"
+                    android:visibility="gone" />
+                <ProgressBar
+                    android:id="@+id/r0_bar_warn"
+                    style="@style/UaWidgetBar"
+                    android:layout_width="match_parent"
+                    android:layout_height="8dp"
+                    android:layout_gravity="center_vertical"
+                    android:maxHeight="8dp"
+                    android:minHeight="8dp"
+                    android:progressDrawable="@drawable/qbar_warn"
+                    android:visibility="gone" />
+                <ProgressBar
+                    android:id="@+id/r0_bar_danger"
+                    style="@style/UaWidgetBar"
+                    android:layout_width="match_parent"
+                    android:layout_height="8dp"
+                    android:layout_gravity="center_vertical"
+                    android:maxHeight="8dp"
+                    android:minHeight="8dp"
+                    android:progressDrawable="@drawable/qbar_danger"
+                    android:visibility="gone" />
+                <ProgressBar
+                    android:id="@+id/r0_bar_muted"
+                    style="@style/UaWidgetBar"
+                    android:layout_width="match_parent"
+                    android:layout_height="8dp"
+                    android:layout_gravity="center_vertical"
+                    android:maxHeight="8dp"
+                    android:minHeight="8dp"
+                    android:progressDrawable="@drawable/qbar_muted"
+                    android:visibility="gone" />
+
+                <ProgressBar
+                    android:id="@+id/r0_pace"
+                    style="@style/UaWidgetBar"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:maxHeight="14dp"
+                    android:minHeight="14dp"
+                    android:progressDrawable="@drawable/qbar_pace"
+                    android:visibility="gone" />
+            </FrameLayout>
+
+            <LinearLayout
+                android:id="@+id/r0_eta_box"
+                android:layout_width="96dp"
+                android:layout_height="wrap_content"
+                android:gravity="end|center_vertical"
+                android:orientation="horizontal">
+
+                <ImageView
+                    android:id="@+id/r0_dot"
+                    android:layout_width="6dp"
+                    android:layout_height="6dp"
+                    android:layout_marginEnd="6dp"
+                    android:importantForAccessibility="no"
+                    android:visibility="gone" />
+
+                <FrameLayout
+                    android:id="@+id/r0_eta"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content">
+                    <ImageView android:id="@+id/r0_eta_d" android:layout_width="wrap_content" android:layout_height="wrap_content" android:scaleType="matrix" android:visibility="gone" />
+                    <ImageView android:id="@+id/r0_eta_n" android:layout_width="wrap_content" android:layout_height="wrap_content" android:scaleType="matrix" />
+                </FrameLayout>
+            </LinearLayout>
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/r1"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_marginTop="6dp"
+            android:layout_weight="1"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:visibility="gone">
+
+            <FrameLayout
+                android:layout_width="60dp"
+                android:layout_height="wrap_content">
+
+                <FrameLayout
+                    android:id="@+id/r1_label"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="start|center_vertical">
+                    <ImageView android:id="@+id/r1_label_d" android:layout_width="wrap_content" android:layout_height="wrap_content" android:scaleType="matrix" android:visibility="gone" />
+                    <ImageView android:id="@+id/r1_label_n" android:layout_width="wrap_content" android:layout_height="wrap_content" android:scaleType="matrix" />
+                </FrameLayout>
+            </FrameLayout>
+
+            <FrameLayout
+                android:layout_width="54dp"
+                android:layout_height="wrap_content">
+
+                <FrameLayout
+                    android:id="@+id/r1_pct"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="start|center_vertical">
+                    <ImageView android:id="@+id/r1_pct_d" android:layout_width="wrap_content" android:layout_height="wrap_content" android:scaleType="matrix" android:visibility="gone" />
+                    <ImageView android:id="@+id/r1_pct_n" android:layout_width="wrap_content" android:layout_height="wrap_content" android:scaleType="matrix" />
+                </FrameLayout>
+            </FrameLayout>
+
+            <FrameLayout
+                android:layout_width="0dp"
+                android:layout_height="14dp"
+                android:layout_weight="1">
+
+                <ProgressBar
+                    android:id="@+id/r1_bar_ok"
+                    style="@style/UaWidgetBar"
+                    android:layout_width="match_parent"
+                    android:layout_height="8dp"
+                    android:layout_gravity="center_vertical"
+                    android:maxHeight="8dp"
+                    android:minHeight="8dp"
+                    android:progressDrawable="@drawable/qbar_ok"
+                    android:visibility="gone" />
+                <ProgressBar
+                    android:id="@+id/r1_bar_warn"
+                    style="@style/UaWidgetBar"
+                    android:layout_width="match_parent"
+                    android:layout_height="8dp"
+                    android:layout_gravity="center_vertical"
+                    android:maxHeight="8dp"
+                    android:minHeight="8dp"
+                    android:progressDrawable="@drawable/qbar_warn"
+                    android:visibility="gone" />
+                <ProgressBar
+                    android:id="@+id/r1_bar_danger"
+                    style="@style/UaWidgetBar"
+                    android:layout_width="match_parent"
+                    android:layout_height="8dp"
+                    android:layout_gravity="center_vertical"
+                    android:maxHeight="8dp"
+                    android:minHeight="8dp"
+                    android:progressDrawable="@drawable/qbar_danger"
+                    android:visibility="gone" />
+                <ProgressBar
+                    android:id="@+id/r1_bar_muted"
+                    style="@style/UaWidgetBar"
+                    android:layout_width="match_parent"
+                    android:layout_height="8dp"
+                    android:layout_gravity="center_vertical"
+                    android:maxHeight="8dp"
+                    android:minHeight="8dp"
+                    android:progressDrawable="@drawable/qbar_muted"
+                    android:visibility="gone" />
+
+                <ProgressBar
+                    android:id="@+id/r1_pace"
+                    style="@style/UaWidgetBar"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:maxHeight="14dp"
+                    android:minHeight="14dp"
+                    android:progressDrawable="@drawable/qbar_pace"
+                    android:visibility="gone" />
+            </FrameLayout>
+
+            <LinearLayout
+                android:id="@+id/r1_eta_box"
+                android:layout_width="96dp"
+                android:layout_height="wrap_content"
+                android:gravity="end|center_vertical"
+                android:orientation="horizontal">
+
+                <ImageView
+                    android:id="@+id/r1_dot"
+                    android:layout_width="6dp"
+                    android:layout_height="6dp"
+                    android:layout_marginEnd="6dp"
+                    android:importantForAccessibility="no"
+                    android:visibility="gone" />
+
+                <FrameLayout
+                    android:id="@+id/r1_eta"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content">
+                    <ImageView android:id="@+id/r1_eta_d" android:layout_width="wrap_content" android:layout_height="wrap_content" android:scaleType="matrix" android:visibility="gone" />
+                    <ImageView android:id="@+id/r1_eta_n" android:layout_width="wrap_content" android:layout_height="wrap_content" android:scaleType="matrix" />
+                </FrameLayout>
+            </LinearLayout>
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/r2"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_marginTop="6dp"
+            android:layout_weight="1"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:visibility="gone">
+
+            <FrameLayout
+                android:layout_width="60dp"
+                android:layout_height="wrap_content">
+
+                <FrameLayout
+                    android:id="@+id/r2_label"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="start|center_vertical">
+                    <ImageView android:id="@+id/r2_label_d" android:layout_width="wrap_content" android:layout_height="wrap_content" android:scaleType="matrix" android:visibility="gone" />
+                    <ImageView android:id="@+id/r2_label_n" android:layout_width="wrap_content" android:layout_height="wrap_content" android:scaleType="matrix" />
+                </FrameLayout>
+            </FrameLayout>
+
+            <FrameLayout
+                android:layout_width="54dp"
+                android:layout_height="wrap_content">
+
+                <FrameLayout
+                    android:id="@+id/r2_pct"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="start|center_vertical">
+                    <ImageView android:id="@+id/r2_pct_d" android:layout_width="wrap_content" android:layout_height="wrap_content" android:scaleType="matrix" android:visibility="gone" />
+                    <ImageView android:id="@+id/r2_pct_n" android:layout_width="wrap_content" android:layout_height="wrap_content" android:scaleType="matrix" />
+                </FrameLayout>
+            </FrameLayout>
+
+            <FrameLayout
+                android:layout_width="0dp"
+                android:layout_height="14dp"
+                android:layout_weight="1">
+
+                <ProgressBar
+                    android:id="@+id/r2_bar_ok"
+                    style="@style/UaWidgetBar"
+                    android:layout_width="match_parent"
+                    android:layout_height="8dp"
+                    android:layout_gravity="center_vertical"
+                    android:maxHeight="8dp"
+                    android:minHeight="8dp"
+                    android:progressDrawable="@drawable/qbar_ok"
+                    android:visibility="gone" />
+                <ProgressBar
+                    android:id="@+id/r2_bar_warn"
+                    style="@style/UaWidgetBar"
+                    android:layout_width="match_parent"
+                    android:layout_height="8dp"
+                    android:layout_gravity="center_vertical"
+                    android:maxHeight="8dp"
+                    android:minHeight="8dp"
+                    android:progressDrawable="@drawable/qbar_warn"
+                    android:visibility="gone" />
+                <ProgressBar
+                    android:id="@+id/r2_bar_danger"
+                    style="@style/UaWidgetBar"
+                    android:layout_width="match_parent"
+                    android:layout_height="8dp"
+                    android:layout_gravity="center_vertical"
+                    android:maxHeight="8dp"
+                    android:minHeight="8dp"
+                    android:progressDrawable="@drawable/qbar_danger"
+                    android:visibility="gone" />
+                <ProgressBar
+                    android:id="@+id/r2_bar_muted"
+                    style="@style/UaWidgetBar"
+                    android:layout_width="match_parent"
+                    android:layout_height="8dp"
+                    android:layout_gravity="center_vertical"
+                    android:maxHeight="8dp"
+                    android:minHeight="8dp"
+                    android:progressDrawable="@drawable/qbar_muted"
+                    android:visibility="gone" />
+
+                <ProgressBar
+                    android:id="@+id/r2_pace"
+                    style="@style/UaWidgetBar"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:maxHeight="14dp"
+                    android:minHeight="14dp"
+                    android:progressDrawable="@drawable/qbar_pace"
+                    android:visibility="gone" />
+            </FrameLayout>
+
+            <LinearLayout
+                android:id="@+id/r2_eta_box"
+                android:layout_width="96dp"
+                android:layout_height="wrap_content"
+                android:gravity="end|center_vertical"
+                android:orientation="horizontal">
+
+                <ImageView
+                    android:id="@+id/r2_dot"
+                    android:layout_width="6dp"
+                    android:layout_height="6dp"
+                    android:layout_marginEnd="6dp"
+                    android:importantForAccessibility="no"
+                    android:visibility="gone" />
+
+                <FrameLayout
+                    android:id="@+id/r2_eta"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content">
+                    <ImageView android:id="@+id/r2_eta_d" android:layout_width="wrap_content" android:layout_height="wrap_content" android:scaleType="matrix" android:visibility="gone" />
+                    <ImageView android:id="@+id/r2_eta_n" android:layout_width="wrap_content" android:layout_height="wrap_content" android:scaleType="matrix" />
+                </FrameLayout>
+            </LinearLayout>
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/r3"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_marginTop="6dp"
+            android:layout_weight="1"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:visibility="gone">
+
+            <FrameLayout
+                android:layout_width="60dp"
+                android:layout_height="wrap_content">
+
+                <FrameLayout
+                    android:id="@+id/r3_label"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="start|center_vertical">
+                    <ImageView android:id="@+id/r3_label_d" android:layout_width="wrap_content" android:layout_height="wrap_content" android:scaleType="matrix" android:visibility="gone" />
+                    <ImageView android:id="@+id/r3_label_n" android:layout_width="wrap_content" android:layout_height="wrap_content" android:scaleType="matrix" />
+                </FrameLayout>
+            </FrameLayout>
+
+            <FrameLayout
+                android:layout_width="54dp"
+                android:layout_height="wrap_content">
+
+                <FrameLayout
+                    android:id="@+id/r3_pct"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="start|center_vertical">
+                    <ImageView android:id="@+id/r3_pct_d" android:layout_width="wrap_content" android:layout_height="wrap_content" android:scaleType="matrix" android:visibility="gone" />
+                    <ImageView android:id="@+id/r3_pct_n" android:layout_width="wrap_content" android:layout_height="wrap_content" android:scaleType="matrix" />
+                </FrameLayout>
+            </FrameLayout>
+
+            <FrameLayout
+                android:layout_width="0dp"
+                android:layout_height="14dp"
+                android:layout_weight="1">
+
+                <ProgressBar
+                    android:id="@+id/r3_bar_ok"
+                    style="@style/UaWidgetBar"
+                    android:layout_width="match_parent"
+                    android:layout_height="8dp"
+                    android:layout_gravity="center_vertical"
+                    android:maxHeight="8dp"
+                    android:minHeight="8dp"
+                    android:progressDrawable="@drawable/qbar_ok"
+                    android:visibility="gone" />
+                <ProgressBar
+                    android:id="@+id/r3_bar_warn"
+                    style="@style/UaWidgetBar"
+                    android:layout_width="match_parent"
+                    android:layout_height="8dp"
+                    android:layout_gravity="center_vertical"
+                    android:maxHeight="8dp"
+                    android:minHeight="8dp"
+                    android:progressDrawable="@drawable/qbar_warn"
+                    android:visibility="gone" />
+                <ProgressBar
+                    android:id="@+id/r3_bar_danger"
+                    style="@style/UaWidgetBar"
+                    android:layout_width="match_parent"
+                    android:layout_height="8dp"
+                    android:layout_gravity="center_vertical"
+                    android:maxHeight="8dp"
+                    android:minHeight="8dp"
+                    android:progressDrawable="@drawable/qbar_danger"
+                    android:visibility="gone" />
+                <ProgressBar
+                    android:id="@+id/r3_bar_muted"
+                    style="@style/UaWidgetBar"
+                    android:layout_width="match_parent"
+                    android:layout_height="8dp"
+                    android:layout_gravity="center_vertical"
+                    android:maxHeight="8dp"
+                    android:minHeight="8dp"
+                    android:progressDrawable="@drawable/qbar_muted"
+                    android:visibility="gone" />
+
+                <ProgressBar
+                    android:id="@+id/r3_pace"
+                    style="@style/UaWidgetBar"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:maxHeight="14dp"
+                    android:minHeight="14dp"
+                    android:progressDrawable="@drawable/qbar_pace"
+                    android:visibility="gone" />
+            </FrameLayout>
+
+            <LinearLayout
+                android:id="@+id/r3_eta_box"
+                android:layout_width="96dp"
+                android:layout_height="wrap_content"
+                android:gravity="end|center_vertical"
+                android:orientation="horizontal">
+
+                <ImageView
+                    android:id="@+id/r3_dot"
+                    android:layout_width="6dp"
+                    android:layout_height="6dp"
+                    android:layout_marginEnd="6dp"
+                    android:importantForAccessibility="no"
+                    android:visibility="gone" />
+
+                <FrameLayout
+                    android:id="@+id/r3_eta"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content">
+                    <ImageView android:id="@+id/r3_eta_d" android:layout_width="wrap_content" android:layout_height="wrap_content" android:scaleType="matrix" android:visibility="gone" />
+                    <ImageView android:id="@+id/r3_eta_n" android:layout_width="wrap_content" android:layout_height="wrap_content" android:scaleType="matrix" />
+                </FrameLayout>
+            </LinearLayout>
+        </LinearLayout>
+
+        <FrameLayout
+            android:id="@+id/list_empty"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:visibility="gone">
+
+            <FrameLayout
+                android:id="@+id/list_empty_text"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="start|center_vertical">
+                <ImageView android:id="@+id/list_empty_text_d" android:layout_width="wrap_content" android:layout_height="wrap_content" android:scaleType="matrix" android:visibility="gone" />
+                <ImageView android:id="@+id/list_empty_text_n" android:layout_width="wrap_content" android:layout_height="wrap_content" android:scaleType="matrix" />
+            </FrameLayout>
+        </FrameLayout>
+    </LinearLayout>
+</LinearLayout>

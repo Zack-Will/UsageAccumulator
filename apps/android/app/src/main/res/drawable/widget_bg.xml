@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  与小米官方小部件视觉统一：小米设计规范（2K 屏）圆角 73px ≈ 20dp，无描边。
+  底色仍是看板卡片的 surface。
+-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <solid android:color="@color/ua_surface" />
+    <corners android:radius="20dp" />
+</shape>

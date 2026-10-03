@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  列表 · 默认 4×2，每个窗口一行
+  可拖动改大小（与小米官方小部件一致，resizeMode=3），最小到 2×2（110dp 见方）。
+  渲染时按桌面报的实际尺寸选布局，见 UsageWidget.kt 的 WidgetSize。
+-->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:description="@string/widget_list_desc"
+    android:initialLayout="@layout/widget_list"
+    android:minWidth="300dp"
+    android:minHeight="110dp"
+    android:minResizeWidth="110dp"
+    android:minResizeHeight="110dp"
+    android:previewLayout="@layout/widget_list"
+    android:resizeMode="horizontal|vertical"
+    android:targetCellWidth="4"
+    android:targetCellHeight="2"
+    android:updatePeriodMillis="1800000"
+    android:widgetCategory="home_screen" />

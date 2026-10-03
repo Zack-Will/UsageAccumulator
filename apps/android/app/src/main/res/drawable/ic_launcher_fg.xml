@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 三根高低不一的柱子：额度用量。内容落在 108dp 画布中央 66dp 的安全区里 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path android:fillColor="#FAF9F5" android:pathData="M36,58h8a2,2 0,0 1,2 2v12a2,2 0,0 1,-2 2h-8a2,2 0,0 1,-2 -2v-12a2,2 0,0 1,2 -2z" />
+    <path android:fillColor="#FAF9F5" android:pathData="M50,46h8a2,2 0,0 1,2 2v24a2,2 0,0 1,-2 2h-8a2,2 0,0 1,-2 -2v-24a2,2 0,0 1,2 -2z" />
+    <path android:fillColor="#FAF9F5" android:pathData="M64,34h8a2,2 0,0 1,2 2v36a2,2 0,0 1,-2 2h-8a2,2 0,0 1,-2 -2v-36a2,2 0,0 1,2 -2z" />
+</vector>

@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="24 24 60 60">
+  <!-- 与安卓启动图标同一套：陶土底 + 三根高低不一的柱子（额度用量），坐标沿用 108 画布 -->
+  <rect x="24" y="24" width="60" height="60" rx="14" fill="#D97757"/>
+  <g fill="#FAF9F5">
+    <rect x="34" y="58" width="12" height="16" rx="2"/>
+    <rect x="48" y="46" width="12" height="28" rx="2"/>
+    <rect x="62" y="34" width="12" height="40" rx="2"/>
+  </g>
+</svg>

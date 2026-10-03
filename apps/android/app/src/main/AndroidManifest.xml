@@ -1,0 +1,123 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- allowBackup=false：会话 Cookie 与 token 存在应用私有目录，不能跟着云备份走 -->
+    <application
+        android:allowBackup="false"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.Ua">
+
+        <!-- 小米小部件规范：应用级声明协议版本 -->
+        <meta-data
+            android:name="miuiWidgetVersion"
+            android:value="1" />
+
+        <activity
+            android:name=".MainActivity"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|uiMode|density"
+            android:exported="true"
+            android:launchMode="singleTask">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <meta-data
+                android:name="android.app.shortcuts"
+                android:resource="@xml/shortcuts" />
+        </activity>
+
+        <activity
+            android:name=".SettingsActivity"
+            android:exported="false"
+            android:label="@string/settings_title"
+            android:windowSoftInputMode="adjustResize" />
+
+        <!--
+          小部件：小米规范要求跑在独立进程 :widgetProvider（内存上限 35MB，不能再起别的进程）。
+          miuiWidget 由构建开关 UA_MIUI_WIDGET 控制，默认关（关时换一个无人认识的键名，
+          而不是写 false —— 不确定桌面是看值还是只看键在不在）：声明了它，小米的小部件选择器会去
+          商店查适配内容，没过审就显示「正在努力适配中」，根本加不到桌面。过审后再打开，
+          曝光刷新（miuiWidgetRefresh=exposure，看到桌面时发 miui.appwidget.action.APPWIDGET_UPDATE）才有意义。
+        -->
+        <receiver
+            android:name=".widget.SmallWidget"
+            android:exported="true"
+            android:label="@string/widget_small_label"
+            android:process=":widgetProvider">
+            <meta-data
+                android:name="${miuiWidgetKey}"
+                android:value="true" />
+            <meta-data
+                android:name="miuiWidgetRefresh"
+                android:value="exposure" />
+            <meta-data
+                android:name="miuiWidgetRefreshMinInterval"
+                android:value="60000" />
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_small_info" />
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="miui.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+        </receiver>
+
+        <receiver
+            android:name=".widget.WideWidget"
+            android:exported="true"
+            android:label="@string/widget_wide_label"
+            android:process=":widgetProvider">
+            <meta-data
+                android:name="${miuiWidgetKey}"
+                android:value="true" />
+            <meta-data
+                android:name="miuiWidgetRefresh"
+                android:value="exposure" />
+            <meta-data
+                android:name="miuiWidgetRefreshMinInterval"
+                android:value="60000" />
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_wide_info" />
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="miui.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+        </receiver>
+
+        <receiver
+            android:name=".widget.ListWidget"
+            android:exported="true"
+            android:label="@string/widget_list_label"
+            android:process=":widgetProvider">
+            <meta-data
+                android:name="${miuiWidgetKey}"
+                android:value="true" />
+            <meta-data
+                android:name="miuiWidgetRefresh"
+                android:value="exposure" />
+            <meta-data
+                android:name="miuiWidgetRefreshMinInterval"
+                android:value="60000" />
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_list_info" />
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="miui.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+        </receiver>
+
+        <receiver
+            android:name=".widget.PackageReplacedReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+    </application>
+</manifest>

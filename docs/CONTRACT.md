@@ -15,6 +15,7 @@
 | **ua-probe** | `packages/ua-probe/` | 文件监听、断点续传、缓冲上报、额度采集、cc-switch 读取 | 服务端与前端目录 |
 | **ua-menubar** | `apps/menubar/` | macOS 托盘常驻，只显示基础信息 | 其他目录 |
 | **ua-web** | `apps/web/` | 看板前端 | 其他目录 |
+| **ua-android** | `apps/android/` | 安卓外壳（WebView 加载线上看板）+ 桌面小部件，只消费 `/v1/summary` | 其他目录 |
 | **ua-tokens** | `packages/ua-tokens/` | 设计令牌，看板与菜单栏共用 | 由主会话维护，只读 |
 
 跨目录需要改动时：**不要直接改，报告给主会话**。
@@ -268,6 +269,19 @@ Idempotency-Key: <批次内容的 sha256 前 32 位>
 **倒计时必须由客户端从 `exhaust_eta` 本地计算并自行每分钟刷新** —— 服务端渲染的倒计时在两次轮询之间就过期了（30~60s 误差），托盘上挂一个慢一分钟的数字比不显示更糟。
 
 `stale` 与 `captured_at` 并存：布尔给快速判断，时间戳让客户端能说出「数据 23 分钟前」—— 用本地拉取时刻近似，衡量的是网络新鲜度而非额度新鲜度，两者不能混。
+
+### 2.2a 安卓外壳 ↔ 看板
+
+安卓 App 用 WebView 直接加载服务端托管的看板，网页部署即同步，外壳不打包任何前端产物。两边只约定两件事：
+
+| 约定 | 形状 | 用途 |
+|---|---|---|
+| UA 后缀 | `UsageAccumulatorApp/<版本>` | 看板据此（连同下一行）判断自己在外壳里 |
+| `window.UaApp` | `openSettings()` · `setTheme(theme: "dark"\|"light", bg: "#RRGGBB")` · `version()` | 顶栏的外壳设置入口；主题切换后同步状态栏深浅 |
+
+两个条件同时满足才算在外壳里（`apps/web/src/app-bridge.ts`）。`UaApp` 上**不放任何涉及凭证的方法**。
+
+小部件跑在外壳进程之外，凭证用 WebView 登录后留下的会话 Cookie（外壳在离开前台时抄一份给小部件），没有新增服务端身份。
 
 ### 2.3 machine_id 的归属权
 

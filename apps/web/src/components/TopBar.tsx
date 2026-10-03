@@ -1,5 +1,6 @@
 import type { ThemeName } from "@ua/tokens";
 import type { DataSource, Profile, QuotaSessionStatus, StreamStatus } from "../api";
+import { appBridge } from "../app-bridge";
 import { fmtClock } from "../charts/base";
 import { hrefFor, ROUTES, type RouteId } from "../hooks/useRoute";
 import { Dot, Segmented } from "./primitives";
@@ -64,6 +65,16 @@ function ThemeIcon({ theme }: { theme: ThemeName }) {
   );
 }
 
+function SettingsIcon() {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" aria-hidden="true">
+      <path d="M2.5 4.5h7M12.5 4.5h1M2.5 11.5h1M6.5 11.5h7" strokeLinecap="round" />
+      <circle cx="11" cy="4.5" r="1.5" />
+      <circle cx="5" cy="11.5" r="1.5" />
+    </svg>
+  );
+}
+
 export function TopBar(props: {
   route: RouteId;
   profiles: Profile[];
@@ -85,6 +96,7 @@ export function TopBar(props: {
   refreshing: boolean;
   onRefresh: () => void;
 }) {
+  const bridge = appBridge();
   return (
     <header className="topbar">
       <span className="brand">UsageAccumulator</span>
@@ -169,6 +181,13 @@ export function TopBar(props: {
       >
         <ThemeIcon theme={props.theme} />
       </button>
+
+      {/* 只在安卓外壳里出现：服务器地址、小部件这些是外壳的设置，网页管不着 */}
+      {bridge && (
+        <button type="button" className="iconbtn" aria-label="App 设置" onClick={() => bridge.openSettings()}>
+          <SettingsIcon />
+        </button>
+      )}
     </header>
   );
 }

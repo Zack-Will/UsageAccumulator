@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  时间进度刻度（.qbar__pace）：比条高出一截的 2dp 竖线。
+  用一根透明 ProgressBar 叠在额度条上：progress 层是 scale，缩放到「已过时间」那么宽，
+  里面的竖线贴右边画——竖线就落在时间进度的位置上，不需要知道小部件的实际像素宽度。
+-->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:id="@android:id/progress">
+        <scale android:scaleGravity="left|fill_vertical" android:scaleWidth="100%">
+            <layer-list>
+                <item android:gravity="end|fill_vertical" android:width="2dp">
+                    <shape>
+                        <corners android:radius="1dp" />
+                        <solid android:color="@color/ua_pace" />
+                    </shape>
+                </item>
+            </layer-list>
+        </scale>
+    </item>
+</layer-list>
