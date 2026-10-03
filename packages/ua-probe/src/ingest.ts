@@ -1,4 +1,4 @@
-import { dedupKey, parseLine, projectSlugFromPath, type ParseWarning } from "@ua/core";
+import { dedupKey, parseLine, usageRank, projectSlugFromPath, type ParseWarning } from "@ua/core";
 import type { ProbeConfig } from "./config.js";
 import type { Logger } from "./logger.js";
 import { Attributor, extractOwnerAccountUuid, extractOwnerOrganizationUuid } from "./attributor.js";
@@ -39,7 +39,7 @@ export class Ingestor {
     // project_slug 取所在目录名；scan_roots 可能不含 /projects/，退化成父目录名
     const slug = projectSlugFromPath(path) ?? basename(dirname(path));
 
-    const pending: { dedupKey: string; payload: string; backfill: boolean }[] = [];
+    const pending: { dedupKey: string; payload: string; backfill: boolean; rank: number }[] = [];
     const flush = (): void => {
       if (pending.length === 0) return;
       stats.enqueued += this.store.enqueueEvents(pending);
@@ -87,6 +87,7 @@ export class Ingestor {
             }),
           ),
           backfill: opts.backfill,
+          rank: usageRank(event),
         });
         if (pending.length >= 500) flush();
       });

@@ -201,8 +201,8 @@ export function WindowCard({
    * 官方计的是整个账号：网页/App 的聊天窗、手机端、没装探针的机器都算在里面，
    * 而分子（$已花）只有本地事件。分母混进别处的消耗就会把结果系统性压低 ——
    * 2026-09-22 实测有 8 个百分点是在「两小时以上没碰过 Claude Code」时涨的。
-   * attribution.local_utilization_pct 已经扣掉了那部分；扣掉的是下界，
-   * 所以这个金额仍然是下界，只是比原来紧得多。
+   * attribution.local_utilization_pct 已经扣掉了那部分：7d 按官方「按产品」拆分扣，
+   * 5h 按差额法与拆分合成扣（没有拆分的组织退回差额法下界）。
    *
    * 归因覆盖不全时**照样扣**：被判定为安静的区间确实没有本地活动，这件事不因为
    * 别处有洞而改变，扣掉它只会让下界更紧。覆盖不全只意味着还有没看见的部分。
@@ -218,7 +218,13 @@ export function WindowCard({
   const fullWindowCost =
     cost?.usd != null && cost.usd > 0 && localPct > 0 ? cost.usd / (localPct / 100) : null;
   /** 只在真的测到别处的消耗时才占一行字；测到 0 就什么都不说。空闲窗口里没有「窗口内」 */
-  const otherPct = idle ? 0 : (attr?.other_pct_lower_bound ?? 0);
+  const otherPct = idle ? 0 : (attr?.other_pct ?? attr?.other_pct_lower_bound ?? 0);
+  /**
+   * ★ 显示成「占本窗口已用量的份额」，不是占限额的百分点。
+   * 以前写的是 other_pct 本身（占限额）：7d 用了 15%、其中 23% 是 Cowork/聊天时显示「3% 非 Code」，
+   * 旁边「本周按产品」卡却写着 Claude Code 77% —— 两个带 % 的数口径不同，读起来就是算错了。
+   */
+  const otherShare = w.utilization_pct > 0 ? Math.min(100, (otherPct / w.utilization_pct) * 100) : 0;
 
   const etaTone = remain === null ? "muted" : remain < 45 * 60_000 ? "danger" : "warn";
 
@@ -289,7 +295,11 @@ export function WindowCard({
               <Mono tone="muted">—</Mono>
             ) : (
               <span className="quota__v">
-                <Cost usd={buckets.length === 0 ? 0 : cost!.usd} unpriced={cost?.unpricedEvents ?? 0} />
+                <Cost
+                  usd={buckets.length === 0 ? 0 : cost!.usd}
+                  unpriced={cost?.unpricedEvents ?? 0}
+                  partial={cost?.partialOutputEvents ?? 0}
+                />
               </span>
             )}
             <Mono tone="muted">
@@ -299,10 +309,16 @@ export function WindowCard({
           <div className="quota__money-col quota__money-col--end">
             <span className="quota__k">满额约</span>
             <span className="quota__v quota__v--strong">
-              {fullWindowCost !== null ? `$${fullWindowCost.toFixed(0)}` : "—"}
+              {/* 已花是下界（有事件的最终输出量没写进 JSONL）→ 满额约也是下界 */}
+              {fullWindowCost !== null
+                ? `${(cost?.partialOutputEvents ?? 0) > 0 ? "≥" : ""}$${fullWindowCost.toFixed(0)}`
+                : "—"}
             </span>
-            {otherPct > 0 ? (
-              <Mono tone="muted">{otherPct.toFixed(0)}% 非 Code</Mono>
+            {/* 不到 1% 时留一位小数，别四舍五入成「0% 非 Code」 */}
+            {otherShare >= 0.05 ? (
+              <span title={`占限额 ${otherPct.toFixed(2)} 个百分点`}>
+                <Mono tone="muted">{otherShare.toFixed(otherShare < 1 ? 1 : 0)}% 非 Code</Mono>
+              </span>
             ) : (
               <Mono tone="muted">&nbsp;</Mono>
             )}

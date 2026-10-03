@@ -1,3 +1,7 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { ProbeStore } from "../src/store.js";
 
@@ -6,6 +10,7 @@ function rows(n: number, offset = 0) {
     dedupKey: `k${i + offset}`,
     payload: JSON.stringify({ i: i + offset }),
     backfill: false,
+    rank: 0,
   }));
 }
 
@@ -32,6 +37,45 @@ describe("ProbeStore / 缓冲队列", () => {
     expect(s.enqueueEvents(rows(3))).toBe(0);
     expect(s.queueDepth()).toBe(3);
     s.close();
+  });
+
+  it("同一个键再来：用量更完整（rank 更大）就替换负载，否则不动", () => {
+    const s = new ProbeStore(":memory:");
+    const row = (out: number, rank: number) => ({
+      dedupKey: "msg|req",
+      payload: JSON.stringify({ output_tokens: out }),
+      backfill: false,
+      rank,
+    });
+    // 子代理的一条消息：前几行是流式中途值，最后一行才是最终用量
+    expect(s.enqueueEvents([row(7, 22), row(7, 22), row(1500, 4502)])).toBe(2);
+    expect(s.enqueueEvents([row(7, 22)])).toBe(0);
+    const [only, ...rest] = s.takeEvents(10);
+    expect(rest).toEqual([]);
+    expect(JSON.parse(only!.payload)).toEqual({ output_tokens: 1500 });
+    s.close();
+  });
+
+  it("老库补 usage_rank 列，并按已排队负载的 output_tokens 估分", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ua-store-"));
+    const path = join(dir, "state.db");
+    try {
+      const old = new DatabaseSync(path);
+      old.exec(`CREATE TABLE event_queue (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, dedup_key TEXT NOT NULL UNIQUE,
+        payload TEXT NOT NULL, backfill INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL)`);
+      old.prepare("INSERT INTO event_queue (dedup_key, payload, created_at) VALUES (?, ?, 0)")
+        .run("msg|req", JSON.stringify({ output_tokens: 1500 }));
+      old.close();
+
+      const s = new ProbeStore(path);
+      // 排队中的最终值不能被一行流式中途值顶掉
+      expect(s.enqueueEvents([{ dedupKey: "msg|req", payload: "{}", backfill: false, rank: 22 }])).toBe(0);
+      expect(JSON.parse(s.takeEvents(1)[0]!.payload)).toEqual({ output_tokens: 1500 });
+      s.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("超上限丢最旧的并返回丢弃条数", () => {

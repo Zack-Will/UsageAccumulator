@@ -76,8 +76,11 @@ export function Mono({ children, tone }: { children: ReactNode; tone?: "muted" |
  * 成本。CONTRACT §2.1a：cost_usd = null 表示「该桶无任何有报价的模型」，
  * unpriced_events > 0 表示「成本不完整」。两者都不能显示成 $0.00 —— 定价表是
  * 刻意留空的，把缺价渲染成 0 会让成本统计静默出错。
+ *
+ * partial > 0：有事件的最终用量没写进 JSONL（子代理常见），输出量只是下界 ——
+ * 金额前加「≥」，不能让它看起来是精确值。
  */
-export function Cost({ usd, unpriced }: { usd: number | null; unpriced: number }) {
+export function Cost({ usd, unpriced, partial = 0 }: { usd: number | null; unpriced: number; partial?: number }) {
   if (usd === null) {
     return (
       <span className="cost" aria-label={`成本未知，${unpriced} 个事件缺少报价`}>
@@ -88,12 +91,18 @@ export function Cost({ usd, unpriced }: { usd: number | null; unpriced: number }
       </span>
     );
   }
+  const notes = [
+    ...(partial > 0 ? [`${partial} 个事件的输出量只是下界`] : []),
+    ...(unpriced > 0 ? [`另有 ${unpriced} 个事件缺少报价`] : []),
+  ];
   return (
     <span
       className="cost"
-      aria-label={unpriced > 0 ? `${usd.toFixed(4)} 美元，另有 ${unpriced} 个事件缺少报价` : undefined}
+      aria-label={notes.length > 0 ? `${partial > 0 ? "至少 " : ""}${usd.toFixed(4)} 美元，${notes.join("，")}` : undefined}
     >
-      <span className="mono">${usd.toFixed(2)}</span>
+      <span className="mono">
+        {partial > 0 ? "≥" : ""}${usd.toFixed(2)}
+      </span>
       {unpriced > 0 && (
         <span className="cost__mark" aria-hidden="true">
           †

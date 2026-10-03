@@ -16,7 +16,7 @@ import type { Tokens } from "../charts/tokens";
 import { Chart } from "../components/Chart";
 import { Card, Mono, Placeholder, Segmented } from "../components/primitives";
 import { PageHead } from "../components/PageHead";
-import { BreakdownTable, UsageSummary } from "../components/UsagePanels";
+import { BreakdownTable, ProductsCard, UsageSummary } from "../components/UsagePanels";
 import { displayWindows, isActiveWindow, labelOf, quotaSpans, WindowCard } from "../components/WindowCards";
 import { useAsync } from "../hooks/useAsync";
 
@@ -114,6 +114,13 @@ export function Overview({
   );
   const totals = useMemo(() => (models.data ? usageTotals(models.data.buckets) : null), [models.data]);
 
+  // team 组织没有官方拆分：整张卡不出现，燃尽曲线占满一行
+  const products = windows?.products ?? null;
+  const productColors = useMemo(
+    () => colorMapFor("product", (products?.rows ?? []).map((r) => r.key), t),
+    [products, t],
+  );
+
   return (
     <div className="grid">
       <PageHead windows={shown} nowMs={nowMs} />
@@ -195,7 +202,8 @@ export function Overview({
 
       <Card
         title="燃尽曲线"
-        span={12}
+        span={products ? 8 : 12}
+        mdSpan={products ? 4 : undefined}
         aside={
           windows ? (
             <Segmented
@@ -221,6 +229,7 @@ export function Overview({
           <Placeholder state={windowsError ? "error" : "loading"} height={200} />
         )}
       </Card>
+      {products && <ProductsCard products={products} colors={productColors} span={4} mdSpan={2} />}
     </div>
   );
 }

@@ -47,6 +47,12 @@ export interface AttributionOptions {
    * 这种洞里既可能有本地用量也可能有别处的，判不了。
    */
   maxGapMs?: number;
+  /**
+   * 官方按产品拆分出的非 Code 用量在 (from, to] 内涨了多少，**已折成本窗口的刻度**
+   * （见 products.ts 的 increaseIndex / limitRatio）。给了它，差额法「判不了」的区间
+   * 就能拆出一部分：本地有活动的同时在聊天，只看时间戳是分不开的。
+   */
+  nonCode?: (from: Date, to: Date) => number;
 }
 
 export interface AttributionResult {
@@ -65,6 +71,8 @@ export interface AttributionResult {
   otherPctLowerBound: number;
   /** 判不了的部分（本地有活动、落在护栏内、或采样有洞） */
   ambiguousPct: number;
+  /** 判不了的那些区间里，按官方拆分属于非 Code 的部分（逐区间以该区间的上升为上限）；没给 nonCode 时恒为 0 */
+  nonCodeInAmbiguousPct: number;
   /** 支撑下界的安静区间数（有上升且确定无本地活动）*/
   quietSpans: number;
   /** 评估过的相邻采样对总数；为 0 说明这个窗口压根没采到东西 */
@@ -79,6 +87,7 @@ export const EMPTY_ATTRIBUTION: AttributionResult = {
   spans: 0,
   otherPctLowerBound: 0,
   ambiguousPct: 0,
+  nonCodeInAmbiguousPct: 0,
   quietSpans: 0,
   hasSamplingGap: false,
 };
@@ -131,6 +140,7 @@ export function attributeQuota(
     const guardFrom = b.ts.getTime() - quietLeadMs;
     if (hasEventInRange(evTimes, guardFrom, b.ts.getTime())) {
       out.ambiguousPct += delta;
+      if (opts.nonCode) out.nonCodeInAmbiguousPct += Math.min(delta, Math.max(0, opts.nonCode(a.ts, b.ts)));
     } else {
       out.otherPctLowerBound += delta;
       out.quietSpans += 1;
@@ -175,4 +185,23 @@ export function attributionIsUsable(r: AttributionResult): boolean {
 export function localPctUpperBound(observedPct: number, r: AttributionResult): number {
   const v = observedPct - r.otherPctLowerBound;
   return v > 0 ? v : 0;
+}
+
+/**
+ * 两条路径合成「非本地」的估计（百分点，本窗口刻度）。
+ *
+ *   · 差额法：安静区间里的上升 —— 什么来源都算（聊天、没装探针的机器），但只看得见安静时段；
+ *   · 官方拆分：非 Code 产品的用量 —— 任何时段都看得见，但看不见别的机器上的 Code。
+ *
+ * 两者在「安静时段的聊天」上重叠，所以不能直接相加。取
+ *     max( 拆分总量,  差额法下界 + 拆分在「判不了」区间里的那部分 )
+ * 前一项补上差额法看不见的（边写代码边聊天、窗口开头没采到的），
+ * 后一项补上拆分看不见的（安静时段里别的机器在跑 Code）。
+ *
+ * nonCodePct 为 null（team 组织没有拆分、5h 刻度比还估不出来）时就是纯差额法。
+ * ★ 拆分是整数份额折出来的估计，所以合成后**不再是严格下界**，只是更接近真值。
+ */
+export function fuseOtherPct(r: AttributionResult, nonCodePct: number | null, utilizationPct: number): number {
+  const v = nonCodePct === null ? r.otherPctLowerBound : Math.max(nonCodePct, r.otherPctLowerBound + r.nonCodeInAmbiguousPct);
+  return Math.max(0, Math.min(utilizationPct, v));
 }

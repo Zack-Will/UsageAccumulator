@@ -83,6 +83,14 @@ GET https://api.anthropic.com/v1/organization/{org_id}/usage
 
 **确认：只有百分比，没有绝对 token 数。** 这对指标设计有连锁影响，见第 7.0 节。
 
+> **按产品拆分（2026-09-29 实测）**：同一个响应里有 `seven_day_breakdown`，
+> 即 claude.ai 与 Claude Code usage 页上的「This week's usage by product」：
+> `{ as_of, window_started_at, rows: [{ key: claude_code|chat|cowork|other, display_name, percent }] }`。
+> `percent` 是占**本周已用量**的整数份额，只有 7d，没有 5h；Max 组织有、team 组织为 `null`。
+> Claude Code 的 `GET https://api.anthropic.com/api/oauth/usage`（OAuth Bearer）返回同一字段，
+> 但服务端不需要它 —— sessionKey 这条路已经带了，线上库从第一条快照起就存着（raw 原样入库）。
+> 用法见 CONTRACT §2.1 的「非本地用量的两条路径」。
+
 > **字段名待核实**：上面的 `seven_day_opus` 是 Claude-Usage-Tracker 仓库里的写法。但实际受独立周限额约束的是 **Fable**，不是 Opus —— 说明该字段名要么已经改过，要么是这个第三方实现沿用了旧命名。抓包时**重点确认这个字段的真实名称**，不要照抄。设计上按 `window_kind` 字符串存，不硬编码枚举，改名不影响表结构。
 
 ---

@@ -69,7 +69,8 @@ export class ProbeStore {
         dedup_key  TEXT NOT NULL UNIQUE,
         payload    TEXT NOT NULL,
         backfill   INTEGER NOT NULL DEFAULT 0,
-        created_at INTEGER NOT NULL
+        created_at INTEGER NOT NULL,
+        usage_rank INTEGER NOT NULL DEFAULT 0
       );
       CREATE TABLE IF NOT EXISTS quota_queue (
         id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -93,6 +94,15 @@ export class ProbeStore {
         shipped    TEXT
       );
     `);
+    // 老库没有 usage_rank：补列，并按已排队负载里的 output_tokens 估一个分数 ——
+    // 否则排队中的旧行分数全是 0，任何一行流式中途值都能把它顶掉
+    const cols = this.db.prepare("PRAGMA table_info(event_queue)").all().map((r) => asString(r["name"]));
+    if (!cols.includes("usage_rank")) {
+      this.db.exec("ALTER TABLE event_queue ADD COLUMN usage_rank INTEGER NOT NULL DEFAULT 0");
+      this.db.exec(
+        "UPDATE event_queue SET usage_rank = COALESCE(json_extract(payload, '$.output_tokens'), 0) * 3",
+      );
+    }
   }
 
   close(): void {
@@ -198,6 +208,11 @@ export class ProbeStore {
       }));
   }
 
+  /** 清空全部游标：下一轮扫描会把所有文件从头重读（一次性重扫用）。 */
+  clearCursors(): number {
+    return Number(this.db.prepare("DELETE FROM cursors").run().changes);
+  }
+
   cursorCount(): number {
     const row = this.db.prepare("SELECT COUNT(*) AS n FROM cursors").get();
     return asNumber(row?.["n"]);
@@ -206,19 +221,27 @@ export class ProbeStore {
   // ── event queue ───────────────────────────────────────────────────────
   /**
    * 入队。dedup_key 唯一 —— 同一条事件被重复解析（比如游标回滚重读）时本地就吃掉，
-   * 不劳服务端。返回真正新入队的条数。
+   * 不劳服务端。
+   *
+   * ★ 同一个键再来时不是丢掉，而是**用量更完整就替换**（`rank` = @ua/core 的 usageRank）：
+   * 一条消息在 JSONL 里有多行，子代理文件只有最后一行是最终用量，先到先得会把
+   * 流式中途值发出去。已经发走（被 ack 删掉）的键再来会重新入队，由服务端覆盖。
+   *
+   * 返回新入队或被替换的条数。
    */
-  enqueueEvents(rows: { dedupKey: string; payload: string; backfill: boolean }[]): number {
+  enqueueEvents(rows: { dedupKey: string; payload: string; backfill: boolean; rank: number }[]): number {
     if (rows.length === 0) return 0;
     const stmt = this.db.prepare(
-      "INSERT OR IGNORE INTO event_queue (dedup_key, payload, backfill, created_at) VALUES (?, ?, ?, ?)",
+      `INSERT INTO event_queue (dedup_key, payload, backfill, created_at, usage_rank) VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(dedup_key) DO UPDATE SET payload = excluded.payload, usage_rank = excluded.usage_rank
+       WHERE excluded.usage_rank > event_queue.usage_rank`,
     );
     const now = Date.now();
     let inserted = 0;
     this.db.exec("BEGIN");
     try {
       for (const r of rows) {
-        const res = stmt.run(r.dedupKey, r.payload, r.backfill ? 1 : 0, now);
+        const res = stmt.run(r.dedupKey, r.payload, r.backfill ? 1 : 0, now, r.rank);
         inserted += Number(res.changes);
       }
       this.db.exec("COMMIT");

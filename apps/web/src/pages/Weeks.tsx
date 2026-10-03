@@ -159,7 +159,7 @@ export function Weeks({ api, t, profileId, nonce, windows }: Props) {
           </div>
           <div className="weekstat__row">
             <Mono tone="muted">折算费用</Mono>
-            {cost ? <Cost usd={cost.usd} unpriced={cost.unpricedEvents} /> : <Mono tone="muted">—</Mono>}
+            {cost ? <Cost usd={cost.usd} unpriced={cost.unpricedEvents} partial={cost.partialOutputEvents} /> : <Mono tone="muted">—</Mono>}
           </div>
           <div className="weekstat__row">
             <Mono tone="muted">调用 / tokens</Mono>

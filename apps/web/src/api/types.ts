@@ -136,13 +136,37 @@ export interface Attribution {
    * 它只回答「other=0 是量过了确实没有，还是压根没量到」。
    */
   usable: boolean;
-  /** 本地占掉的百分比（上界）= utilization_pct − other 下界 */
+  /**
+   * 官方「按产品」拆分里非 Code 产品（聊天、Cowork 等）的用量，折成本窗口刻度。
+   * null = 拿不到（team 组织没有拆分、5h 刻度比还估不出来、按模型限定的窗口）。
+   */
+  non_code_pct: Pct | null;
+  /** 非本地用量的最佳估计（7d 以官方拆分为准，5h 差额法与拆分合成，都没有时 = 下界） */
+  other_pct: Pct;
+  /** 本地占掉的百分比 = utilization_pct − other_pct */
   local_utilization_pct: Pct;
+}
+
+/** 官方「本周按产品」拆分，与 claude.ai 的 usage 页同一组数 */
+export interface Products {
+  as_of: Rfc3339 | null;
+  /** 这份拆分那一刻的 7d 利用率 */
+  weekly_pct: Pct;
+  rows: {
+    key: string;
+    label: string;
+    /** 占本周已用量的份额（官方整数） */
+    share_pct: Pct;
+    /** 占周限额的百分点 */
+    pct: Pct;
+  }[];
 }
 
 export interface WindowsCurrent {
   profile_id: string;
   windows: WindowState[];
+  /** team 组织没有拆分 → null。老服务端没有这个字段 → undefined */
+  products?: Products | null;
 }
 
 // ── /v1/timeline（CONTRACT §2.1a） ─────────────────────────────────────────
@@ -211,6 +235,11 @@ export interface DistributionBucket {
   cost_usd: number | null;
   /** >0 = 成本不完整，前端必须给视觉提示。 */
   unpriced_events: number;
+  /**
+   * >0 = 有事件的最终用量没写进 JSONL，output_tokens 与 cost_usd 都是下界。
+   * 旧服务端不带这个字段 —— 缺省按 0 处理。
+   */
+  partial_output_events?: number;
   /** 仅在 bucket=hour|day 时出现。 */
   series?: BucketSeriesPoint[];
   /** 仅 by=session：这个会话在哪个项目目录（可能已 HMAC 化；临时工作区也在这里） */

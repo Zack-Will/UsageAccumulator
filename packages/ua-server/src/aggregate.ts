@@ -242,6 +242,11 @@ export interface DistributionBucket {
   /** 有报价部分的成本；unpricedEvents > 0 时它是不完整的 */
   costUsd: number | null;
   unpricedEvents: number;
+  /**
+   * 最终用量没写进 JSONL 的事件数（output_final = false）：它们的 output_tokens 与成本
+   * 只是下界。> 0 时这一桶的 outputTokens / costUsd 都偏小。旧探针报的（null）不算 —— 不知道。
+   */
+  partialOutputEvents: number;
   /** 仅在 bucket=hour|day 时出现：桶内随时间的展开，供「机器 × 24 小时堆叠柱」这类二维图 */
   series?: SeriesPoint[];
 }
@@ -278,6 +283,7 @@ export function buildDistribution(
         totalTokens: 0,
         costUsd: null,
         unpricedEvents: 0,
+        partialOutputEvents: 0,
       };
       map.set(key, b);
     }
@@ -290,6 +296,7 @@ export function buildDistribution(
     b.totalTokens += quotaTokens(event);
     if (costUsd === null) b.unpricedEvents++;
     else b.costUsd = (b.costUsd ?? 0) + costUsd;
+    if (event.outputFinal === false) b.partialOutputEvents++;
 
     if (bucket !== "none") {
       let inner = series.get(key);

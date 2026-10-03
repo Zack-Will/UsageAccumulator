@@ -21,6 +21,14 @@ export interface LatestQuotaWindow {
   capturedAt: Date;
 }
 
+export interface QuotaBreakdownRow {
+  ts: Date;
+  /** 同一次快照里 seven_day 的 utilization_pct */
+  weeklyPct: number;
+  /** `raw.seven_day_breakdown` 原文 */
+  breakdown: unknown;
+}
+
 export interface CalibrationRecord {
   profileId: string;
   windowKind: string;
@@ -58,13 +66,21 @@ export interface Store {
   /** 每个 profile 最近一条事件的时间；没有事件的 profile 不出现 */
   latestEventAt(): Promise<Map<string, Date>>;
 
-  /** ON CONFLICT DO NOTHING 批量 upsert，返回**新插入**的条数 */
-  insertEvents(rows: EventRow[]): Promise<number>;
+  /**
+   * 批量 upsert。同一个 dedupKey 已存在时，新来的用量更完整（usageRank 更大）就覆盖
+   * 用量与成本，否则丢弃。返回新插入与被覆盖的条数。
+   */
+  insertEvents(rows: EventRow[]): Promise<{ inserted: number; updated: number }>;
 
   /** machineId = 采集机器（CONTRACT §1.3），仅供追溯，可为空 */
   insertQuotaSnapshot(s: QuotaSnapshot, machineId?: string | null): Promise<void>;
   latestQuotaWindows(profileId: string): Promise<LatestQuotaWindow[]>;
   quotaSamples(profileId: string, windowKind: string, since: Date, until?: Date): Promise<QuotaSample[]>;
+  /**
+   * seven_day 的利用率 + 同一次快照里官方的「按产品」拆分原文（`raw.seven_day_breakdown`）。
+   * 拆分为 null 的快照（team 组织、老响应）不返回。解析归调用方（@ua/core products.ts）。
+   */
+  quotaBreakdowns(profileId: string, since: Date): Promise<QuotaBreakdownRow[]>;
 
   eventsInRange(profileId: string, from: Date, to: Date): Promise<EventRow[]>;
 

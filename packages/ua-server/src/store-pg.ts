@@ -5,6 +5,7 @@ import type {
   EventRow,
   LatestQuotaWindow,
   MachineRecord,
+  QuotaBreakdownRow,
   Store,
 } from "./store.js";
 
@@ -32,6 +33,7 @@ const EVENT_COLUMNS = [
   "entrypoint",
   "service_tier",
   "is_sidechain",
+  "output_final",
   "backfill",
   "cost_usd",
 ] as const;
@@ -64,6 +66,7 @@ function rowToEventRow(r: Record<string, unknown>): EventRow {
     entrypoint: r["entrypoint"] == null ? null : String(r["entrypoint"]),
     serviceTier: r["service_tier"] == null ? null : String(r["service_tier"]),
     isSidechain: r["is_sidechain"] === true,
+    outputFinal: typeof r["output_final"] === "boolean" ? r["output_final"] : null,
     backfill: r["backfill"] === true,
   };
   // NUMERIC 回来是字符串；缺价是 NULL，绝不当 0
@@ -152,9 +155,18 @@ export class PgStore implements Store {
       ON CONFLICT (id) DO NOTHING`;
   }
 
-  /** 批量 upsert，ON CONFLICT DO NOTHING（无冲突目标 → 主键与 semantic_id 部分唯一索引都吃掉）。 */
-  async insertEvents(rows: EventRow[]): Promise<number> {
-    if (rows.length === 0) return 0;
+  /**
+   * 批量 upsert。
+   *
+   * 有 request_id 的行按主键冲突，**更完整就覆盖**用量与成本（usageRank 的 SQL 版）：
+   * Claude Code 把一条消息写成多行、子代理只有最后一行是最终用量，先到先得会存下
+   * 流式中途值。覆盖只动用量相关列 —— machine_id / profile_id 等仍归先到的那份。
+   *
+   * request_id 为空的行（语义兜底）仍然 DO NOTHING：它们的 semantic_id 里含 output_tokens，
+   * 同一条消息的不同行本来就是不同的键，比不出谁更完整。
+   */
+  async insertEvents(rows: EventRow[]): Promise<{ inserted: number; updated: number }> {
+    if (rows.length === 0) return { inserted: 0, updated: 0 };
     const payload = rows.map(({ event: e, costUsd }) => ({
       message_id: e.messageId,
       request_id: e.requestId,
@@ -177,14 +189,43 @@ export class PgStore implements Store {
       entrypoint: e.entrypoint,
       service_tier: e.serviceTier,
       is_sidechain: e.isSidechain,
+      output_final: e.outputFinal,
       backfill: e.backfill,
       cost_usd: costUsd,
     }));
-    const inserted = await this.sql<{ ok: number }[]>`
-      INSERT INTO usage_events ${this.sql(payload, ...EVENT_COLUMNS)}
-      ON CONFLICT DO NOTHING
-      RETURNING 1 AS ok`;
-    return inserted.length;
+    const keyed = payload.filter((p) => p.request_id !== "");
+    const semantic = payload.filter((p) => p.request_id === "");
+    let inserted = 0;
+    let updated = 0;
+    if (keyed.length > 0) {
+      // xmax = 0 ⇔ 这一行是新插入的；否则是 DO UPDATE 改的。被 WHERE 挡下的冲突不返回。
+      const res = await this.sql<{ inserted: boolean }[]>`
+        INSERT INTO usage_events ${this.sql(keyed, ...EVENT_COLUMNS)}
+        ON CONFLICT (message_id, request_id) DO UPDATE SET
+          input_tokens          = EXCLUDED.input_tokens,
+          output_tokens         = EXCLUDED.output_tokens,
+          thinking_tokens       = EXCLUDED.thinking_tokens,
+          cache_read_tokens     = EXCLUDED.cache_read_tokens,
+          cache_write_5m_tokens = EXCLUDED.cache_write_5m_tokens,
+          cache_write_1h_tokens = EXCLUDED.cache_write_1h_tokens,
+          output_final          = EXCLUDED.output_final,
+          cost_usd              = EXCLUDED.cost_usd
+        WHERE EXCLUDED.output_tokens * 3 + (CASE EXCLUDED.output_final WHEN TRUE THEN 2 WHEN FALSE THEN 1 ELSE 0 END)
+            > usage_events.output_tokens * 3 + (CASE usage_events.output_final WHEN TRUE THEN 2 WHEN FALSE THEN 1 ELSE 0 END)
+        RETURNING (xmax = 0) AS inserted`;
+      for (const r of res) {
+        if (r.inserted) inserted++;
+        else updated++;
+      }
+    }
+    if (semantic.length > 0) {
+      const res = await this.sql<{ ok: number }[]>`
+        INSERT INTO usage_events ${this.sql(semantic, ...EVENT_COLUMNS)}
+        ON CONFLICT DO NOTHING
+        RETURNING 1 AS ok`;
+      inserted += res.length;
+    }
+    return { inserted, updated };
   }
 
   async insertQuotaSnapshot(s: QuotaSnapshot, machineId: string | null = null): Promise<void> {
@@ -258,6 +299,22 @@ export class PgStore implements Store {
    * 非 Anthropic 模型（公司 Mac 上实测到 qwen3.7-plus）。那些 token 不吃 Claude 额度，
    * 算进来会让「这段时间本地有动静」在实际没动静时也成立，把别处的消耗吞掉。
    */
+  async quotaBreakdowns(profileId: string, since: Date): Promise<QuotaBreakdownRow[]> {
+    // raw 是整份响应、每个窗口一行各存一份；只取 seven_day 那行就够了
+    const rows = await this.sql<Record<string, unknown>[]>`
+      SELECT captured_at, utilization_pct, raw->'seven_day_breakdown' AS breakdown
+      FROM quota_snapshots
+      WHERE profile_id = ${profileId} AND window_kind = 'seven_day'
+        AND captured_at >= ${since}
+        AND jsonb_typeof(raw->'seven_day_breakdown') = 'object'
+      ORDER BY captured_at`;
+    return rows.map((r) => ({
+      ts: r["captured_at"] as Date,
+      weeklyPct: n(r["utilization_pct"]),
+      breakdown: r["breakdown"],
+    }));
+  }
+
   async quotaEventTimestamps(profileId: string, from: Date, to: Date): Promise<Date[]> {
     const rows = await this.sql<Record<string, unknown>[]>`
       SELECT ts FROM usage_events

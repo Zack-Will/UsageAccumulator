@@ -49,6 +49,7 @@
   "entrypoint": "claude-desktop",                // claude-desktop | cli
   "service_tier": "standard",
   "is_sidechain": false,
+  "output_final": true,                          // output_tokens 是否为最终值；false = 只是下界；旧探针不报 → 服务端存 null
   "backfill": false                              // 首次全量导入时为 true
 }
 ```
@@ -73,7 +74,10 @@
 | `entrypoint` | `entrypoint` |
 | `service_tier` | `message.usage.service_tier` |
 | `is_sidechain` | `isSidechain` |
+| `output_final` | `message.stop_reason` 非空，或 `message.usage` 带 `iterations` |
 
+> **同一条消息在 JSONL 里有多行**（按 content block 拆开写），input / cache 各行相同，`output_tokens` 只增不减。主线会话每行都是最终值；**子代理转录只有最后一行是最终值**，前面各行是流式中途值（实测 2~7），而且很多子代理消息根本没写出最终行（2026-10-02 实测 NAS 一个 Workflow 会话 3905 条里 2055 条）。所以 `output_final = false` 的 `output_tokens` 与成本都只是**下界**。
+>
 > `cache_creation_input_tokens` 是 5m + 1h 的**总和**，仅作校验用，不入库。若 `cache_creation` 对象缺失，退化为全部计入 `cache_write_5m_tokens` 并记一条 warn。
 
 ### 1.2 去重
@@ -88,7 +92,13 @@ semantic_id = sha256(session_id | ts_ms | model | input | output | cache_read | 
 
 **线格式规定**：`semantic_id` **永远填写**，不因 `request_id` 存在而省略。`request_id` 缺失时填空字符串 `""`，不要填 null、不要拿 semantic_id 冒充 request_id。服务端据此选择主键路径。
 
-服务端 `ON CONFLICT DO NOTHING`。**同一次请求会被多台机器上报**（ssh 场景），这是预期行为。
+**同一个键可能被报多次**：ssh 场景下多台机器各报一份；同一条消息的多行也是同一个键（见 1.1）。两处去重（探针本地队列、服务端入库）都按「用量更完整」取大，**不是先到先得**：
+
+```
+usage_rank = output_tokens × 3 + (output_final 为 true → 2，false → 1，null → 0)
+```
+
+服务端对有 `request_id` 的行 `ON CONFLICT (message_id, request_id) DO UPDATE`：新来的 `usage_rank` 更大时覆盖全部 token 列、`output_final` 与 `cost_usd`，其余列（`machine_id`、`profile_id` 等）仍归先到的那份。`request_id` 为空的语义兜底行仍是 `DO NOTHING`——`semantic_id` 里含 output，同一条消息的不同行本来就是不同的键。
 
 实测口径（见 ARCHITECTURE §2.0）：28,794 条原始事件去重后剩 10,423 条，**64% 是重复**；其中跨机重复仅 441 条。探针会先在本地去重一轮（实测吃掉 56%），服务端仍须自己再去一次，不得假设上游已去干净。
 
@@ -146,7 +156,7 @@ Idempotency-Key: <批次内容的 sha256 前 32 位>
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| `POST` | `/v1/ingest/events` | body: gzip NDJSON，每行一个 UsageEvent。→ `200 {"accepted":N,"deduped":M,"invalid":K}`（`invalid` = 跳过的坏行；坏行不得毁掉整批） |
+| `POST` | `/v1/ingest/events` | body: gzip NDJSON，每行一个 UsageEvent。→ `200 {"accepted":N,"updated":U,"deduped":M,"invalid":K}`（`updated` = 库里已有、这次用量更完整而被覆盖的；`invalid` = 跳过的坏行；坏行不得毁掉整批） |
 | `POST` | `/v1/ingest/quota` | body: QuotaSnapshot JSON → `200 {"ok":true}` |
 | `POST` | `/v1/enroll` | body: `{"enroll_token","hostname","os","provisional_machine_id"}` → `200 {"machine_id","machine_token"}` |
 | `GET` | `/v1/profiles` | → `{"profiles":[{"id","kind","label","account_uuid","base_url","plan","org_uuid","active"}]}`（注意键是 `id` 不是 `profile_id`）。`active` 恰有一个为 `true`：最近有用量的那个。**所有带 `profile_id` 参数的接口**在不传它、且 profile 多于一个时回落到 active，不再 400 |
@@ -186,10 +196,37 @@ Idempotency-Key: <批次内容的 sha256 前 32 位>
     },
     "projected_curve": [                        // ★ 预测曲线，由服务端算，前端不得自行外推
       { "ts": "...", "p25": 63.0, "mid": 64.2, "p75": 66.1 }
+    ],
+    "attribution": {                            // 有多少额度不是本地 Claude Code 吃的
+      "other_pct_lower_bound": 4.0,             // 差额法：安静区间里的上升（下界）
+      "ambiguous_pct": 50.0,                    // 差额法判不了的（本地当时有活动）
+      "unobserved_pct": 0.0,                    // 窗口开头没采到的
+      "quiet_spans": 2, "has_sampling_gap": false, "usable": true,
+      "non_code_pct": 2.6,                      // 官方拆分的非 Code 用量，折成本窗口刻度；拿不到为 null
+      "other_pct": 5.1,                         // 最佳估计：7d = non_code_pct；5h = 两者合成；没有拆分 = 下界
+      "local_utilization_pct": 56.9             // = utilization_pct − other_pct，「满额约」的分母
+    }
+  }],
+  "products": {                                 // 官方「本周按产品」拆分；team 组织没有，为 null
+    "as_of": "2026-09-29T03:54:23Z",
+    "weekly_pct": 9.0,                          // 这份拆分那一刻的 7d 利用率
+    "rows": [
+      { "key": "claude_code", "label": "Claude Code", "share_pct": 97, "pct": 8.73 },  // share 占本周已用量（官方整数）
+      { "key": "chat",        "label": "Chats",       "share_pct": 3,  "pct": 0.27 }   // pct 占周限额 = weekly × share / 100
     ]
-  }]
+  }
 }
 ```
+
+**非本地用量的两条路径**（算法见 `@ua/core` 的 `attribution.ts` / `products.ts`）：
+
+| 窗口 | `other_pct` 怎么来 |
+|---|---|
+| 7d，有拆分 | 直接等于 `non_code_pct`。7d 一格就是 1 个整点，安静时段里零点几的聊天就能把计数推过整数线，差额法会把整点记到别处 |
+| 5h，有拆分 | `max(non_code_pct, 差额法下界 + 拆分在「判不了」区间里的部分)`。5h 没有官方拆分，`non_code_pct` = 周刻度的非 Code 增量 × 历史估出的 5h/7d 刻度比（Max 5x 实测约 9.4） |
+| 没有拆分（team 组织） | 等于 `other_pct_lower_bound`，与以前一致 |
+
+周刻度的非 Code 累计量要先做单调拟合（PAVA）再相减：份额是整数，Code 在涨、聊天没动时份额会被稀释，直接相减会得到负数。
 
 **`projected_curve` 必须由服务端计算，前端不得自行外推。** 原因：5h 窗口是线性速率外推（§7.1），但 **7d 窗口按 §7.2 用的是「按星期几的日历模式」**，线性外推会系统性偏离。曲线从 `now` 开始、到窗口结束，点密度与 `burn_curve` 一致。
 
@@ -229,6 +266,7 @@ Idempotency-Key: <批次内容的 sha256 前 32 位>
                  "cache_write_5m_tokens": 0, "cache_write_1h_tokens": 0, "total_tokens": 0,
                  "cost_usd": null,             // null = 该桶无任何有报价的模型
                  "unpriced_events": 12,        // >0 = 成本不完整，前端必须与「成本为 0」区分开
+                 "partial_output_events": 3,   // >0 = 有事件的 output_final = false，output_tokens 与 cost_usd 都是下界
                  "series": [ { "ts": "2026-09-21T13:00:00Z", "total_tokens": 8123, "events": 12,
                                 "cost_usd": 0.4213, "unpriced_events": 0 } ] } ] }
 //   series 仅在 bucket=hour|day 时出现

@@ -43,6 +43,7 @@ export function makeEvent(over: Partial<UsageEvent> = {}): UsageEvent {
     entrypoint: "claude-desktop",
     serviceTier: "standard",
     isSidechain: false,
+    outputFinal: true,
     backfill: false,
     ...over,
   };
@@ -84,6 +85,7 @@ export function toWire(e: UsageEvent): Record<string, unknown> {
     entrypoint: e.entrypoint,
     service_tier: e.serviceTier,
     is_sidechain: e.isSidechain,
+    output_final: e.outputFinal,
     backfill: e.backfill,
   };
 }

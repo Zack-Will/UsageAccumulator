@@ -20,6 +20,7 @@ import type {
   DistributionBucket,
   DistributionParams,
   Machine,
+  Products,
   Profile,
   ProjectedCurvePoint,
   QuotaHistory,
@@ -284,6 +285,8 @@ function makeWindow(
       quiet_spans: 3,
       has_sampling_gap: false,
       usable: true,
+      non_code_pct: Math.round(spec.used * 0.03 * 10) / 10,
+      other_pct: Math.round(spec.used * 0.12 * 10) / 10,
       local_utilization_pct: Math.round(spec.used * 0.88 * 10) / 10,
     },
   };
@@ -322,6 +325,8 @@ function idleWindow(w: WindowState): WindowState {
       quiet_spans: 0,
       has_sampling_gap: false,
       usable: false,
+      non_code_pct: 0,
+      other_pct: 0,
       local_utilization_pct: 0,
     },
   };
@@ -366,6 +371,22 @@ function windowsActive(nowMs: number, drift: number): WindowsCurrent {
         seed: 3041,
       }),
     ],
+    products: mockProducts(nowMs, clampPct(41 + drift * 0.25)),
+  };
+}
+
+/** 与 2026-09-29 线上响应同形：份额是整数，四行固定顺序 */
+function mockProducts(nowMs: number, weekly: number): Products {
+  const shares: [string, string, number][] = [
+    ["claude_code", "Claude Code", 97],
+    ["chat", "Chats", 3],
+    ["cowork", "Cowork", 0],
+    ["other", "Other", 0],
+  ];
+  return {
+    as_of: iso(nowMs - 2 * MIN),
+    weekly_pct: weekly,
+    rows: shares.map(([key, label, share]) => ({ key, label, share_pct: share, pct: (weekly * share) / 100 })),
   };
 }
 
@@ -443,6 +464,8 @@ function bucket(
     total_tokens: totalTokens,
     cost_usd: priced ? Math.round(totalTokens * 0.0000042 * 10000) / 10000 : null,
     unpriced_events: unpriced,
+    // 子代理的最终用量常常没写进 JSONL：让 Opus 桶带一些，看板的「≥」才有东西可显示
+    partial_output_events: priced && key.includes("opus") ? Math.round(events * 0.15) : 0,
   };
 }
 

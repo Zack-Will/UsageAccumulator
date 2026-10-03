@@ -1,9 +1,10 @@
-import { dedupKey, type Profile, type QuotaSample, type QuotaSnapshot } from "@ua/core";
+import { dedupKey, usageRank, type Profile, type QuotaSample, type QuotaSnapshot } from "@ua/core";
 import type {
   CalibrationRecord,
   EventRow,
   LatestQuotaWindow,
   MachineRecord,
+  QuotaBreakdownRow,
   Store,
 } from "./store.js";
 import { countsTowardQuota } from "./pricing.js";
@@ -69,15 +70,36 @@ export class MemoryStore implements Store {
     return out;
   }
 
-  async insertEvents(rows: EventRow[]): Promise<number> {
+  async insertEvents(rows: EventRow[]): Promise<{ inserted: number; updated: number }> {
     let inserted = 0;
+    let updated = 0;
     for (const row of rows) {
       const key = dedupKey(row.event);
-      if (this.events.has(key)) continue;
-      this.events.set(key, row);
-      inserted++;
+      const cur = this.events.get(key);
+      if (!cur) {
+        this.events.set(key, row);
+        inserted++;
+        continue;
+      }
+      // 语义兜底的键里含 output_tokens，比不出谁更完整（与 store-pg 一致）
+      if (!row.event.requestId || usageRank(row.event) <= usageRank(cur.event)) continue;
+      const e = row.event;
+      this.events.set(key, {
+        event: {
+          ...cur.event,
+          inputTokens: e.inputTokens,
+          outputTokens: e.outputTokens,
+          thinkingTokens: e.thinkingTokens,
+          cacheReadTokens: e.cacheReadTokens,
+          cacheWrite5mTokens: e.cacheWrite5mTokens,
+          cacheWrite1hTokens: e.cacheWrite1hTokens,
+          outputFinal: e.outputFinal,
+        },
+        costUsd: row.costUsd,
+      });
+      updated++;
     }
-    return inserted;
+    return { inserted, updated };
   }
 
   async insertQuotaSnapshot(s: QuotaSnapshot, machineId: string | null = null): Promise<void> {
@@ -119,6 +141,19 @@ export class MemoryStore implements Store {
         if (w.windowKind !== windowKind) continue;
         out.push({ ts: snapshot.capturedAt, pct: w.utilizationPct });
       }
+    }
+    return out.sort((a, b) => a.ts.getTime() - b.ts.getTime());
+  }
+
+  async quotaBreakdowns(profileId: string, since: Date): Promise<QuotaBreakdownRow[]> {
+    const out: QuotaBreakdownRow[] = [];
+    for (const { snapshot } of this.quota) {
+      if (snapshot.profileId !== profileId || snapshot.capturedAt < since) continue;
+      const weekly = snapshot.windows.find((w) => w.windowKind === "seven_day");
+      const raw = snapshot.raw as Record<string, unknown> | null;
+      const breakdown = raw && typeof raw === "object" ? raw["seven_day_breakdown"] : undefined;
+      if (!weekly || !breakdown || typeof breakdown !== "object" || Array.isArray(breakdown)) continue;
+      out.push({ ts: snapshot.capturedAt, weeklyPct: weekly.utilizationPct, breakdown });
     }
     return out.sort((a, b) => a.ts.getTime() - b.ts.getTime());
   }

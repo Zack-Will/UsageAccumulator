@@ -1,4 +1,4 @@
-import type { DistributionBucket } from "../api";
+import type { DistributionBucket, Products } from "../api";
 import { bucketCacheHitPct, byCostThenTokens, type UsageTotals } from "../api/derive";
 import { fmtPct, fmtTokens } from "../charts/base";
 import { Card, Cost, Mono, Placeholder } from "./primitives";
@@ -47,7 +47,7 @@ export function UsageSummary({
             <div className="usum__big usum__big--end">
               <span className="usum__unit">≈</span>
               <span className="usum__cost">
-                <Cost usd={totals.cost.usd} unpriced={totals.cost.unpricedEvents} />
+                <Cost usd={totals.cost.usd} unpriced={totals.cost.unpricedEvents} partial={totals.cost.partialOutputEvents} />
               </span>
             </div>
           </div>
@@ -182,7 +182,7 @@ export function BreakdownTable({
                   </td>
                   <td className="btable__hit" data-label="命中">{hit === null ? "—" : fmtPct(hit, 0)}</td>
                   <td className="btable__cost">
-                    <Cost usd={b.cost_usd} unpriced={b.unpriced_events} />
+                    <Cost usd={b.cost_usd} unpriced={b.unpriced_events} partial={b.partial_output_events} />
                   </td>
                 </tr>
               );
@@ -201,6 +201,7 @@ function RestRow({ rest, totalCost }: { rest: DistributionBucket[]; totalCost: n
   const priced = rest.filter((b) => b.cost_usd !== null);
   const cost = priced.length ? priced.reduce((a, b) => a + (b.cost_usd ?? 0), 0) : null;
   const unpriced = rest.reduce((a, b) => a + b.unpriced_events, 0);
+  const partial = rest.reduce((a, b) => a + (b.partial_output_events ?? 0), 0);
   const share = cost !== null && totalCost > 0 ? (cost / totalCost) * 100 : null;
   return (
     <tr className="btable__rest">
@@ -217,8 +218,61 @@ function RestRow({ rest, totalCost }: { rest: DistributionBucket[]; totalCost: n
       </td>
       <td className="btable__hit" data-label="命中">—</td>
       <td className="btable__cost">
-        <Cost usd={cost} unpriced={unpriced} />
+        <Cost usd={cost} unpriced={unpriced} partial={partial} />
       </td>
     </tr>
+  );
+}
+
+/**
+ * 官方「本周按产品」拆分：与 claude.ai / Claude Code 的 usage 页同一组数。
+ *
+ * 份额是官方给的（占本周已用量），「占周限额」是我们乘出来的（× 7d 利用率），
+ * 后者才能和窗口卡上的百分比对上。与明细表同一个形状。
+ */
+export function ProductsCard({
+  products,
+  colors,
+  span,
+  mdSpan,
+}: {
+  products: Products;
+  colors: Map<string, string>;
+  span: number;
+  mdSpan?: number;
+}) {
+  return (
+    <Card title="本周按产品" span={span} mdSpan={mdSpan}>
+      <table className="btable btable--products">
+        <thead>
+          <tr>
+            <th scope="col" className="btable__name" />
+            <th scope="col" className="btable__barcol">份额</th>
+            <th scope="col">占周限额</th>
+          </tr>
+        </thead>
+        <tbody>
+          {products.rows.map((r) => {
+            const color = colors.get(r.key);
+            return (
+              <tr key={r.key}>
+                <th scope="row" className="btable__name" title={r.key}>
+                  <span className="btable__swatch" style={{ background: color }} />
+                  <span className="btable__label">{r.label}</span>
+                </th>
+                <td className="btable__barcol">
+                  <span className="btable__track">
+                    <span className="btable__fill" style={{ width: `${r.share_pct}%`, background: color }} />
+                  </span>
+                  <span className="btable__pct">{fmtPct(r.share_pct, 0)}</span>
+                </td>
+                {/* 不到 1 个点时留一位小数：聊天常是零点几，取整成 0% 等于没说 */}
+                <td className="btable__cost">{fmtPct(r.pct, r.pct > 0 && r.pct < 1 ? 1 : 0)}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </Card>
   );
 }
