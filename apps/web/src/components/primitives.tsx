@@ -77,8 +77,9 @@ export function Mono({ children, tone }: { children: ReactNode; tone?: "muted" |
  * unpriced_events > 0 表示「成本不完整」。两者都不能显示成 $0.00 —— 定价表是
  * 刻意留空的，把缺价渲染成 0 会让成本统计静默出错。
  *
- * partial > 0：有事件的最终用量没写进 JSONL（子代理常见），输出量只是下界 ——
- * 金额前加「≥」，不能让它看起来是精确值。
+ * partial > 0：有事件的最终用量没写进 JSONL（子代理常见），输出量只是下界。
+ * 只放进悬停提示与读屏标签，不在数字上加符号：金额本来就是按价目表折的估算，
+ * 加「≥」破坏整体观感（用户 2026-10-03 明确要求去掉）。
  */
 export function Cost({ usd, unpriced, partial = 0 }: { usd: number | null; unpriced: number; partial?: number }) {
   if (usd === null) {
@@ -99,10 +100,9 @@ export function Cost({ usd, unpriced, partial = 0 }: { usd: number | null; unpri
     <span
       className="cost"
       aria-label={notes.length > 0 ? `${partial > 0 ? "至少 " : ""}${usd.toFixed(4)} 美元，${notes.join("，")}` : undefined}
+      title={partial > 0 ? `${partial} 个事件的输出量只是下界` : undefined}
     >
-      <span className="mono">
-        {partial > 0 ? "≥" : ""}${usd.toFixed(2)}
-      </span>
+      <span className="mono">${usd.toFixed(2)}</span>
       {unpriced > 0 && (
         <span className="cost__mark" aria-hidden="true">
           †

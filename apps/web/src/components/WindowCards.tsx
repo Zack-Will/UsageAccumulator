@@ -228,7 +228,6 @@ export function WindowCard({
   const ref = w.full_cost_reference ?? null;
   const useRef = ref !== null && localPct < FULL_COST_MIN_LOCAL_PCT;
   const fullWindowCost = useRef ? ref.usd : extrapolated;
-  const fullWindowPartial = useRef ? ref.partial_output_events : (cost?.partialOutputEvents ?? 0);
   /** 只在真的测到别处的消耗时才占一行字；测到 0 就什么都不说。空闲窗口里没有「窗口内」 */
   const otherPct = idle ? 0 : (attr?.other_pct ?? attr?.other_pct_lower_bound ?? 0);
   /**
@@ -324,8 +323,7 @@ export function WindowCard({
               className={`quota__v quota__v--strong${useRef ? " quota__v--ref" : ""}`}
               title={useRef ? `最近 ${ref.windows} 个窗口的中位数` : undefined}
             >
-              {/* 已花是下界（有事件的最终输出量没写进 JSONL）→ 满额约也是下界 */}
-              {fullWindowCost !== null ? `${fullWindowPartial > 0 ? "≥" : ""}$${fullWindowCost.toFixed(0)}` : "—"}
+              {fullWindowCost !== null ? `$${fullWindowCost.toFixed(0)}` : "—"}
             </span>
             {/* 不到 1% 时留一位小数，别四舍五入成「0% 非 Code」 */}
             {otherShare >= 0.05 ? (
