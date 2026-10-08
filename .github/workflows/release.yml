@@ -1,5 +1,5 @@
 # 推 v* tag 发布全部产物：
-#   探针   → npm  @zack-will/ua-probe
+#   探针   → Release 附件 ua-probe.tgz；配了 NPM_TOKEN 时同时发 npm @zack-will/ua-probe
 #   服务端 → GHCR ghcr.io/zack-will/usage-accumulator（amd64 + arm64，自带看板）
 #   Mac 菜单栏 / 安卓 → GitHub Release 附件
 #
@@ -8,7 +8,7 @@
 # 带 `-` 的 tag（v0.2.0-rc.1）是预发布：npm 走 next 标签，镜像不更新 latest，Release 标成 pre-release。
 #
 # 需要的仓库 Secrets：
-#   NPM_TOKEN                     npm 的 Automation / Granular token，要能发布 @zack-will 下的包
+#   NPM_TOKEN                     可选。npm 的 Automation / Granular token，要能发布 @zack-will 下的包
 #   ANDROID_KEYSTORE_BASE64       正式 keystore（base64）
 #   ANDROID_KEYSTORE_PASSWORD / ANDROID_KEY_ALIAS / ANDROID_KEY_PASSWORD
 name: release
@@ -44,6 +44,9 @@ jobs:
     permissions:
       contents: read
       id-token: write   # npm provenance
+    env:
+      # 放在 job 级：step 自己的 env 在它的 if 里读不到
+      NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -54,13 +57,27 @@ jobs:
           registry-url: https://registry.npmjs.org
       - run: pnpm install --frozen-lockfile --filter @ua/probe...
       - run: node packages/ua-probe/scripts/pack-npm.mjs "$VERSION"
-      # 发出去之前确认单文件在 node 22 上真的能跑
-      - run: node packages/ua-probe/dist/npm/ua-probe.mjs --help
+      # 打成 tgz 挂到 Release 上：不经 npm 源也能 `npm i -g <链接>`。
+      # 文件名不带版本号，releases/latest/download/ua-probe.tgz 就永远指向最新版
+      - name: npm pack
+        run: |
+          cd packages/ua-probe/dist/npm
+          mv "$(npm pack --silent)" "$RUNNER_TEMP/ua-probe.tgz"
+      # 发出去之前确认装得上、在 node 22 上真的能跑
+      - name: 冒烟
+        run: |
+          npm i -g "$RUNNER_TEMP/ua-probe.tgz"
+          ua-probe --help
+      - uses: actions/upload-artifact@v4
+        with:
+          name: probe
+          path: ${{ runner.temp }}/ua-probe.tgz
+          if-no-files-found: error
+      # 没配 NPM_TOKEN 就跳过，只发 Release 上的 tgz；配上之后自动开始发 npm
       - name: npm publish
+        if: env.NODE_AUTH_TOKEN != ''
         working-directory: packages/ua-probe/dist/npm
         run: npm publish --provenance --access public --tag "$([ "$PRERELEASE" = true ] && echo next || echo latest)"
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   docker:
     needs: test
@@ -168,7 +185,7 @@ jobs:
 
           | 组件 | 获取方式 |
           |---|---|
-          | 探针 | \`npm i -g @zack-will/ua-probe@$V\` |
+          | 探针 | \`npm i -g https://github.com/${{ github.repository }}/releases/download/$VERSION/ua-probe.tgz\` |
           | 服务端 + 看板 | \`docker pull ghcr.io/zack-will/usage-accumulator:$V\` |
           | macOS 菜单栏 | 下载 \`UsageAccumulator-$V-macos.zip\`，解压后拖进「应用程序」。未公证，首次打开被拦时执行 \`xattr -dr com.apple.quarantine /Applications/UsageAccumulator.app\` |
           | 安卓 | 下载 \`UsageAccumulator-$V-android.apk\` 安装 |

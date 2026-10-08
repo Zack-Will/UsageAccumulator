@@ -32,7 +32,7 @@
 
 | 组件 | 获取方式 |
 |---|---|
-| 探针 | `npm i -g @zack-will/ua-probe` |
+| 探针 | `npm i -g https://github.com/Zack-Will/UsageAccumulator/releases/latest/download/ua-probe.tgz` |
 | 服务端 + 看板 | `docker pull ghcr.io/zack-will/usage-accumulator`（amd64 / arm64） |
 | macOS 菜单栏 | [Releases](https://github.com/Zack-Will/UsageAccumulator/releases) 里的 `UsageAccumulator-<版本>-macos.zip` |
 | 安卓 App | [Releases](https://github.com/Zack-Will/UsageAccumulator/releases) 里的 `UsageAccumulator-<版本>-android.apk` |
@@ -156,7 +156,8 @@ curl https://ua.example.com/healthz     # → ok
 **拿到探针**：
 
 ```bash
-npm i -g @zack-will/ua-probe          # 推荐。只依赖 Node ≥ 22.13
+# 推荐。从 GitHub Release 装最新版，只依赖 Node ≥ 22.13
+npm i -g https://github.com/Zack-Will/UsageAccumulator/releases/latest/download/ua-probe.tgz
 ```
 
 <details>
@@ -175,7 +176,7 @@ alias ua-probe="$PWD/node_modules/.bin/tsx $PWD/packages/ua-probe/src/cli.ts"
 </details>
 
 不要用 `npx` 跑 `install`：常驻服务会记下探针所在路径，npx 缓存一清服务就起不来。
-升级：`npm i -g @zack-will/ua-probe@latest`，再重启服务（macOS `launchctl kickstart -k gui/$(id -u)/com.ua.probe`，Linux `systemctl --user restart ua-probe`）。
+升级：重跑上面那条 `npm i -g`（链接始终指向最新版），再重启服务（macOS `launchctl kickstart -k gui/$(id -u)/com.ua.probe`，Linux `systemctl --user restart ua-probe`）。
 
 **配对并导入历史**：
 
@@ -330,15 +331,16 @@ pnpm conformance                 # 契约一致性检查
 ## 发布
 
 推一个 `v*` tag，GitHub Actions（`.github/workflows/release.yml`）跑完测试后同时发布：
-探针到 npm、服务端镜像到 GHCR（amd64 + arm64）、Mac zip 与安卓 APK 到 GitHub Release。
+服务端镜像到 GHCR（amd64 + arm64），探针 tgz、Mac zip 与安卓 APK 到 GitHub Release。
+配了 `NPM_TOKEN` 时，探针还会同时发到 npm（`@zack-will/ua-probe`）。
 
 ```bash
 git tag v0.2.0 && git push origin v0.2.0
 ```
 
 带 `-` 的 tag（如 `v0.2.0-rc.1`）是预发布：npm 走 `next` 标签，镜像不更新 `latest`。
-需要的仓库 Secrets：`NPM_TOKEN`，以及安卓签名用的 `ANDROID_KEYSTORE_BASE64`、`ANDROID_KEYSTORE_PASSWORD`、`ANDROID_KEY_ALIAS`、`ANDROID_KEY_PASSWORD`。
-正式 keystore 不在仓库里，丢了就再也发不出能覆盖安装的更新，务必另外备份。
+需要的仓库 Secrets：安卓签名用的 `ANDROID_KEYSTORE_BASE64`、`ANDROID_KEYSTORE_PASSWORD`、`ANDROID_KEY_ALIAS`、`ANDROID_KEY_PASSWORD`。
+`NPM_TOKEN` 可选。正式 keystore 不在仓库里，丢了就再也发不出能覆盖安装的更新，务必另外备份。
 
 ## 延伸阅读
 
