@@ -1,7 +1,7 @@
 # 推 v* tag 发布全部产物：
 #   探针   → Release 附件 ua-probe.tgz；配了 NPM_TOKEN 时同时发 npm @zack-will/ua-probe
 #   服务端 → GHCR ghcr.io/zack-will/usage-accumulator（amd64 + arm64，自带看板）
-#   Mac 菜单栏 / 安卓 → GitHub Release 附件
+#   Mac 菜单栏（.dmg）/ 安卓（.apk）→ GitHub Release 附件
 #
 #   git tag v0.2.0 && git push origin v0.2.0
 #
@@ -132,7 +132,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: mac
-          path: apps/menubar-mac/build/UsageAccumulator-*-macos.zip
+          path: apps/menubar-mac/build/UsageAccumulator-*-macos.dmg
           if-no-files-found: error
 
   android:
@@ -194,7 +194,7 @@ jobs:
           |---|---|
           | 探针 | \`npm i -g https://github.com/${{ github.repository }}/releases/download/$VERSION/ua-probe.tgz\` |
           | 服务端 + 看板 | \`docker pull ghcr.io/zack-will/usage-accumulator:$V\` |
-          | macOS 菜单栏 | 下载 \`UsageAccumulator-$V-macos.zip\`，解压后拖进「应用程序」。未公证，首次打开被拦时执行 \`xattr -dr com.apple.quarantine /Applications/UsageAccumulator.app\` |
+          | macOS 菜单栏 | 下载 \`UsageAccumulator-$V-macos.dmg\`，打开后把 App 拖进「应用程序」。未公证，首次打开被拦时执行 \`xattr -dr com.apple.quarantine /Applications/UsageAccumulator.app\` |
           | 安卓 | 下载 \`UsageAccumulator-$V-android.apk\` 安装 |
 
           配置与配对见 [README](https://github.com/${{ github.repository }}#readme)。

@@ -34,7 +34,7 @@
 |---|---|
 | 探针 | `npm i -g https://github.com/Zack-Will/UsageAccumulator/releases/latest/download/ua-probe.tgz` |
 | 服务端 + 看板 | `docker pull ghcr.io/zack-will/usage-accumulator`（amd64 / arm64） |
-| macOS 菜单栏 | [Releases](https://github.com/Zack-Will/UsageAccumulator/releases) 里的 `UsageAccumulator-<版本>-macos.zip` |
+| macOS 菜单栏 | [Releases](https://github.com/Zack-Will/UsageAccumulator/releases) 里的 `UsageAccumulator-<版本>-macos.dmg` |
 | 安卓 App | [Releases](https://github.com/Zack-Will/UsageAccumulator/releases) 里的 `UsageAccumulator-<版本>-android.apk` |
 
 ## 仓库结构
@@ -246,8 +246,8 @@ ua-probe status
 
 ### 3. macOS 菜单栏
 
-从 [Releases](https://github.com/Zack-Will/UsageAccumulator/releases) 下载 `UsageAccumulator-<版本>-macos.zip`（Apple 芯片与 Intel 通用，需要 macOS 14+），
-解压后拖进「应用程序」。App 未公证，首次打开被 Gatekeeper 拦时：
+从 [Releases](https://github.com/Zack-Will/UsageAccumulator/releases) 下载 `UsageAccumulator-<版本>-macos.dmg`（Apple 芯片与 Intel 通用，需要 macOS 14+），
+打开后把 App 拖进旁边的「应用程序」。App 未公证，首次打开被 Gatekeeper 拦时：
 
 ```bash
 xattr -dr com.apple.quarantine /Applications/UsageAccumulator.app
@@ -331,7 +331,7 @@ pnpm conformance                 # 契约一致性检查
 ## 发布
 
 推一个 `v*` tag，GitHub Actions（`.github/workflows/release.yml`）跑完测试后同时发布：
-服务端镜像到 GHCR（amd64 + arm64），探针 tgz、Mac zip 与安卓 APK 到 GitHub Release。
+服务端镜像到 GHCR（amd64 + arm64），探针 tgz、Mac dmg 与安卓 APK 到 GitHub Release。
 配了 `NPM_TOKEN` 时，探针还会同时发到 npm（`@zack-will/ua-probe`）。
 
 ```bash

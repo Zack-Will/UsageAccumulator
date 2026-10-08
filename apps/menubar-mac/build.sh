@@ -6,7 +6,7 @@
 #
 #   ./build.sh                      本机自用：探针指向本仓库源码，只编 arm64
 #   ./build.sh --release 0.2.0      发布：不带仓库路径（运行时找全局安装的 ua-probe），
-#                                   arm64 + x86_64 通用二进制，打成 build/UsageAccumulator-0.2.0-macos.zip
+#                                   arm64 + x86_64 通用二进制，打成 build/UsageAccumulator-0.2.0-macos.dmg
 set -euo pipefail
 
 RELEASE=0
@@ -84,10 +84,16 @@ fi
 codesign --force --sign - "$APP"
 
 if [ "$RELEASE" = 1 ]; then
-  ZIP="$OUT/UsageAccumulator-$VERSION-macos.zip"
-  rm -f "$ZIP"
-  ditto -c -k --keepParent "$APP" "$ZIP"
-  echo "✓ $ZIP"
+  # 镜像里放 App 和一个指向 /Applications 的替身，挂载后直接拖过去
+  DMG="$OUT/UsageAccumulator-$VERSION-macos.dmg"
+  STAGE="$OUT/dmg"
+  rm -rf "$STAGE" "$DMG"
+  mkdir -p "$STAGE"
+  cp -R "$APP" "$STAGE/"
+  ln -s /Applications "$STAGE/Applications"
+  hdiutil create -quiet -volname "UsageAccumulator $VERSION" -srcfolder "$STAGE" -fs HFS+ -format UDZO "$DMG"
+  rm -rf "$STAGE"
+  echo "✓ $DMG"
 fi
 echo "✓ $APP"
 echo "  运行：open '$APP'"
