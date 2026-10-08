@@ -56,6 +56,8 @@ JSON
 fi
 
 cp "$HERE/Resources/Info.plist" "$CONTENTS/Info.plist"
+# 图标由 scripts/gen-icon.swift 生成，改图形才需要重跑
+cp "$HERE/Resources/AppIcon.icns" "$CONTENTS/Resources/AppIcon.icns"
 if [ -n "$VERSION" ]; then
   /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$CONTENTS/Info.plist"
   # CFBundleVersion 要单调递增：x.y.z → x*10000 + y*100 + z

@@ -5,6 +5,7 @@
   <key>CFBundleName</key>                  <string>UsageAccumulator</string>
   <key>CFBundleDisplayName</key>           <string>UsageAccumulator</string>
   <key>CFBundleIdentifier</key>            <string>space.zackwill.usageaccumulator</string>
+  <key>CFBundleIconFile</key>              <string>AppIcon</string>
   <key>CFBundleExecutable</key>            <string>UsageAccumulator</string>
   <key>CFBundlePackageType</key>           <string>APPL</string>
   <key>CFBundleShortVersionString</key>    <string>0.1.0</string>
