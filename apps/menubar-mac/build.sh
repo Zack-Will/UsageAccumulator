@@ -3,7 +3,19 @@
 #
 # 刻意不用 .xcodeproj：外壳就这么几个文件，swiftc + 手写 Info.plist 足够，
 # 也省掉 Xcode 工程文件在仓库里制造的无谓 diff。
+#
+#   ./build.sh                      本机自用：探针指向本仓库源码，只编 arm64
+#   ./build.sh --release 0.2.0      发布：不带仓库路径（运行时找全局安装的 ua-probe），
+#                                   arm64 + x86_64 通用二进制，打成 build/UsageAccumulator-0.2.0-macos.zip
 set -euo pipefail
+
+RELEASE=0
+VERSION=""
+if [ "${1:-}" = "--release" ]; then
+  RELEASE=1
+  VERSION="${2:?用法：./build.sh --release <x.y.z>}"
+  VERSION="${VERSION#v}"
+fi
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
@@ -22,6 +34,8 @@ cp "$REPO/apps/menubar/src/renderer/index.html" \
 cp "$REPO/packages/ua-tokens/src/theme.css" "$CONTENTS/Resources/renderer/theme.css"
 
 # ---- 探针启动参数 -----------------------------------------------------------
+# Release 包不带：构建机的仓库路径到了别人机器上不存在（见 ProbeSupervisor.globalInstallSpec）
+if [ "$RELEASE" = 0 ]; then
 # 指向仓库里的 tsx + cli.ts，与现有 launchd plist 同一条命令。
 # 想换成打包后的单文件，覆盖 ~/Library/Application Support/UsageAccumulator/probe-launch.json 即可。
 TSX="$REPO/node_modules/.bin/tsx"
@@ -39,18 +53,41 @@ cat > "$CONTENTS/Resources/probe-launch.json" <<JSON
   "env": { "PATH": "$NODE_DIR:/usr/bin:/bin:/usr/sbin:/sbin" }
 }
 JSON
+fi
 
 cp "$HERE/Resources/Info.plist" "$CONTENTS/Info.plist"
+if [ -n "$VERSION" ]; then
+  /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$CONTENTS/Info.plist"
+  # CFBundleVersion 要单调递增：x.y.z → x*10000 + y*100 + z
+  IFS=. read -r MA MI PA <<<"${VERSION%%-*}"
+  /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $((MA * 10000 + MI * 100 + PA))" "$CONTENTS/Info.plist"
+fi
 
 # ---- 编译 -------------------------------------------------------------------
-swiftc -O \
-  -target arm64-apple-macosx14.0 \
-  -framework AppKit -framework WebKit -framework Security \
-  -o "$CONTENTS/MacOS/UsageAccumulator" \
-  "$HERE"/Sources/*.swift
+compile() {
+  swiftc -O \
+    -target "$1-apple-macosx14.0" \
+    -framework AppKit -framework WebKit -framework Security \
+    -o "$2" \
+    "$HERE"/Sources/*.swift
+}
+if [ "$RELEASE" = 1 ]; then
+  compile arm64 "$OUT/UsageAccumulator-arm64"
+  compile x86_64 "$OUT/UsageAccumulator-x86_64"
+  lipo -create -output "$CONTENTS/MacOS/UsageAccumulator" "$OUT/UsageAccumulator-arm64" "$OUT/UsageAccumulator-x86_64"
+  rm "$OUT/UsageAccumulator-arm64" "$OUT/UsageAccumulator-x86_64"
+else
+  compile arm64 "$CONTENTS/MacOS/UsageAccumulator"
+fi
 
 # ad-hoc 签名：个人自用足够，不走公证。没有它 Gatekeeper 每次都要拦。
 codesign --force --sign - "$APP"
 
+if [ "$RELEASE" = 1 ]; then
+  ZIP="$OUT/UsageAccumulator-$VERSION-macos.zip"
+  rm -f "$ZIP"
+  ditto -c -k --keepParent "$APP" "$ZIP"
+  echo "✓ $ZIP"
+fi
 echo "✓ $APP"
 echo "  运行：open '$APP'"

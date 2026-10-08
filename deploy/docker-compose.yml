@@ -1,7 +1,11 @@
 # UsageAccumulator 部署（ARCHITECTURE §3：VPS + Docker Compose）
 #
 #   cp deploy/.env.example deploy/.env && 填好 token，然后
-#   docker compose -f deploy/docker-compose.yml up -d
+#   docker compose -f deploy/docker-compose.yml --env-file deploy/.env pull
+#   docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d
+#
+# server 默认用发布在 GHCR 的镜像（UA_VERSION 指定版本，缺省 latest）；
+# 要从源码构建，把 pull 换成 build。
 #
 # 凭证只走环境变量，绝不写进镜像。官方 sessionKey 只存探针本机，永远不会到这里。
 
@@ -30,6 +34,7 @@ services:
       - "5432"
 
   server:
+    image: ghcr.io/zack-will/usage-accumulator:${UA_VERSION:-latest}
     build:
       context: ..
       dockerfile: packages/ua-server/Dockerfile

@@ -7,7 +7,7 @@
  * ★ 凭证交接走环境变量 `UA_PROBE_CLAUDE_SESSION_KEY`（探针侧的 EnvCredentialStore
  *   已经认这个名字）。**绝不走 argv** —— argv 会出现在 `ps` 的输出里。
  *
- * 启动命令不写死在代码里，由 Resources/probe-launch.json 给出（构建时按仓库路径生成），
+ * 启动命令不写死在代码里，由 Resources/probe-launch.json 给出（本机构建时按仓库路径生成；Release 包不带，改找全局安装的 ua-probe），
  * 用户可以用 ~/Library/Application Support/UsageAccumulator/probe-launch.json 覆盖。
  */
 import Foundation
@@ -70,6 +70,35 @@ final class ProbeSupervisor {
                 continue
             }
             return spec
+        }
+        return Self.globalInstallSpec()
+    }
+
+    /**
+     * Release 包里没有 probe-launch.json（构建机的仓库路径到了别人机器上不存在），
+     * 就去找 `npm i -g @zack-will/ua-probe` 装好的 `ua-probe`。
+     * 它的 shebang 是 `/usr/bin/env node`，LaunchAgent 下 PATH 是最小集，
+     * 所以把它所在目录（node 通常就在旁边）放到 PATH 最前面。
+     */
+    private static func globalInstallSpec() -> ProbeLaunchSpec? {
+        let fm = FileManager.default
+        let home = fm.homeDirectoryForCurrentUser.path
+        var dirs = ["/opt/homebrew/bin", "/usr/local/bin", "\(home)/.npm-global/bin",
+                    "\(home)/.local/bin", "\(home)/.volta/bin"]
+        // nvm：版本号大的优先
+        let nvm = "\(home)/.nvm/versions/node"
+        if let versions = try? fm.contentsOfDirectory(atPath: nvm) {
+            dirs += versions.sorted { $0.compare($1, options: .numeric) == .orderedDescending }
+                .map { "\(nvm)/\($0)/bin" }
+        }
+        for dir in dirs {
+            let exe = "\(dir)/ua-probe"
+            guard fm.isExecutableFile(atPath: exe) else { continue }
+            return ProbeLaunchSpec(
+                command: [exe, "run"],
+                cwd: nil,
+                env: ["PATH": "\(dir):/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"]
+            )
         }
         return nil
     }

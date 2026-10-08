@@ -1,0 +1,185 @@
+# 推 v* tag 发布全部产物：
+#   探针   → npm  @zack-will/ua-probe
+#   服务端 → GHCR ghcr.io/zack-will/usage-accumulator（amd64 + arm64，自带看板）
+#   Mac 菜单栏 / 安卓 → GitHub Release 附件
+#
+#   git tag v0.2.0 && git push origin v0.2.0
+#
+# 带 `-` 的 tag（v0.2.0-rc.1）是预发布：npm 走 next 标签，镜像不更新 latest，Release 标成 pre-release。
+#
+# 需要的仓库 Secrets：
+#   NPM_TOKEN                     npm 的 Automation / Granular token，要能发布 @zack-will 下的包
+#   ANDROID_KEYSTORE_BASE64       正式 keystore（base64）
+#   ANDROID_KEYSTORE_PASSWORD / ANDROID_KEY_ALIAS / ANDROID_KEY_PASSWORD
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+env:
+  VERSION: ${{ github.ref_name }}
+  PRERELEASE: ${{ contains(github.ref_name, '-') }}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test
+
+  npm:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write   # npm provenance
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+      - run: pnpm install --frozen-lockfile --filter @ua/probe...
+      - run: node packages/ua-probe/scripts/pack-npm.mjs "$VERSION"
+      # 发出去之前确认单文件在 node 22 上真的能跑
+      - run: node packages/ua-probe/dist/npm/ua-probe.mjs --help
+      - name: npm publish
+        working-directory: packages/ua-probe/dist/npm
+        run: npm publish --provenance --access public --tag "$([ "$PRERELEASE" = true ] && echo next || echo latest)"
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  docker:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/zack-will/usage-accumulator
+          # 预发布 tag 只打它自己的版本号，不动 latest 和 x.y
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+          flavor: |
+            latest=${{ env.PRERELEASE != 'true' }}
+          labels: |
+            org.opencontainers.image.title=UsageAccumulator server
+            org.opencontainers.image.description=UsageAccumulator 服务端 + 看板
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: packages/ua-server/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  mac:
+    needs: test
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - run: apps/menubar-mac/build.sh --release "$VERSION"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mac
+          path: apps/menubar-mac/build/UsageAccumulator-*-macos.zip
+          if-no-files-found: error
+
+  android:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+      - name: 还原 keystore
+        run: |
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/ua-release.jks"
+          echo "UA_KEYSTORE_FILE=$RUNNER_TEMP/ua-release.jks" >> "$GITHUB_ENV"
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      - name: 构建
+        working-directory: apps/android
+        run: |
+          ./gradlew testDebugUnitTest assembleRelease -PUA_VERSION="$VERSION"
+          V="${VERSION#v}"
+          mv app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/UsageAccumulator-$V-android.apk"
+        env:
+          UA_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          UA_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          UA_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+      # 没签上正式密钥的包不能发：和已装的版本签名不同，用户覆盖安装会失败
+      - name: 校验签名
+        run: |
+          APKSIGNER="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)/apksigner"
+          "$APKSIGNER" verify --print-certs "$RUNNER_TEMP"/UsageAccumulator-*-android.apk | tee /dev/stderr | grep -q "CN=UsageAccumulator"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android
+          path: ${{ runner.temp }}/UsageAccumulator-*-android.apk
+          if-no-files-found: error
+
+  release:
+    needs: [npm, docker, mac, android]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: 创建 Release
+        run: |
+          V="${VERSION#v}"
+          cat > notes.md <<EOF
+          ## 安装
+
+          | 组件 | 获取方式 |
+          |---|---|
+          | 探针 | \`npm i -g @zack-will/ua-probe@$V\` |
+          | 服务端 + 看板 | \`docker pull ghcr.io/zack-will/usage-accumulator:$V\` |
+          | macOS 菜单栏 | 下载 \`UsageAccumulator-$V-macos.zip\`，解压后拖进「应用程序」。未公证，首次打开被拦时执行 \`xattr -dr com.apple.quarantine /Applications/UsageAccumulator.app\` |
+          | 安卓 | 下载 \`UsageAccumulator-$V-android.apk\` 安装 |
+
+          配置与配对见 [README](https://github.com/${{ github.repository }}#readme)。
+          EOF
+          gh release create "$VERSION" dist/* \
+            --repo "${{ github.repository }}" \
+            --title "$VERSION" \
+            --notes-file notes.md \
+            --generate-notes \
+            $([ "$PRERELEASE" = true ] && echo --prerelease)
+        env:
+          GH_TOKEN: ${{ github.token }}

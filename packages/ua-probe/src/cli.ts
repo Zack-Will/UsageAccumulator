@@ -5,7 +5,7 @@ import { hostname, platform, release } from "node:os";
 import { dirname, join } from "node:path";
 import { parseArgs } from "node:util";
 import { ConfigError, loadConfig, renderConfigToml } from "./config.js";
-import { installService } from "./install.js";
+import { defaultCliPath, installService } from "./install.js";
 import { LockBusyError, acquireForRun, lockPathFor, tryAcquire } from "./lock.js";
 import { createLogger } from "./logger.js";
 import { DEFAULT_CONFIG_PATH, expandHome } from "./paths.js";
@@ -131,6 +131,10 @@ async function cmdInstall(
   if (v["no-service"]) {
     process.stdout.write("跳过服务安装（--no-service）\n");
     return 0;
+  }
+  // 服务单元会记下这个路径；npx 缓存一清，服务就指向一个不存在的文件
+  if (/[\\/]_npx[\\/]/.test(defaultCliPath())) {
+    process.stderr.write("⚠️  正在从 npx 缓存运行，缓存清理后常驻服务会起不来。建议改用：npm i -g @zack-will/ua-probe\n");
   }
   const res = await installService(configPath);
   process.stdout.write(`${res.platform}: 已写入 ${res.unitPath}${res.loaded ? "（已加载）" : "（未加载）"}\n`);

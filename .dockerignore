@@ -1,0 +1,11 @@
+# 宿主机的 node_modules 是 macOS 的符号链接树，进镜像只会坏事；镜像里自己装
+**/node_modules
+**/dist
+.git
+.claude
+deploy/.env
+deploy/.env.*
+!deploy/.env.example
+apps/android
+apps/menubar-mac/build
+apps/web/public/dl

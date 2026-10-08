@@ -1,5 +1,6 @@
 /**
- * 把探针打成单文件，放进看板的静态目录一起发布。
+ * 把探针打成单文件。默认放进看板的静态目录一起发布（/dl/ua-probe.mjs）；
+ * `--out <dir>` 改写到别处，npm 发布就用它（见 scripts/pack-npm.mjs）。
  *
  * 为什么需要：目标机器（公司 Mac）不装 pnpm、不装 gh、也不该去 clone 私有仓。
  * 打包产物只依赖 node，一条 curl 就能拿到。
@@ -15,7 +16,8 @@ import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repo = resolve(here, "../../..");
-const outDir = join(repo, "apps/web/public/dl");
+const outArg = process.argv.indexOf("--out");
+const outDir = outArg > 0 ? resolve(process.argv[outArg + 1]) : join(repo, "apps/web/public/dl");
 const outFile = join(outDir, "ua-probe.mjs");
 
 mkdirSync(outDir, { recursive: true });
@@ -30,6 +32,11 @@ await build({
   banner: { js: "import{createRequire as __cr}from'node:module';const require=__cr(import.meta.url);" },
   outfile: outFile,
 });
+
+// esbuild 会保留入口的 `#!/usr/bin/env -S npx tsx`（那是源码直跑用的）。
+// 换成 node：产物要能直接当 npm 的 bin 用，而且目标机器上没有 tsx。
+const code = readFileSync(outFile, "utf8").replace(/^#![^\n]*\n/, "");
+writeFileSync(outFile, `#!/usr/bin/env node\n${code}`);
 
 const buf = readFileSync(outFile);
 const sha = createHash("sha256").update(buf).digest("hex");

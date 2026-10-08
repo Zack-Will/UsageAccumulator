@@ -28,6 +28,15 @@
   窗口按 profile 独立计算。
 - **多个查看端**：Web 看板（SSE 实时刷新）、macOS 菜单栏、安卓 App 与桌面小部件。
 
+## 下载
+
+| 组件 | 获取方式 |
+|---|---|
+| 探针 | `npm i -g @zack-will/ua-probe` |
+| 服务端 + 看板 | `docker pull ghcr.io/zack-will/usage-accumulator`（amd64 / arm64） |
+| macOS 菜单栏 | [Releases](https://github.com/Zack-Will/UsageAccumulator/releases) 里的 `UsageAccumulator-<版本>-macos.zip` |
+| 安卓 App | [Releases](https://github.com/Zack-Will/UsageAccumulator/releases) 里的 `UsageAccumulator-<版本>-android.apk` |
+
 ## 仓库结构
 
 | 路径 | 内容 |
@@ -94,7 +103,20 @@ openssl rand -hex 32   # → UA_ENROLL_TOKEN
 完整列表见 `packages/ua-server/src/config.ts`。
 </details>
 
-### 2A. 宿主机 Node 直接跑（含看板，推荐）
+### 2A. Docker Compose（推荐：Postgres + 服务端镜像 + Caddy 自动证书）
+
+```bash
+# deploy/.env 里填好 UA_DOMAIN、UA_ACME_EMAIL，域名解析到这台机器，开放 80/443
+docker compose -f deploy/docker-compose.yml --env-file deploy/.env pull
+docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d
+```
+
+服务端镜像来自 GHCR，自带看板和探针单文件（`/dl/ua-probe.mjs`）。`deploy/.env` 里的 `UA_VERSION` 可以固定版本，缺省 `latest`；
+想从源码构建，把 `pull` 换成 `build`。升级就是重新 `pull` 再 `up -d`，数据库迁移在服务端启动时自动执行。
+
+内网试跑可以叠加 `docker-compose.lan.yml`：server 直接暴露在 `8787`，不起 Caddy，明文 HTTP，仅限可信内网。
+
+### 2B. 宿主机 Node 直接跑（从源码，适合开发或跑不了容器构建的机器）
 
 ```bash
 # 只起 Postgres（映射到 127.0.0.1:5433），server/caddy 不用
@@ -115,18 +137,6 @@ UA_WEB_DIR="$PWD/apps/web/dist" PORT=8787 \
 常驻建议用 systemd user service（记得 `loginctl enable-linger $USER`），并在前面套一层 HTTPS 反代。
 **安卓 App 只接受 https 地址**，Caddy 的 SSE 与 ingest 配置可以照抄 `deploy/Caddyfile`。
 
-### 2B. Docker Compose（Postgres + server + Caddy 自动证书）
-
-```bash
-# deploy/.env 里填好 UA_DOMAIN、UA_ACME_EMAIL，域名解析到这台机器，开放 80/443
-docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d
-```
-
-注意：当前镜像只包含 API，**不包含看板静态文件**。要在同一域名下提供看板，
-需要把 `apps/web/dist` 挂进 server 容器并设置 `UA_WEB_DIR`（看板与 API 必须同源，SSE 才能带凭证）。
-
-内网试跑可以叠加 `docker-compose.lan.yml`：server 直接暴露在 `8787`，不起 Caddy，明文 HTTP，仅限可信内网。
-
 ### 3. 检查
 
 ```bash
@@ -143,18 +153,29 @@ curl https://ua.example.com/healthz     # → ok
 
 探针用 `UA_ENROLL_TOKEN` 换取这台机器专属的 machine token，之后只用后者上报；服务端只存它的哈希，可单独吊销。
 
-**拿到探针**（二选一）：
+**拿到探针**：
 
 ```bash
-# a) 这台机器有仓库：直接用源码
-alias ua-probe="$PWD/node_modules/.bin/tsx $PWD/packages/ua-probe/src/cli.ts"
+npm i -g @zack-will/ua-probe          # 推荐。只依赖 Node ≥ 22.13
+```
 
-# b) 没有仓库：从服务端下载单文件（需按 2A 先 bundle 再构建看板），只依赖 node
+<details>
+<summary>其他方式：从自己的服务端下载 / 用仓库源码</summary>
+
+```bash
+# 从服务端下载单文件（Docker 镜像自带；源码部署需按 2B 先 bundle 再构建看板）
 mkdir -p ~/.local/share/ua-probe && cd ~/.local/share/ua-probe
 curl -fLO https://ua.example.com/dl/ua-probe.mjs
 curl -fLO https://ua.example.com/dl/ua-probe.mjs.sha256 && shasum -a 256 -c ua-probe.mjs.sha256
 alias ua-probe="node $PWD/ua-probe.mjs"
+
+# 这台机器有仓库：直接用源码
+alias ua-probe="$PWD/node_modules/.bin/tsx $PWD/packages/ua-probe/src/cli.ts"
 ```
+</details>
+
+不要用 `npx` 跑 `install`：常驻服务会记下探针所在路径，npx 缓存一清服务就起不来。
+升级：`npm i -g @zack-will/ua-probe@latest`，再重启服务（macOS `launchctl kickstart -k gui/$(id -u)/com.ua.probe`，Linux `systemctl --user restart ua-probe`）。
 
 **配对并导入历史**：
 
@@ -224,13 +245,22 @@ ua-probe status
 
 ### 3. macOS 菜单栏
 
+从 [Releases](https://github.com/Zack-Will/UsageAccumulator/releases) 下载 `UsageAccumulator-<版本>-macos.zip`（Apple 芯片与 Intel 通用，需要 macOS 14+），
+解压后拖进「应用程序」。App 未公证，首次打开被 Gatekeeper 拦时：
+
 ```bash
-pnpm install                     # 菜单栏托管探针时要用仓库里的 tsx
-cd apps/menubar-mac && ./build.sh
-cp -R build/UsageAccumulator.app /Applications/ && open /Applications/UsageAccumulator.app
+xattr -dr com.apple.quarantine /Applications/UsageAccumulator.app
 ```
 
-未公证，被 Gatekeeper 拦时：`xattr -dr com.apple.quarantine /Applications/UsageAccumulator.app`。
+<details>
+<summary>从源码构建</summary>
+
+```bash
+pnpm install                     # 本机构建的 App 直接用仓库源码跑探针
+cd apps/menubar-mac && ./build.sh
+cp -R build/UsageAccumulator.app /Applications/
+```
+</details>
 
 在面板的设置里填：
 
@@ -242,14 +272,22 @@ cp -R build/UsageAccumulator.app /Applications/ && open /Applications/UsageAccum
 | 轮询（秒） | 30–600，默认 45 |
 
 菜单栏默认会**托管本机探针**（随 App 启停，退出 App 即停止采集，下次打开靠游标补传）。
+Release 版会在 Homebrew、`/usr/local/bin`、nvm、volta 等常见位置找全局安装的 `ua-probe`；
+菜单里显示「探针：未配置」说明没找到，可以用 `~/Library/Application Support/UsageAccumulator/probe-launch.json` 指定启动命令。
+探针要先按上面第 1 步 `install --no-service` 完成配对（由菜单栏托管时**不要**再装 launchd 服务）。
+
 这台 Mac 已经用 launchd 跑探针时，把 `~/Library/Application Support/UsageAccumulator/mac.json` 里的
-`superviseProbe` 改为 `false`，否则两个探针会抢同一个状态库。探针仍需先按上面第 1 步 `install --no-service` 完成配对。
+`superviseProbe` 改为 `false`，否则两个探针会抢同一个状态库。
 
 本机开着系统代理时，如果连不上自建域名，给这个域名加直连规则。
 
 ### 4. 安卓 App 与桌面小部件
 
 App 是一个 WebView 外壳，直接加载服务端托管的看板，网页更新后 App 自动是新版。
+从 [Releases](https://github.com/Zack-Will/UsageAccumulator/releases) 下载 `UsageAccumulator-<版本>-android.apk` 安装（Android 12+）。
+
+<details>
+<summary>从源码构建</summary>
 
 ```bash
 cd apps/android
@@ -261,6 +299,9 @@ export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
 ./gradlew assembleRelease
 adb install -r app/build/outputs/apk/release/app-release.apk
 ```
+
+`local.properties` 里没配 `UA_KEYSTORE_FILE` 等正式签名时用 debug 密钥签名，这样的包和 Release 包不能互相覆盖安装，切换前要先卸载。
+</details>
 
 1. 首次打开填**服务器地址**（只支持 https），然后在页面里用看板密码登录。
 2. 小部件默认沿用 App 里的登录状态；服务端没开密码登录时，在「设置 → 访问 token」里填 `UA_DASHBOARD_TOKEN`。
@@ -285,6 +326,19 @@ pnpm conformance                 # 契约一致性检查
 `packages/ua-server/test/migrate-live.test.ts` 默认跳过，设置 `UA_TEST_DATABASE_URL` 后对真实 Postgres 跑迁移测试。
 
 改了定价只需编辑 `deploy/pricing.json` 并重启服务端；改了表结构就在 `deploy/migrations/` 新增一个幂等的迁移文件（一律 `IF NOT EXISTS`）。
+
+## 发布
+
+推一个 `v*` tag，GitHub Actions（`.github/workflows/release.yml`）跑完测试后同时发布：
+探针到 npm、服务端镜像到 GHCR（amd64 + arm64）、Mac zip 与安卓 APK 到 GitHub Release。
+
+```bash
+git tag v0.2.0 && git push origin v0.2.0
+```
+
+带 `-` 的 tag（如 `v0.2.0-rc.1`）是预发布：npm 走 `next` 标签，镜像不更新 `latest`。
+需要的仓库 Secrets：`NPM_TOKEN`，以及安卓签名用的 `ANDROID_KEYSTORE_BASE64`、`ANDROID_KEYSTORE_PASSWORD`、`ANDROID_KEY_ALIAS`、`ANDROID_KEY_PASSWORD`。
+正式 keystore 不在仓库里，丢了就再也发不出能覆盖安装的更新，务必另外备份。
 
 ## 延伸阅读
 
