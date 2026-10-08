@@ -10,7 +10,6 @@ import AppKit
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var panel: PanelController!
-    private var login: LoginWindow?
     private let config = ConfigStore()
     private let client = SummaryClient()
     private let probe = ProbeSupervisor()
@@ -24,10 +23,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     )
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // ★ 必须在任何一次钥匙串访问之前。LSUIElement 没有能承载授权弹窗的窗口，
-        //   允许交互只会让 SecItemCopyMatching 静默挂起，见 Keychain.swift 开头。
-        Keychain.disableInteractivePrompts()
-
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         panel = PanelController(statusItem: statusItem)
         panel.stateProvider = { [weak self] in self?.state ?? PanelState(
@@ -36,7 +31,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             settings: SettingsView(serverUrl: "", profileId: "", pollSeconds: 45, launchAtLogin: false, hasToken: false)) }
         panel.onRefresh = { [weak self] in self?.poll() }
         panel.onQuit = { NSApp.terminate(nil) }
-        panel.onLogin = { [weak self] in self?.startLogin() }
         panel.onClearToken = { [weak self] in
             guard let self else { return }
             var p = SettingsPatch(); p.token = ""
@@ -57,21 +51,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         refreshSettingsView()
         poll()
         schedule()
-
-        // 首次运行还没有凭证时直接把登录窗摆出来。
-        // 没有 sessionKey 就没有额度数据，面板会是空的 —— 与其让人对着空面板
-        // 猜该点哪里，不如把唯一该做的动作直接呈上。
-        //
-        // ★ 读钥匙串要放到后台：需要用户授权时 SecItemCopyMatching 会同步阻塞，
-        // 放在主线程会把整个启动流程卡死（托盘只剩初始态的一根横线）。
-        DispatchQueue.global(qos: .utility).async {
-            let has = Keychain.hasSessionKey
-            DispatchQueue.main.async {
-                guard !has else { return }
-                Log.info("Keychain 中没有 sessionKey，打开登录窗")
-                self.startLogin()
-            }
-        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -140,16 +119,5 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             self.panel.push(self.state)
         }
-    }
-
-    // ---- 登录 ---------------------------------------------------------------
-
-    private func startLogin() {
-        let w = LoginWindow { [weak self] _ in
-            // 凭证只交给子进程的环境变量，不写进任何配置文件
-            self?.probe.restartForNewCredential()
-        }
-        login = w
-        w.show()
     }
 }

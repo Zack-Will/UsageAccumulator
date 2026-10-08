@@ -2,10 +2,10 @@
  * 探针子进程的监管。
  *
  * 数据逻辑一行都不在 Swift 里：探针仍然是 `@ua/probe` 那份 TS（Linux 上跑的是同一套），
- * 这里只负责拉起来、喂凭证、挂了再拉起来。
+ * 这里只负责拉起来、挂了再拉起来。
  *
- * ★ 凭证交接走环境变量 `UA_PROBE_CLAUDE_SESSION_KEY`（探针侧的 EnvCredentialStore
- *   已经认这个名字）。**绝不走 argv** —— argv 会出现在 `ps` 的输出里。
+ * 不给探针传任何 claude.ai 凭证：额度由服务端直接抓（ARCHITECTURE §5.3），
+ * 菜单栏只从服务端拿汇总好的数字。
  *
  * 启动命令不写死在代码里，由 Resources/probe-launch.json 给出（本机构建时按仓库路径生成；Release 包不带，改找全局安装的 ua-probe），
  * 用户可以用 ~/Library/Application Support/UsageAccumulator/probe-launch.json 覆盖。
@@ -121,32 +121,15 @@ final class ProbeSupervisor {
 
     /**
      * 线程约定：**所有状态只在主线程上读写**（wantRunning / failures / process /
-     * startedAt / state / restartTimer）。work 队列只负责一件事 —— 读钥匙串这个
-     * 可能阻塞的调用 —— 读完立刻回主线程落账。
+     * startedAt / state / restartTimer）。
      *
-     * 为什么要这么死板：
-     *   · `Timer.scheduledTimer` 挂在**调用线程的 run loop** 上。work 队列的线程
-     *     没有跑 run loop，在那儿排的重启定时器永远不会触发，监管就此静默。
+     *   · `Timer.scheduledTimer` 挂在**调用线程的 run loop** 上，别的队列排的
+     *     重启定时器永远不会触发，监管就此静默。
      *   · `state` 的 didSet 会回调 UI，必须在主线程。
-     *   · 2026-09-22 的事故里 spawn() 卡在 Keychain 上两个半小时，正是因为
-     *     阻塞段和状态机混在同一个队列里，一卡就整条链路全停。
-     *     现在钥匙串那侧有硬超时（Keychain.timeout），这侧即使它返回 nil 也照常推进。
      */
     func start() {
         wantRunning = true
         failures = 0
-        spawn()
-    }
-
-    /// 只放「可能阻塞」的调用，不放任何状态
-    private static let work = DispatchQueue(label: "space.zackwill.ua.probe-supervisor")
-
-    /// 凭证变了（刚登录完）要让子进程带着新 env 重来一次。
-    func restartForNewCredential() {
-        guard wantRunning else { return }
-        Log.info("restarting probe with refreshed credential")
-        failures = 0
-        killCurrent()
         spawn()
     }
 
@@ -169,7 +152,7 @@ final class ProbeSupervisor {
         process = nil
     }
 
-    /// 主线程。把唯一可能阻塞的一步（读钥匙串）丢出去，回来再真正拉起。
+    /// 主线程。
     private func spawn() {
         guard wantRunning, process == nil else { return }
         guard let spec = loadSpec() else {
@@ -177,15 +160,6 @@ final class ProbeSupervisor {
             state = .missing
             return
         }
-        Self.work.async {
-            let key = Keychain.readSessionKey()
-            DispatchQueue.main.async { [weak self] in self?.launch(spec, credential: key) }
-        }
-    }
-
-    /// 主线程。
-    private func launch(_ spec: ProbeLaunchSpec, credential: String?) {
-        guard wantRunning, process == nil else { return }
 
         let p = Process()
         p.executableURL = URL(fileURLWithPath: spec.command[0])
@@ -196,13 +170,6 @@ final class ProbeSupervisor {
 
         var env = ProcessInfo.processInfo.environment
         for (k, v) in spec.env ?? [:] { env[k] = v }
-        // ★ 凭证只在这里出现一次：父进程内存 → 子进程 environ。不落盘、不进 argv、不进日志。
-        if let key = credential {
-            env["UA_PROBE_CLAUDE_SESSION_KEY"] = key
-        } else {
-            env.removeValue(forKey: "UA_PROBE_CLAUDE_SESSION_KEY")
-            Log.warn("没有可用的 sessionKey，探针照常启动但额度采集会 401；请从菜单重新登录")
-        }
         p.environment = env
 
         if let handle = openLog() {

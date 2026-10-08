@@ -69,7 +69,7 @@ fi
 compile() {
   swiftc -O \
     -target "$1-apple-macosx14.0" \
-    -framework AppKit -framework WebKit -framework Security \
+    -framework AppKit -framework WebKit \
     -o "$2" \
     "$HERE"/Sources/*.swift
 }

@@ -4,7 +4,7 @@ macOS 菜单栏外壳。取代 `apps/menubar`（Electron，242MB）。
 
 ## 分工
 
-Swift 只做三件 macOS 原生才能做的事：`NSStatusItem`、`WKWebView` 登录、Keychain。
+Swift 只做 macOS 原生才能做的事：`NSStatusItem`、`WKWebView` 面板、监管探针子进程。
 **数据逻辑一行都不在这里** —— JSONL 解析、去重、定价、投影、标定全部留在 `@ua/core` /
 `@ua/probe`（TS），Linux 探针复用同一套代码。两份实现会在跨机去重上悄悄分歧，
 而那种分歧不会报错，只会给出两个都很像样但对不上的数字。
@@ -31,16 +31,12 @@ open build/UsageAccumulator.app
 
 ## 凭证
 
-`登录 Claude`（菜单栏右键）弹出 WKWebView 打开 claude.ai。**用户自己登录**，
-外壳不代填任何东西，也不绕过 Cloudflare —— 需要真浏览器引擎正是因为登录页本身要过挑战。
+菜单栏只认一样东西：服务端的 `UA_DASHBOARD_TOKEN`，在面板设置里填，存在
+`~/Library/Application Support/UsageAccumulator/mac.json`（0600），不进日志、不发给渲染层。
 
-登录后从 `WKHTTPCookieStore` 读出 `sessionKey`（HttpOnly，页面脚本读不到，原生侧读得到），
-写进 Keychain（service `ua-probe` / account `claude-session-key`）。
-
-传给探针走**环境变量** `UA_PROBE_CLAUDE_SESSION_KEY`，不走 argv（argv 会出现在 `ps` 里）。
-也刻意**不让** Node 用 `security` CLI 去读 Keychain —— 那会撞 ACL 授权弹窗，对后台进程是致命的。
-
-配套地，探针的 `~/.config/ua-probe/config.toml` 要设 `credential = "env"`。
+**不碰 claude.ai 凭证。** 额度由服务端直接抓（ARCHITECTURE §5.3），会话在看板顶栏「额度更新」里交给服务端；
+菜单栏只从服务端拿汇总好的数字。早先的「登录 Claude」窗口、Keychain 存取、给探针注入
+`UA_PROBE_CLAUDE_SESSION_KEY` 都已删除（2026-10-08）。
 
 ## 探针监管
 

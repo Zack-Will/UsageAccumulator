@@ -428,6 +428,23 @@
     ua.refresh().then(apply);
   });
 
+  // 内容一变就让外壳重量高度。外壳原本只在推状态和弹出时量，切到设置页不会触发：
+  // 没配置时用量页是空的，面板停在最小高度，设置页被截掉、点不到保存（2026-10-08）。
+  // Electron 版窗口是定高的，没有这个方法。
+  if (typeof ua.resize === "function" && typeof ResizeObserver === "function") {
+    var ro = new ResizeObserver(function () {
+      ua.resize();
+    });
+    ro.observe(el.main);
+    ro.observe(el.settings);
+  }
+
+  // 外壳每次弹出面板时调用（覆盖 Swift 侧注入的默认实现）：通常回到用量页，
+  // 但还没配置时用量页是空的，直接给设置页
+  window.__uaShowUsage = function () {
+    showSettings(!!state && state.status === "unconfigured");
+  };
+
   // 倒计时与陈旧时长自己走表，不等轮询（主进程的托盘心跳是独立的一条）
   setInterval(retick, 30000);
 })();

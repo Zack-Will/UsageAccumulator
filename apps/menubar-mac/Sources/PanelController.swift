@@ -28,7 +28,6 @@ final class PanelController: NSObject, WKScriptMessageHandlerWithReply, WKNaviga
     var onRefresh: (() -> Void)?
     var onSaveSettings: ((SettingsPatch) -> Void)?
     var onClearToken: (() -> Void)?
-    var onLogin: (() -> Void)?
     var onQuit: (() -> Void)?
     var stateProvider: (() -> PanelState)?
 
@@ -106,6 +105,7 @@ final class PanelController: NSObject, WKScriptMessageHandlerWithReply, WKNaviga
         openDashboard: function () { call("openDashboard"); },
         saveSettings: function (p) { return call("saveSettings", p); },
         clearToken: function () { return call("clearToken"); },
+        resize: function () { call("resize"); },
       };
       // Swift 侧推状态用
       window.__uaPush = function (s) {
@@ -123,6 +123,7 @@ final class PanelController: NSObject, WKScriptMessageHandlerWithReply, WKNaviga
 
       // 每次弹出都回到用量页：设置页是"进去办件事"，不是可停留的状态。
       // 渲染层常驻不重载，不显式复位就会停在上次离开的地方。
+      // panel.js 会覆盖它（还没配置时改为停在设置页），这里是它加载前的兜底。
       window.__uaShowUsage = function () {
         var s = document.getElementById("settings");
         var m = document.getElementById("main");
@@ -257,6 +258,9 @@ final class PanelController: NSObject, WKScriptMessageHandlerWithReply, WKNaviga
             onSaveSettings?(SettingsPatch.sanitize(arg)); replyHandler(nil, nil)
         case "clearToken":
             onClearToken?(); replyHandler(nil, nil)
+        case "resize":
+            // 渲染层内容尺寸变了（切到设置页、行数变化），跟着收放
+            resizeToContent(); replyHandler(nil, nil)
         default:
             replyHandler(nil, "unknown method: \(m)")
         }
@@ -278,7 +282,7 @@ final class PanelController: NSObject, WKScriptMessageHandlerWithReply, WKNaviga
     // ---- 交互 ---------------------------------------------------------------
 
     @objc private func togglePopover() {
-        // 右键给菜单（登录、退出这些低频动作），左键才是面板
+        // 右键给菜单（刷新、退出这些低频动作），左键才是面板
         if NSApp.currentEvent?.type == .rightMouseUp {
             return showMenu()
         }
@@ -294,9 +298,6 @@ final class PanelController: NSObject, WKScriptMessageHandlerWithReply, WKNaviga
 
     private func showMenu() {
         let menu = NSMenu()
-        let login = NSMenuItem(title: Keychain.hasSessionKey ? "重新登录 Claude" : "登录 Claude", action: #selector(loginClicked), keyEquivalent: "")
-        login.target = self
-        menu.addItem(login)
         let refresh = NSMenuItem(title: "立即刷新", action: #selector(refreshClicked), keyEquivalent: "")
         refresh.target = self
         menu.addItem(refresh)
@@ -310,7 +311,6 @@ final class PanelController: NSObject, WKScriptMessageHandlerWithReply, WKNaviga
         statusItem.menu = nil  // 用完即摘，否则左键也会弹菜单
     }
 
-    @objc private func loginClicked() { onLogin?() }
     @objc private func refreshClicked() { onRefresh?() }
     @objc private func quitClicked() { onQuit?() }
 }
