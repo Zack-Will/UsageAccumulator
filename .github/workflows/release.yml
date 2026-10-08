@@ -45,8 +45,9 @@ jobs:
       contents: read
       id-token: write   # npm provenance
     env:
-      # 放在 job 级：step 自己的 env 在它的 if 里读不到
-      NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      # 判断要单独放一个变量：setup-node 配了 registry-url 后，没 token 时会往 NODE_AUTH_TOKEN
+      # 里塞占位值，拿它判断永远是「有」。放在 job 级是因为 step 自己的 env 在它的 if 里读不到
+      HAS_NPM_TOKEN: ${{ secrets.NPM_TOKEN != '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -75,9 +76,11 @@ jobs:
           if-no-files-found: error
       # 没配 NPM_TOKEN 就跳过，只发 Release 上的 tgz；配上之后自动开始发 npm
       - name: npm publish
-        if: env.NODE_AUTH_TOKEN != ''
+        if: env.HAS_NPM_TOKEN == 'true'
         working-directory: packages/ua-probe/dist/npm
         run: npm publish --provenance --access public --tag "$([ "$PRERELEASE" = true ] && echo next || echo latest)"
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   docker:
     needs: test
