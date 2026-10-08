@@ -111,6 +111,8 @@ jobs:
             org.opencontainers.image.title=UsageAccumulator server
             org.opencontainers.image.description=UsageAccumulator 服务端 + 看板
       - uses: docker/build-push-action@v6
+        env:
+          DOCKER_BUILD_RECORD_UPLOAD: false
         with:
           context: .
           file: packages/ua-server/Dockerfile
@@ -176,8 +178,10 @@ jobs:
     permissions:
       contents: write
     steps:
+      # 只取这三个：build-push-action 还会传一份 .dockerbuild 构建记录，它不是 zip，一起下载会失败
       - uses: actions/download-artifact@v4
         with:
+          pattern: "{probe,mac,android}"
           path: dist
           merge-multiple: true
       - name: 创建 Release
