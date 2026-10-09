@@ -123,8 +123,7 @@ docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d
 docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.lan.yml \
   --env-file deploy/.env up -d postgres
 
-# 先打探针单文件，再构建看板：探针会被一起发布到 /dl/ua-probe.mjs，方便其他机器下载
-pnpm -F @ua/probe bundle
+# 构建看板（会先重新打探针单文件，一起发布到 /dl/ua-probe.mjs，方便其他机器下载）
 pnpm -F @ua/web build
 
 # 在仓库根目录启动（迁移按相对路径 deploy/migrations 查找，启动时自动执行）
@@ -164,7 +163,7 @@ npm i -g https://github.com/Zack-Will/UsageAccumulator/releases/latest/download/
 <summary>其他方式：从自己的服务端下载 / 用仓库源码</summary>
 
 ```bash
-# 从服务端下载单文件（Docker 镜像自带；源码部署需按 2B 先 bundle 再构建看板）
+# 从服务端下载单文件（Docker 镜像自带；源码部署按 2B 构建看板时自动生成）
 mkdir -p ~/.local/share/ua-probe && cd ~/.local/share/ua-probe
 curl -fLO https://ua.example.com/dl/ua-probe.mjs
 curl -fLO https://ua.example.com/dl/ua-probe.mjs.sha256 && shasum -a 256 -c ua-probe.mjs.sha256

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { gunzipSync } from "node:zlib";
 import { join } from "node:path";
 import { parseConfig, ConfigError } from "../src/config.js";
@@ -8,7 +9,7 @@ import { Ingestor, emptyStats } from "../src/ingest.js";
 import { ProbeStore } from "../src/store.js";
 import { backoffMs, buildNdjsonBody, classifyStatus, isServerErrorEnvelope } from "../src/shipper.js";
 import { hashProjectSlug, toWireEvent } from "../src/wire.js";
-import { launchdPlist, resolveLauncher, systemdUnit } from "../src/install.js";
+import { launchdPlist, resolveLauncher, stableNodePath, systemdUnit } from "../src/install.js";
 import { assistantLine, cleanup, makeConfig, silentLog, tmpDir } from "./helpers.js";
 import type { UsageEvent } from "@ua/core";
 
@@ -349,8 +350,29 @@ describe("4xx 的裁决权归属", () => {
 describe("单文件打包产物的启动器", () => {
   it("入口是 .mjs 时用 node，不去找 tsx", () => {
     const l = resolveLauncher("/opt/ua/ua-probe.mjs");
-    expect(l.program).toBe(process.execPath);
+    expect(l.program).toBe(stableNodePath(process.execPath));
     expect(l.args).toEqual(["/opt/ua/ua-probe.mjs", "run"]);
+  });
+
+  it("npm 全局安装的无扩展名符号链接也按 JS 处理，服务里写的是链接本身", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ua-launcher-"));
+    const real = join(dir, "ua-probe.mjs");
+    const link = join(dir, "ua-probe");
+    writeFileSync(real, "");
+    symlinkSync(real, link);
+    const l = resolveLauncher(link, "/usr/local/bin/node");
+    expect(l).toEqual({ program: "/usr/local/bin/node", args: [link, "run"] });
+  });
+
+  it("Homebrew 带版本号的 node 换成不随升级变的路径", () => {
+    const has = (...ok: string[]) => (p: string) => ok.includes(p);
+    expect(stableNodePath("/opt/homebrew/Cellar/node/26.4.0/bin/node", has("/opt/homebrew/opt/node/bin/node")))
+      .toBe("/opt/homebrew/opt/node/bin/node");
+    expect(stableNodePath("/usr/local/Cellar/node@22/22.13.1/bin/node", has("/usr/local/bin/node")))
+      .toBe("/usr/local/bin/node");
+    // 两个稳定路径都不在就保持原样，总比写一个不存在的路径强
+    expect(stableNodePath("/opt/homebrew/Cellar/node/26.4.0/bin/node", has())).toBe("/opt/homebrew/Cellar/node/26.4.0/bin/node");
+    expect(stableNodePath("/Users/me/.nvm/versions/node/v22.13.1/bin/node", has())).toBe("/Users/me/.nvm/versions/node/v22.13.1/bin/node");
   });
 
   it("入口是 .ts 时仍然允许走 tsx 查找", () => {

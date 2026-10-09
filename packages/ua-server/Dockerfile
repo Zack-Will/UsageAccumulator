@@ -33,8 +33,8 @@ COPY packages/ua-core ./packages/ua-core
 COPY packages/ua-tokens ./packages/ua-tokens
 COPY packages/ua-probe ./packages/ua-probe
 COPY apps/web ./apps/web
-# 先打探针：它写进 apps/web/public/dl/，vite build 会把 public/ 原样带进 dist
-RUN pnpm -F @ua/probe bundle && pnpm -F @ua/web build
+# web 的 prebuild 会先打探针单文件进 public/dl/，vite build 再把 public/ 原样带进 dist
+RUN pnpm -F @ua/web build
 
 FROM base AS runtime
 ENV NODE_ENV=production UA_WEB_DIR=/app/web

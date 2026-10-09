@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "prebuild": "node ../../packages/ua-probe/scripts/bundle.mjs",
     "build": "vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",

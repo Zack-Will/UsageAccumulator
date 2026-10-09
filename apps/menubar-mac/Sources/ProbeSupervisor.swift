@@ -25,6 +25,7 @@ enum ProbeState: String {
     case running
     case backoff        // 挂了，等退避窗口
     case missing        // 找不到启动配置或可执行文件
+    case external       // 已经由 launchd 托管，这里不插手
 
     var text: String {
         switch self {
@@ -32,6 +33,7 @@ enum ProbeState: String {
         case .running: return "探针：运行中"
         case .backoff: return "探针：重启中"
         case .missing: return "探针：未配置"
+        case .external: return "探针：由 launchd 托管"
         }
     }
 }
@@ -152,9 +154,28 @@ final class ProbeSupervisor {
         process = nil
     }
 
+    /**
+     * `ua-probe install` 装过 launchd 服务就让给它。两边都拉起的话，两个探针会轮流
+     * 「接管」同一个状态库、每隔几分钟互相 SIGTERM（2026-10-09 K4F 上实测）。
+     * 只看 plist 在不在：`ua-probe install` 写它，卸载时删它，判断不用起子进程。
+     */
+    static let launchdLabels = ["com.ua.probe", "com.zackwill.ua-probe"]
+
+    static func launchdManaged() -> Bool {
+        let dir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/LaunchAgents")
+        return launchdLabels.contains {
+            FileManager.default.fileExists(atPath: dir.appendingPathComponent("\($0).plist").path)
+        }
+    }
+
     /// 主线程。
     private func spawn() {
         guard wantRunning, process == nil else { return }
+        if Self.launchdManaged() {
+            Log.info("launchd 已托管探针，菜单栏不再拉起")
+            state = .external
+            return
+        }
         guard let spec = loadSpec() else {
             Log.warn("no usable probe-launch.json; probe supervision is off")
             state = .missing
