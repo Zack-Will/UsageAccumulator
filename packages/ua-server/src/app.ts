@@ -11,6 +11,8 @@ import type { Config } from "./config.js";
 import { createLogger } from "./logger.js";
 import { EventBus, formatSse } from "./bus.js";
 import { eventCostUsd } from "./pricing.js";
+import { registerCodexRoutes } from "./codex-api.js";
+import { CodexHttpError } from "./codex-store.js";
 import {
   buildDistribution,
   buildTimelineLanes,
@@ -235,6 +237,10 @@ export function buildApp(opts: BuildAppOptions) {
   }
 
   app.setErrorHandler((err: FastifyError | HttpError, _req, reply: FastifyReply) => {
+    if (err instanceof CodexHttpError) {
+      void reply.status(err.status).send({ error: { code: err.code, message: err.message } });
+      return;
+    }
     if (err instanceof HttpError) {
       void reply.status(err.status).send({ error: { code: err.code, message: err.message } });
       return;
@@ -334,6 +340,8 @@ export function buildApp(opts: BuildAppOptions) {
     if (!path.startsWith("/v1/")) return;
     await authenticate(req);
   });
+
+  registerCodexRoutes(app, { store, config, now });
 
   async function resolveProfileId(raw: string | undefined): Promise<string> {
     if (raw && raw.length > 0) return raw;

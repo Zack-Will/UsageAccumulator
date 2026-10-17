@@ -1,5 +1,6 @@
 import type { Profile, QuotaSample, QuotaSnapshot, UsageEvent } from "@ua/core";
 import type { CalibrationPoint } from "./aggregate.js";
+import type { CodexStore } from "./codex-store.js";
 
 /**
  * 数据访问层接口。
@@ -53,6 +54,7 @@ export interface MachineRecord {
 }
 
 export interface Store {
+  readonly codex: CodexStore;
   ping(): Promise<boolean>;
 
   listProfiles(): Promise<Profile[]>;

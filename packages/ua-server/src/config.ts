@@ -56,6 +56,8 @@ const schema = z.object({
   /** 采样间隔与抖动，和探针一致 */
   quotaIntervalMs: z.coerce.number().int().positive().default(300_000),
   quotaJitterMs: z.coerce.number().int().nonnegative().default(60_000),
+  /** Explicit account allowlist for the separate Codex ledger; empty disables ingestion. */
+  codexAccountEmail: z.string().trim().toLowerCase().default(""),
   logLevel: z.string().default("info"),
 });
 
@@ -84,6 +86,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     claudeBaseUrl: env["UA_CLAUDE_BASE_URL"],
     quotaIntervalMs: env["UA_QUOTA_INTERVAL_MS"],
     quotaJitterMs: env["UA_QUOTA_JITTER_MS"],
+    codexAccountEmail: env["UA_CODEX_ACCOUNT_EMAIL"],
     logLevel: env["UA_LOG_LEVEL"] ?? env["LOG_LEVEL"],
   });
 }

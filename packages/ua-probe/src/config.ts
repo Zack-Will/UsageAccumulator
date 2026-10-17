@@ -115,6 +115,19 @@ const configSchema = z.object({
   watch: watchSchema.default({}),
   attribution: attributionSchema.default({}),
   quota: quotaSchema.default({}),
+  /** Independent Codex worker; never shares Claude cursors, attribution, or queues. */
+  codex: z.object({
+    enabled: z.boolean().default(false),
+    expected_email: z.string().default(""),
+    binary_path: z.string().default("codex"),
+    home: z.string().default(process.env["CODEX_HOME"] ?? join(homedir(), ".codex")),
+    scan_roots: z.array(z.string()).default([]),
+    state_db: z.string().default(join(homedir(), ".config", "ua-probe", "codex.db")),
+    backfill_from: z.string().default(""),
+    interval_secs: z.number().int().min(30).default(300),
+    request_timeout_ms: z.number().int().min(1000).default(30_000),
+    account_usage: z.boolean().default(true),
+  }).default({}),
 });
 
 export type RawConfig = z.infer<typeof configSchema>;

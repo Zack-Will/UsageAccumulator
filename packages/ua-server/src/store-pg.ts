@@ -1,5 +1,6 @@
 import postgres from "postgres";
 import type { Profile, QuotaSample, QuotaSnapshot, UsageEvent } from "@ua/core";
+import { PgCodexStore } from "./codex-store-pg.js";
 import type {
   CalibrationRecord,
   EventRow,
@@ -85,7 +86,8 @@ function rowToMachine(r: Record<string, unknown>): MachineRecord {
 }
 
 export class PgStore implements Store {
-  constructor(private readonly sql: Sql) {}
+  readonly codex: PgCodexStore;
+  constructor(private readonly sql: Sql) { this.codex = new PgCodexStore(sql); }
 
   static open(databaseUrl: string): PgStore {
     const sql = postgres(databaseUrl, {

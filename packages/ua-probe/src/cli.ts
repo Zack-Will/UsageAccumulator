@@ -18,6 +18,9 @@ const USAGE = `ua-probe —— UsageAccumulator 本地探针
   ua-probe run                常驻：监听 + 增量解析 + 上报 + 额度采集
   ua-probe backfill           首次全量解析历史 JSONL，限速上报（backfill=true）
   ua-probe status             打印队列深度、游标数、归属时间线等
+  ua-probe codex-run          独立 Codex 常驻采集（配置 [codex]）
+  ua-probe codex-sync         Codex 历史回填 + 当前额度单次同步
+  ua-probe codex-status       Codex 本地队列状态
 
 install 选项
   --server <url>          服务端地址（必填）
@@ -71,9 +74,44 @@ async function main(): Promise<number> {
       return await cmdBackfill(configPath);
     case "status":
       return cmdStatus(configPath, values.json === true);
+    case "codex-run":
+    case "codex-sync":
+    case "codex-status":
+      return await cmdCodex(configPath, cmd);
     default:
       process.stderr.write(`未知子命令：${cmd}\n\n${USAGE}`);
       return 2;
+  }
+}
+
+async function cmdCodex(configPath: string, cmd: string): Promise<number> {
+  const cfg = loadConfig(configPath);
+  const { CodexProbe } = await import("./codex-probe.js");
+  const locked = tryAcquire(lockPathFor(expandHome(cfg.codex.state_db)));
+  if (!locked.ok) {
+    process.stderr.write("Codex 采集器已运行；请通过其服务管理器停止后再手工同步。\n");
+    return 69;
+  }
+  let probe: InstanceType<typeof CodexProbe> | null = null;
+  const shutdown = (): void => { void probe?.stop(); };
+  try {
+    probe = new CodexProbe(cfg);
+    if (cmd === "codex-status") {
+      process.stdout.write(JSON.stringify(probe.store.stats()) + "\n");
+    } else if (cmd === "codex-sync") {
+      await probe.sync();
+    } else {
+      process.on("SIGINT", shutdown);
+      process.on("SIGTERM", shutdown);
+      await probe.run();
+    }
+    return 0;
+  } finally {
+    process.off("SIGINT", shutdown);
+    process.off("SIGTERM", shutdown);
+    await probe?.stop();
+    probe?.close();
+    locked.release();
   }
 }
 

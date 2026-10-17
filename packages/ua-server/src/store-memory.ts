@@ -8,6 +8,7 @@ import type {
   Store,
 } from "./store.js";
 import { countsTowardQuota } from "./pricing.js";
+import { MemoryCodexStore } from "./codex-store-memory.js";
 
 /**
  * 内存假数据层。测试与本地干跑用。
@@ -17,6 +18,7 @@ import { countsTowardQuota } from "./pricing.js";
  * 这正是 @ua/core 的 dedupKey() 的语义，所以直接用它。
  */
 export class MemoryStore implements Store {
+  readonly codex = new MemoryCodexStore();
   readonly profiles = new Map<string, Profile>();
   readonly events = new Map<string, EventRow>();
   readonly quota: { snapshot: QuotaSnapshot; machineId: string | null }[] = [];

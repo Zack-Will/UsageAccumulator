@@ -58,6 +58,7 @@ export async function readNewLines(
   path: string,
   prev: FileCursor | null,
   onLine: (raw: string) => void,
+  includeEmptyLines = false,
 ): Promise<ReadOutcome> {
   const st = await stat(path);
   const inode = String(st.ino);
@@ -96,7 +97,7 @@ export async function readNewLines(
       from = idx + 1;
       lines++;
       const raw = lineBuf.toString("utf8").replace(/\r$/, "");
-      if (raw) onLine(raw);
+      if (raw || includeEmptyLines) onLine(raw);
     }
     leftover = from === 0 ? buf : Buffer.from(buf.subarray(from));
     buf = Buffer.alloc(0);
