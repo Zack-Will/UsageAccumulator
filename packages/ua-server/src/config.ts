@@ -59,6 +59,22 @@ const schema = z.object({
   /** Explicit account allowlist for the separate Codex ledger; empty disables ingestion. */
   codexAccountEmail: z.string().trim().toLowerCase().default(""),
   logLevel: z.string().default("info"),
+  /**
+   * 用户所在时区（IANA 名，如 Asia/Shanghai）。7d 预测按星期几加权，「哪一天」得按用户的日历切；
+   * 容器里 TZ 通常是 UTC，所以单独配。缺省取进程时区。
+   */
+  timeZone: z
+    .string()
+    .default("")
+    .transform((v) => v.trim() || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC")
+    .refine((v) => {
+      try {
+        new Intl.DateTimeFormat("en-US", { timeZone: v });
+        return true;
+      } catch {
+        return false;
+      }
+    }, "UA_TIME_ZONE 不是合法的 IANA 时区名"),
 });
 
 export type Config = z.infer<typeof schema>;
@@ -88,5 +104,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     quotaJitterMs: env["UA_QUOTA_JITTER_MS"],
     codexAccountEmail: env["UA_CODEX_ACCOUNT_EMAIL"],
     logLevel: env["UA_LOG_LEVEL"] ?? env["LOG_LEVEL"],
+    timeZone: env["UA_TIME_ZONE"],
   });
 }

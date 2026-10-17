@@ -270,6 +270,7 @@ export function buildApp(opts: BuildAppOptions) {
     const current = await computeCurrentWindows(store, snapshot.profileId, {
       now: now(),
       quotaStaleMs: config.quotaStaleMs,
+      timeZone: config.timeZone,
     });
     bus.publish({ name: "window_update", profileId: snapshot.profileId, data: current });
   }
@@ -750,6 +751,7 @@ export function buildApp(opts: BuildAppOptions) {
     const result = await computeCurrentWindows(store, profileId, {
       now: now(),
       quotaStaleMs: config.quotaStaleMs,
+      timeZone: config.timeZone,
       ...(q.burn_points !== undefined ? { maxBurnPoints: q.burn_points } : {}),
     });
     return reply.send(result);
@@ -762,6 +764,7 @@ export function buildApp(opts: BuildAppOptions) {
     const current = await computeCurrentWindows(store, profileId, {
       now: now(),
       quotaStaleMs: config.quotaStaleMs,
+      timeZone: config.timeZone,
       // 菜单栏不画燃尽曲线，最少取两点够算速率即可
       maxBurnPoints: 2,
     });
@@ -1001,6 +1004,7 @@ export function buildApp(opts: BuildAppOptions) {
         await computeCurrentWindows(store, profileId, {
           now: now(),
           quotaStaleMs: config.quotaStaleMs,
+          timeZone: config.timeZone,
         }),
       );
     } catch {

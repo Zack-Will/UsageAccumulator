@@ -63,6 +63,7 @@ async function main(): Promise<void> {
       for (const profile of await store.listProfiles()) {
         const current = await computeCurrentWindows(store, profile.id, {
           quotaStaleMs: config.quotaStaleMs,
+          timeZone: config.timeZone,
         });
         bus.publish({ name: "window_update", profileId: profile.id, data: current });
       }

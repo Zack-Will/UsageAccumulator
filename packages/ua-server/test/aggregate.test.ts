@@ -7,6 +7,7 @@ import {
   buildProjectedCurve,
   buildTimelineLanes,
   calendarWeight,
+  localDay,
   calibrationPoints,
   computeWindowMetrics,
   dispersionFrom,
@@ -224,6 +225,38 @@ describe("7d calendar projection (§7.2)", () => {
     expect(calendarWeight(MON, new Date(MON.getTime() + 2 * 86400_000), w)).toBeCloseTo(3, 9);
     // 半天也要按比例算
     expect(calendarWeight(MON, new Date(MON.getTime() + 43200_000), w)).toBeCloseTo(1, 9);
+  });
+
+  it("splits days at local midnight of the configured time zone", () => {
+    // 东八区周一 00:00–08:00 在 UTC 里还是周日
+    const w = [1, 3, 1, 1, 1, 1, 1];
+    const sunUtc16 = new Date("2026-09-20T16:00:00.000Z"); // 上海周一 00:00
+    const span = new Date(sunUtc16.getTime() + 8 * 3600_000);
+    expect(calendarWeight(sunUtc16, span, w)).toBeCloseTo(8 / 24, 9);
+    expect(calendarWeight(sunUtc16, span, w, "Asia/Shanghai")).toBeCloseTo(1, 9);
+    // 夏令时那天只有 23 小时，整天积分仍是一个加权天
+    const nyDst = new Date("2026-03-08T05:00:00.000Z"); // 纽约 03-08 00:00 EST
+    const nyNext = new Date("2026-03-09T04:00:00.000Z"); // 纽约 03-09 00:00 EDT
+    expect(calendarWeight(nyDst, nyNext, flat, "America/New_York")).toBeCloseTo(23 / 24, 9);
+    expect(localDay(nyDst.getTime() + 3600_000, "America/New_York")).toEqual({
+      start: nyDst.getTime(),
+      end: nyNext.getTime(),
+      weekday: 0,
+    });
+  });
+
+  it("assigns early-morning local usage to the local weekday", () => {
+    const events = [];
+    for (let d = 0; d < 28; d++) {
+      // 每天上海时间 07:00（UTC 前一天 23:00）用一次；只有上海的周一用量大
+      const ts = new Date(MON.getTime() + d * 86400_000 - 3600_000);
+      const shanghaiMonday = d % 7 === 0;
+      events.push(makeEvent({ ts, inputTokens: shanghaiMonday ? 10000 : 1000, outputTokens: 0, thinkingTokens: 0, cacheReadTokens: 0, cacheWrite5mTokens: 0, cacheWrite1hTokens: 0 }));
+    }
+    const local = weekdayWeightsFromEvents(events, { timeZone: "Asia/Shanghai" });
+    expect(local[1]!).toBeGreaterThan(local[0]!);
+    const utc = weekdayWeightsFromEvents(events);
+    expect(utc[0]!).toBeGreaterThan(utc[1]!);
   });
 
   it("falls back to flat weights when there is less than a week of history", () => {

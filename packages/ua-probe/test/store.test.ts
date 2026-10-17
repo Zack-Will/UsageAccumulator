@@ -25,7 +25,7 @@ describe("ProbeStore / 缓冲队列", () => {
     // 还没 ack：仍在队列里（模拟上报失败 / 进程被杀）
     expect(s.queueDepth()).toBe(3);
 
-    s.ackEvents(batch.map((b) => b.id));
+    s.ackEvents(batch);
     expect(s.queueDepth()).toBe(1);
     expect(s.takeEvents(10)[0]?.dedupKey).toBe("k2");
     s.close();
@@ -53,6 +53,27 @@ describe("ProbeStore / 缓冲队列", () => {
     const [only, ...rest] = s.takeEvents(10);
     expect(rest).toEqual([]);
     expect(JSON.parse(only!.payload)).toEqual({ output_tokens: 1500 });
+    s.close();
+  });
+
+  it("上报在途时被替换成更完整版本的行，回执不删它", () => {
+    const s = new ProbeStore(":memory:");
+    const row = (out: number, rank: number) => ({
+      dedupKey: "msg|req",
+      payload: JSON.stringify({ output_tokens: out }),
+      backfill: false,
+      rank,
+    });
+    s.enqueueEvents([row(5, 15)]);
+    const inflight = s.takeEvents(10);
+    // HTTP 还没回来，扫描读到了最终用量
+    expect(s.enqueueEvents([row(900, 2700)])).toBe(1);
+    s.ackEvents(inflight);
+    const [left, ...rest] = s.takeEvents(10);
+    expect(rest).toEqual([]);
+    expect(JSON.parse(left!.payload)).toEqual({ output_tokens: 900 });
+    s.ackEvents([left!]);
+    expect(s.queueDepth()).toBe(0);
     s.close();
   });
 

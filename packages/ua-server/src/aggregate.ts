@@ -392,17 +392,19 @@ export function buildObservations(
  */
 export function weekdayWeightsFromEvents(
   events: UsageEvent[],
-  opts: { minDistinctDays?: number } = {},
+  opts: { minDistinctDays?: number; timeZone?: string } = {},
 ): number[] {
   const minDays = opts.minDistinctDays ?? 7;
+  const timeZone = opts.timeZone ?? "UTC";
   const flat = [1, 1, 1, 1, 1, 1, 1];
 
-  const perDay = new Map<string, { weekday: number; tokens: number }>();
+  // 「哪一天」按用户所在时区切：按 UTC 切，东八区周一早上 8 点前的用量会记到周日
+  const perDay = new Map<number, { weekday: number; tokens: number }>();
   for (const e of quotaEvents(events)) {
-    const key = truncToBucket(e.ts, "day");
-    const cur = perDay.get(key);
+    const day = localDay(e.ts.getTime(), timeZone);
+    const cur = perDay.get(day.start);
     if (cur) cur.tokens += quotaTokens(e);
-    else perDay.set(key, { weekday: e.ts.getUTCDay(), tokens: quotaTokens(e) });
+    else perDay.set(day.start, { weekday: day.weekday, tokens: quotaTokens(e) });
   }
   if (perDay.size < minDays) return flat;
 
@@ -424,21 +426,63 @@ export function weekdayWeightsFromEvents(
   return avg.map((x) => Math.min(5, Math.max(0.1, (Number.isFinite(x) ? x : overall) / overall)));
 }
 
-/** 按星期几权重对 [from, to) 积分，单位是「加权天」。 */
-export function calendarWeight(from: Date, to: Date, weights: number[]): number {
+/** 按星期几权重对 [from, to) 积分，单位是「加权天」。日界按 timeZone 切。 */
+export function calendarWeight(from: Date, to: Date, weights: number[], timeZone = "UTC"): number {
   if (to.getTime() <= from.getTime()) return 0;
   let total = 0;
   let cursor = from.getTime();
   const end = to.getTime();
   // 守卫：7d 窗口最多 8 段，给足余量就够，绝不允许无限循环
   for (let guard = 0; cursor < end && guard < 4000; guard++) {
-    const d = new Date(cursor);
-    const dayStart = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
-    const chunkEnd = Math.min(dayStart + DAY_MS, end);
-    total += ((chunkEnd - cursor) / DAY_MS) * (weights[new Date(dayStart).getUTCDay()] ?? 1);
+    const day = localDay(cursor, timeZone);
+    const chunkEnd = Math.min(day.end, end);
+    total += ((chunkEnd - cursor) / DAY_MS) * (weights[day.weekday] ?? 1);
     cursor = chunkEnd;
   }
   return total;
+}
+
+const dayFormatters = new Map<string, Intl.DateTimeFormat>();
+const offsetCache = new Map<string, number>();
+
+/** timeZone 在 ms 这一刻相对 UTC 的偏移（毫秒）。按小时缓存 —— 时区切换都在整点或半点上，误差可忽略 */
+function zoneOffsetMs(ms: number, timeZone: string): number {
+  if (timeZone === "UTC") return 0;
+  const key = `${timeZone}|${Math.floor(ms / 3_600_000)}`;
+  const hit = offsetCache.get(key);
+  if (hit !== undefined) return hit;
+  let fmt = dayFormatters.get(timeZone);
+  if (!fmt) {
+    fmt = new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      hourCycle: "h23",
+      year: "numeric",
+      month: "numeric",
+      day: "numeric",
+      hour: "numeric",
+      minute: "numeric",
+      second: "numeric",
+    });
+    dayFormatters.set(timeZone, fmt);
+  }
+  const p: Record<string, number> = {};
+  for (const part of fmt.formatToParts(new Date(ms))) p[part.type] = Number(part.value);
+  const asUtc = Date.UTC(p["year"]!, p["month"]! - 1, p["day"]!, p["hour"]!, p["minute"]!, p["second"]!);
+  const offset = asUtc - Math.floor(ms / 1000) * 1000;
+  if (offsetCache.size > 50_000) offsetCache.clear();
+  offsetCache.set(key, offset);
+  return offset;
+}
+
+/** ms 所在的本地日：起止（UTC 毫秒，半开）与星期几（0 = 周日） */
+export function localDay(ms: number, timeZone = "UTC"): { start: number; end: number; weekday: number } {
+  const wall = ms + zoneOffsetMs(ms, timeZone);
+  const wallDayStart = Math.floor(wall / DAY_MS) * DAY_MS;
+  // 本地零点 / 次日零点各自按那一刻的偏移换回 UTC，夏令时那天长度不是 24h
+  const start = wallDayStart - zoneOffsetMs(wallDayStart - zoneOffsetMs(ms, timeZone), timeZone);
+  const nextWall = wallDayStart + DAY_MS;
+  const end = nextWall - zoneOffsetMs(nextWall - zoneOffsetMs(ms, timeZone), timeZone);
+  return { start, end: end > ms ? end : ms + 1, weekday: new Date(wallDayStart).getUTCDay() };
 }
 
 /** 在 [now, windowEnd] 上反解出累计加权天数达到 target 的那个时刻。 */
@@ -447,14 +491,15 @@ function solveTimeForWeight(
   windowEnd: Date,
   weights: number[],
   target: number,
+  timeZone: string,
 ): Date | null {
   if (target <= 0) return now;
-  if (calendarWeight(now, windowEnd, weights) < target) return null;
+  if (calendarWeight(now, windowEnd, weights, timeZone) < target) return null;
   let lo = now.getTime();
   let hi = windowEnd.getTime();
   for (let i = 0; i < 60; i++) {
     const mid = (lo + hi) / 2;
-    if (calendarWeight(now, new Date(mid), weights) < target) lo = mid;
+    if (calendarWeight(now, new Date(mid), weights, timeZone) < target) lo = mid;
     else hi = mid;
   }
   return new Date(Math.round(hi));
@@ -462,6 +507,8 @@ function solveTimeForWeight(
 
 export interface CalendarProjection {
   projected: { p25: number; mid: number; p75: number };
+  /** 未截到 100 的窗口末值，画曲线用（见 @ua/core Projection.projectedUnclamped） */
+  projectedUnclamped: { p25: number; mid: number; p75: number };
   exhaustEta: Date | null;
   /** 等效平均速率（%/min），仅供显示；日历模式下瞬时速率本来就不是常数 */
   ratePctPerMin: number;
@@ -483,15 +530,20 @@ export function projectCalendarWindow(args: {
   windowEnd: Date;
   weights: number[];
   dispersion: { k25: number; k75: number };
+  /** 日界所在时区，与解 weights 时用的一致；缺省 UTC */
+  timeZone?: string;
 }): CalendarProjection {
   const { pctNow, now, windowStart, windowEnd, weights, dispersion } = args;
-  const elapsedWeight = calendarWeight(windowStart, now, weights);
-  const remainingWeight = calendarWeight(now, windowEnd, weights);
+  const timeZone = args.timeZone ?? "UTC";
+  const elapsedWeight = calendarWeight(windowStart, now, weights, timeZone);
+  const remainingWeight = calendarWeight(now, windowEnd, weights, timeZone);
   const remainingMin = Math.max(0, (windowEnd.getTime() - now.getTime()) / 60000);
 
   if (elapsedWeight <= 0 || remainingWeight <= 0) {
+    const flat = { p25: clampPct(pctNow), mid: clampPct(pctNow), p75: clampPct(pctNow) };
     return {
-      projected: { p25: clampPct(pctNow), mid: clampPct(pctNow), p75: clampPct(pctNow) },
+      projected: flat,
+      projectedUnclamped: flat,
       exhaustEta: null,
       ratePctPerMin: 0,
     };
@@ -499,19 +551,25 @@ export function projectCalendarWindow(args: {
 
   const ratePerWeight = pctNow / elapsedWeight;
   const inc = ratePerWeight * remainingWeight;
+  const projectedUnclamped = {
+    p25: pctNow + dispersion.k25 * inc,
+    mid: pctNow + inc,
+    p75: pctNow + dispersion.k75 * inc,
+  };
   const projected = {
-    p25: clampPct(pctNow + dispersion.k25 * inc),
-    mid: clampPct(pctNow + inc),
-    p75: clampPct(pctNow + dispersion.k75 * inc),
+    p25: clampPct(projectedUnclamped.p25),
+    mid: clampPct(projectedUnclamped.mid),
+    p75: clampPct(projectedUnclamped.p75),
   };
 
   let exhaustEta: Date | null = null;
   if (ratePerWeight > 0 && pctNow < 100) {
-    exhaustEta = solveTimeForWeight(now, windowEnd, weights, (100 - pctNow) / ratePerWeight);
+    exhaustEta = solveTimeForWeight(now, windowEnd, weights, (100 - pctNow) / ratePerWeight, timeZone);
   }
 
   return {
     projected,
+    projectedUnclamped,
     exhaustEta,
     ratePctPerMin: remainingMin > 0 ? (projected.mid - pctNow) / remainingMin : 0,
   };
@@ -547,8 +605,11 @@ export interface ProjectedCurvePoint {
  * 7d 走日历模式，线性外推会系统性偏离。
  *
  * shape(t) 是归一化形状函数：shape(now)=0、shape(windowEnd)=1。
- * 5h 传线性，7d 传日历权重的累计占比。终点恒等于 endpoint，
- * 所以 projected_curve 的最后一个点与 projected_pct 永远一致。
+ * 5h 传线性，7d 传日历权重的累计占比。
+ *
+ * endpoint 传**未截断**的窗口末值（可以超过 100），逐点插值后再截到 [0,100]：
+ * 先截终点再插值会把提前耗尽的增长摊薄到整个剩余窗口，曲线在 exhaust_eta 处到不了 100。
+ * 最后一个点 = clamp(endpoint) = projected_pct，两者仍然一致。
  */
 export function buildProjectedCurve(args: {
   now: Date;

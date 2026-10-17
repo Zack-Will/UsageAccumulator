@@ -127,7 +127,7 @@ export class Probe {
 
         const res = await this.shipper.sendEvents(rows.map((r) => r.payload));
         if (res.ok) {
-          this.store.ackEvents(rows.map((r) => r.id));
+          this.store.ackEvents(rows);
           sent += rows.length;
           batches++;
           attempt = 0;
@@ -137,7 +137,7 @@ export class Probe {
         }
         if (res.verdict === "drop") {
           // 4xx 不可恢复：留着会永久堵住队列头，丢弃并高声告警
-          this.store.ackEvents(rows.map((r) => r.id));
+          this.store.ackEvents(rows);
           dropped += rows.length;
           this.log.error({ status: res.status, message: res.message, dropped: rows.length }, "★ 服务端拒收且不可重试，丢弃该批");
           continue;

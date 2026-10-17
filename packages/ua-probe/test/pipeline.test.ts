@@ -184,7 +184,7 @@ describe("Ingestor 端到端（解析 → 归属 → 队列）", () => {
     let rows = store.takeEvents(10);
     expect(rows).toHaveLength(1);
     expect(JSON.parse(rows[0]!.payload)).toMatchObject({ output_tokens: 1500, output_final: true });
-    store.ackEvents(rows.map((r) => r.id));
+    store.ackEvents(rows);
 
     // 另一条消息：中途值先被读到并发走，最终行下一轮才写出来
     const p2 = assistantLine({ isSidechain: true, requestId: "req_2" }, { output_tokens: 5 });
@@ -193,7 +193,7 @@ describe("Ingestor 端到端（解析 → 归属 → 队列）", () => {
     await ing.ingestFile(file, { backfill: false }, emptyStats());
     rows = store.takeEvents(10);
     expect(JSON.parse(rows[0]!.payload)).toMatchObject({ output_tokens: 5, output_final: false });
-    store.ackEvents(rows.map((r) => r.id));
+    store.ackEvents(rows);
 
     appendFileSync(file, f2 + "\n");
     await ing.ingestFile(file, { backfill: false }, emptyStats());

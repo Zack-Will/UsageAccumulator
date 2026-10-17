@@ -1094,12 +1094,15 @@ describe("GET /v1/windows/current > projected_curve", () => {
     )! as unknown as {
       projected_curve: { ts: string; mid: number }[];
       utilization_pct: number;
+      rate_pct_per_min: number;
     };
     const c = five.projected_curve;
-    const half = c[Math.floor((c.length - 1) / 2)]!;
-    const end = c[c.length - 1]!;
-    const midpoint = five.utilization_pct + (end.mid - five.utilization_pct) / 2;
-    expect(half.mid).toBeCloseTo(midpoint, 1);
+    const t0 = new Date(c[0]!.ts).getTime();
+    // 按速率直线上升，到 100 就停（截断逐点做，不把提前耗尽摊薄到整个窗口）
+    for (const p of c) {
+      const min = (new Date(p.ts).getTime() - t0) / 60_000;
+      expect(p.mid).toBeCloseTo(Math.min(100, five.utilization_pct + five.rate_pct_per_min * min), 6);
+    }
   });
 
   it("does not straight-line the 7d window — it uses the calendar model (§7.2)", async () => {
