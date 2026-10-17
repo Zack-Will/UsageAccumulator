@@ -15,6 +15,7 @@ Swift 只做 macOS 原生才能做的事：`NSStatusItem`、`WKWebView` 面板�
 ```
 UsageAccumulator.app
 ├─ Contents/MacOS/UsageAccumulator        Swift 外壳
+├─ Contents/PlugIns/UsageWidget.appex     桌面小部件（见下）
 └─ Contents/Resources/
    ├─ renderer/                           index.html / panel.css / panel.js / theme.css
    └─ probe-launch.json                   探针启动参数（构建时按仓库路径生成）
@@ -28,6 +29,34 @@ open build/UsageAccumulator.app
 ```
 
 不用 `.xcodeproj`：`swiftc` + 手写 `Info.plist` 就够，也省掉工程文件在仓库里的无谓 diff。
+
+## 桌面小部件
+
+小、中、大三档，在桌面右键「编辑小部件」里找「UsageAccumulator」。点一下弹出菜单栏面板。
+
+| 档 | 内容 |
+|---|---|
+| 小 | 一张卡：最先耗尽的窗口，都不会耗尽时取用量最高的 |
+| 中 | 5h / 7d 两张卡并排 |
+| 大 | 两张完整额度卡（倒计时、速度、重置、已用 / 满额约、调用次数、非 Code 占比）+ 其余窗口（7d Fable 等）+ 两栏按模型的花费 |
+
+小部件的实际尺寸随屏幕而变（同是大档，有的 Mac 上 364×382，有的只有 344×344）。四周固定留 18pt，
+每档按实际高度从信息最全的版本往下试，放不下就依次省掉金额行、模型明细、倒计时与速度，不会溢出裁切。
+
+小、中两档照搬安卓小部件，大档是 Mac 独有的；规则逐条对齐看板额度卡（`apps/web/src/components/WindowCards.tsx`），
+见 `Widget/QuotaModel.swift`。字体是看板同一个 Source Serif 4 文件（`Resources/Fonts/`，SIL OFL 1.1），中文回退 Songti SC。
+
+**数据通道**：菜单栏每次轮询后写 `~/Library/Application Support/UsageAccumulator/Widget/snapshot.json`，
+小部件只读它，不联网、不碰凭证。不用 App Group：那要开发者证书，ad-hoc 签名下系统直接拒绝写入。
+小部件扩展必须开沙箱，靠临时例外只读 `Widget/` 这一个子目录 —— 读不到隔壁存着 token 的 `mac.json`。
+
+金额与窗口细节要多打 `/v1/windows/current` 和每个窗口一次 `/v1/distribution`，5 分钟取一次，窗口换代时立刻重取。
+
+**刷新**：小部件的时间线每分钟一帧，倒计时、时间刻度、「已停止更新」自己会走。菜单栏只在状态变化
+（出错 / 恢复 / 换色 / 会不会耗尽）时立刻点名重画，数字变化至少隔 10 分钟一次 —— 系统给后台 App 的重画次数有日预算，
+用完之后的点名会被静默丢掉。菜单栏退出后，超过 3 个轮询周期（至少 5 分钟）没写快照，数字降成灰色并写「已停止更新」。
+
+**设计预览**：`./scripts/preview-widget.sh` 用假数据把各种状态 × 三档 × 深浅色画到 `build/widget-preview/`，不用往桌面上加。
 
 ## 凭证
 

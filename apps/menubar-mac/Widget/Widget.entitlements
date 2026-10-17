@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- 小部件扩展必须开沙箱 -->
+  <key>com.apple.security.app-sandbox</key>
+  <true/>
+  <!--
+    只读菜单栏写的快照目录。不用 App Group：那要开发者证书，ad-hoc 签名下系统拒绝写入。
+    只开到 Widget/ 子目录：隔壁的 mac.json 存着 token，小部件不该读得到。
+    不开网络：小部件不联网。
+  -->
+  <key>com.apple.security.temporary-exception.files.home-relative-path.read-only</key>
+  <array>
+    <string>/Library/Application Support/UsageAccumulator/Widget/</string>
+  </array>
+</dict>
+</plist>
