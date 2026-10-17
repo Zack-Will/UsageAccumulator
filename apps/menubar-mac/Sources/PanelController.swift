@@ -280,7 +280,14 @@ final class PanelController: NSObject, WKScriptMessageHandlerWithReply, WKNaviga
             return showMenu()
         }
         if popover.isShown { return popover.performClose(nil) }
-        guard let button = statusItem.button else { return }
+        show()
+    }
+
+    /// 弹出面板（已经开着就不动）。点桌面小部件也走这里
+    func show() {
+        guard !popover.isShown, let button = statusItem.button else { return }
+        // 从小部件点进来时本 App 不在前台，不激活的话面板一失焦就被收起
+        NSApp.activate()
         web.evaluateJavaScript("window.__uaShowUsage()") { [weak self] _, _ in
             self?.resizeToContent()
         }

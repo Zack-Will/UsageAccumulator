@@ -1,7 +1,7 @@
 /**
  * 契约类型：字段名以 docs/CONTRACT.md §2.2 `GET /v1/summary` 为准，
  * 与 apps/menubar/src/lib/types.cts 逐字段对齐（renderer 是同一份，键名不能漂）。
- * 菜单栏只消费这一个端点，不调用任何重端点。
+ * 面板与托盘只消费这一个端点；桌面小部件的金额见 WidgetFeed.swift。
  */
 import Foundation
 

@@ -13,6 +13,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let config = ConfigStore()
     private let client = SummaryClient()
     private let probe = ProbeSupervisor()
+    private lazy var widgetFeed = WidgetFeed(client: client)
+    private var showPanelOnLaunch = false
 
     private var pollTimer: Timer?
     private var tickTimer: Timer?
@@ -51,6 +53,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         refreshSettingsView()
         poll()
         schedule()
+        if showPanelOnLaunch { panel.show() }
+    }
+
+    /// 点桌面小部件：系统用 usageaccumulator:// 把本 App 叫起来，弹出面板
+    func application(_ application: NSApplication, open urls: [URL]) {
+        guard urls.contains(where: { $0.scheme == "usageaccumulator" }) else { return }
+        // 本 App 没在运行时是小部件把它拉起来的，URL 可能先于 didFinishLaunching 到
+        if let panel { panel.show() } else { showPanelOnLaunch = true }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -89,7 +99,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func poll() {
         guard !config.data.serverUrl.isEmpty else {
             state.status = .unconfigured
-            return panel.push(state)
+            panel.push(state)
+            return widgetFeed.publish(state: state, config: config.data)
         }
         client.fetch(
             serverUrl: config.data.serverUrl,
@@ -124,5 +135,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Log.warn("summary 失败 · code=\(err.code.rawValue) · \(err.message)")
         }
         panel.push(state)
+        widgetFeed.publish(state: state, config: config.data)
     }
 }

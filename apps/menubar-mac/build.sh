@@ -65,24 +65,54 @@ if [ -n "$VERSION" ]; then
   /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $((MA * 10000 + MI * 100 + PA))" "$CONTENTS/Info.plist"
 fi
 
+# ---- 桌面小部件扩展 ---------------------------------------------------------
+# 与 App 同一套 swiftc 构建。快照格式（Shared/）与契约类型（Types.swift）两边共用
+APPEX="$CONTENTS/PlugIns/UsageWidget.appex"
+mkdir -p "$APPEX/Contents/MacOS" "$APPEX/Contents/Resources/Fonts"
+cp "$HERE/Widget/Info.plist" "$APPEX/Contents/Info.plist"
+cp "$HERE/Resources/Fonts/SourceSerif4.woff2" "$HERE/Resources/Fonts/OFL.txt" "$APPEX/Contents/Resources/Fonts/"
+if [ -n "$VERSION" ]; then
+  /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$APPEX/Contents/Info.plist"
+  /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $((MA * 10000 + MI * 100 + PA))" "$APPEX/Contents/Info.plist"
+fi
+
 # ---- 编译 -------------------------------------------------------------------
 compile() {
   swiftc -O \
     -target "$1-apple-macosx14.0" \
-    -framework AppKit -framework WebKit \
+    -framework AppKit -framework WebKit -framework WidgetKit \
     -o "$2" \
-    "$HERE"/Sources/*.swift
+    "$HERE"/Sources/*.swift "$HERE"/Shared/*.swift
+}
+# 扩展没有 main：入口是系统的 _NSExtensionMain，@main 的 WidgetBundle 由它拉起
+compile_widget() {
+  swiftc -O \
+    -target "$1-apple-macosx14.0" \
+    -parse-as-library -application-extension \
+    -framework SwiftUI -framework WidgetKit \
+    -Xlinker -e -Xlinker _NSExtensionMain \
+    -o "$2" \
+    "$HERE"/Shared/*.swift "$HERE/Sources/Types.swift" \
+    "$HERE/Widget/QuotaModel.swift" "$HERE/Widget/Theme.swift" \
+    "$HERE/Widget/QuotaViews.swift" "$HERE/Widget/QuotaWidget.swift"
 }
 if [ "$RELEASE" = 1 ]; then
   compile arm64 "$OUT/UsageAccumulator-arm64"
   compile x86_64 "$OUT/UsageAccumulator-x86_64"
   lipo -create -output "$CONTENTS/MacOS/UsageAccumulator" "$OUT/UsageAccumulator-arm64" "$OUT/UsageAccumulator-x86_64"
   rm "$OUT/UsageAccumulator-arm64" "$OUT/UsageAccumulator-x86_64"
+  compile_widget arm64 "$OUT/UsageWidget-arm64"
+  compile_widget x86_64 "$OUT/UsageWidget-x86_64"
+  lipo -create -output "$APPEX/Contents/MacOS/UsageWidget" "$OUT/UsageWidget-arm64" "$OUT/UsageWidget-x86_64"
+  rm "$OUT/UsageWidget-arm64" "$OUT/UsageWidget-x86_64"
 else
   compile arm64 "$CONTENTS/MacOS/UsageAccumulator"
+  compile_widget arm64 "$APPEX/Contents/MacOS/UsageWidget"
 fi
 
 # ad-hoc 签名：个人自用足够，不走公证。没有它 Gatekeeper 每次都要拦。
+# 先签扩展（带沙箱权限），再签外层 App —— 外层签名会把扩展的签名封进去，顺序反了就作废
+codesign --force --sign - --entitlements "$HERE/Widget/Widget.entitlements" "$APPEX"
 codesign --force --sign - "$APP"
 
 if [ "$RELEASE" = 1 ]; then

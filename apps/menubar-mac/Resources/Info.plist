@@ -13,6 +13,14 @@
   <key>LSMinimumSystemVersion</key>        <string>14.0</string>
   <!-- 菜单栏应用：不进 Dock，也不出现在 Cmd-Tab -->
   <key>LSUIElement</key>                   <true/>
+  <!-- 点桌面小部件时系统用这个 scheme 叫起本 App（AppDelegate.application(_:open:)） -->
+  <key>CFBundleURLTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleURLName</key>             <string>space.zackwill.usageaccumulator</string>
+      <key>CFBundleURLSchemes</key>          <array><string>usageaccumulator</string></array>
+    </dict>
+  </array>
   <key>NSHighResolutionCapable</key>       <true/>
 </dict>
 </plist>

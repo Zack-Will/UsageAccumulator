@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key>                  <string>UsageWidget</string>
+  <key>CFBundleDisplayName</key>           <string>UsageAccumulator</string>
+  <!-- 必须以宿主 App 的 bundle id 为前缀，系统才认它是这个 App 的扩展 -->
+  <key>CFBundleIdentifier</key>            <string>space.zackwill.usageaccumulator.widget</string>
+  <key>CFBundleExecutable</key>            <string>UsageWidget</string>
+  <key>CFBundlePackageType</key>           <string>XPC!</string>
+  <key>CFBundleShortVersionString</key>    <string>0.1.0</string>
+  <key>CFBundleVersion</key>               <string>1</string>
+  <key>LSMinimumSystemVersion</key>        <string>14.0</string>
+  <!-- Source Serif 4（看板同一个字体文件），Theme.swift 也会在进程内注册一次 -->
+  <key>ATSApplicationFontsPath</key>       <string>Fonts</string>
+  <key>NSExtension</key>
+  <dict>
+    <key>NSExtensionPointIdentifier</key>  <string>com.apple.widgetkit-extension</string>
+  </dict>
+</dict>
+</plist>

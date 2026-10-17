@@ -1,5 +1,5 @@
 /**
- * `GET /v1/summary` 客户端。菜单栏只打这一个端点（CONTRACT.md §2.2）。
+ * `GET /v1/summary` 客户端（CONTRACT.md §2.2）。面板与托盘只用这一个端点；桌面小部件的金额另打两个，见 WidgetFeed.swift。
  * 响应是外部数据：全字段逐个校验，坏字段降级而不是抛到上层崩掉。
  * 错误按契约 §2 的 `error.code` 分类，不只看 HTTP 状态码。
  */
@@ -63,12 +63,31 @@ final class SummaryClient: NSObject, URLSessionTaskDelegate {
         profileId: String,
         completion: @escaping (Result<Summary, SummaryError>) -> Void
     ) {
+        let query = profileId.isEmpty ? [] : [URLQueryItem(name: "profile_id", value: profileId)]
+        getJSON(serverUrl: serverUrl, token: token, path: "/v1/summary", query: query) { result in
+            completion(result.flatMap { body in
+                guard let parsed = SummaryClient.parse(body) else {
+                    return .failure(SummaryError(.bad_response, "响应不是对象"))
+                }
+                return .success(parsed)
+            })
+        }
+    }
+
+    /// 任意只读端点：同一个 session（重定向一律拒绝）、同一套错误分类。回调在后台队列上。
+    func getJSON(
+        serverUrl: String,
+        token: String,
+        path: String,
+        query: [URLQueryItem],
+        completion: @escaping (Result<Any, SummaryError>) -> Void
+    ) {
         let base = SummaryClient.normalizeServerUrl(serverUrl)
         guard !base.isEmpty else { return completion(.failure(SummaryError(.config, "未配置服务器地址"))) }
-        guard SummaryClient.isHttpUrl(base), var comps = URLComponents(string: "\(base)/v1/summary") else {
+        guard SummaryClient.isHttpUrl(base), var comps = URLComponents(string: "\(base)\(path)") else {
             return completion(.failure(SummaryError(.config, "服务器地址无效")))
         }
-        if !profileId.isEmpty { comps.queryItems = [URLQueryItem(name: "profile_id", value: profileId)] }
+        if !query.isEmpty { comps.queryItems = query }
         guard let url = comps.url else {
             return completion(.failure(SummaryError(.config, "服务器地址无效")))
         }
@@ -91,16 +110,13 @@ final class SummaryClient: NSObject, URLSessionTaskDelegate {
             guard (200..<300).contains(http.statusCode) else {
                 let code = SummaryClient.classifyError(status: http.statusCode, body: body)
                 // 服务端的自由文本只进日志（Log.redact 会脱敏），不进 UI
-                Log.warn("summary \(http.statusCode) \(code.rawValue): \(SummaryClient.serverMessage(body))")
+                Log.warn("\(path) \(http.statusCode) \(code.rawValue): \(SummaryClient.serverMessage(body))")
                 return completion(.failure(SummaryError(code)))
             }
             guard let body else {
                 return completion(.failure(SummaryError(.bad_response, "响应不是 JSON")))
             }
-            guard let parsed = SummaryClient.parse(body) else {
-                return completion(.failure(SummaryError(.bad_response, "响应不是对象")))
-            }
-            completion(.success(parsed))
+            completion(.success(body))
         }.resume()
     }
 
