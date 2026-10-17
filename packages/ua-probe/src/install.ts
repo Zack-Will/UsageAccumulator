@@ -69,8 +69,18 @@ export function defaultCliPath(): string {
   return resolve(fileURLToPath(new URL("./cli.ts", import.meta.url)));
 }
 
-export function launchdPlist(v: { label: string; launcher: Launcher; configPath: string; logDir: string }): string {
+export function launchdPlist(v: {
+  label: string;
+  launcher: Launcher;
+  configPath: string;
+  logDir: string;
+  nodeDir?: string;
+}): string {
   const argv = [v.launcher.program, ...v.launcher.args, "--config", v.configPath];
+  // 仓库里的 tsx 是 shell 包装，内部 `exec node`；launchd 的 PATH 只有 /usr/bin:/bin 这些，
+  // 不把 node 所在目录放进去就是 `node: not found`，服务原地反复重启
+  const nodeDir = v.nodeDir ?? dirname(stableNodePath(process.execPath));
+  const path = [nodeDir, "/usr/bin", "/bin", "/usr/sbin", "/sbin"].join(":");
   const items = argv.map((a) => `    <string>${escapeXml(a)}</string>`).join("\n");
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -84,6 +94,8 @@ ${items}
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
   <key>ProcessType</key><string>Background</string>
+  <key>EnvironmentVariables</key>
+  <dict><key>PATH</key><string>${escapeXml(path)}</string></dict>
   <key>StandardOutPath</key><string>${escapeXml(join(v.logDir, "ua-probe.log"))}</string>
   <key>StandardErrorPath</key><string>${escapeXml(join(v.logDir, "ua-probe.err.log"))}</string>
 </dict>

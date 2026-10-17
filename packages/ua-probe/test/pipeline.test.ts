@@ -319,6 +319,17 @@ describe("服务单元", () => {
     expect(p).toContain("/home/u/.config/ua-probe/config.toml");
   });
 
+  it("launchd plist 把 node 所在目录放进 PATH —— tsx 包装要靠 PATH 找 node", () => {
+    const p = launchdPlist({
+      label: "com.ua.probe",
+      launcher: { program: "/repo/node_modules/.bin/tsx", args: ["/x/cli.ts", "run"] },
+      configPath: "/c.toml",
+      logDir: "/tmp/logs",
+      nodeDir: "/opt/homebrew/opt/node/bin",
+    });
+    expect(p).toContain("<key>PATH</key><string>/opt/homebrew/opt/node/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>");
+  });
+
   it("systemd 是 user service（WantedBy=default.target，不需要 root）", () => {
     const u = systemdUnit({ launcher: { program: "/bin/tsx", args: ["/x/cli.ts", "run"] }, configPath: "/c.toml" });
     expect(u).toContain("WantedBy=default.target");
