@@ -31,6 +31,8 @@
 
 未定价记录模型为 `codex-auto-review`，不猜测其基础模型或价格。已定价模型为 `gpt-6-astra` 与 `gpt-6.1-sol`。`pricing_complete=false`、`usage_complete=false`、`cost_complete=false` 已通过 API 返回，不能把当前金额当完整消费总额或订阅实付。
 
+7 项扫描警告已逐项只读核验：全部为 `total_tokens_mismatch`，累计计数与上一条完全相同，last 的各 token 分项为零但 total 残留非零；解析器均作为重复快照抑制，没有产生额外事件或金额。当前接口对历史扫描警告保守标记不完整；这 7 项本身不证明存在漏计。home-center 再扫描仍为 4,807 条，Mac 活跃文件会继续增长。
+
 实际本地记录最早为 10 月 9 日；10 月 1 日起没有记录的日期表示未观测到，不证明消费为零。官方摘要返回 12 个日桶，累计 831,408,337 token；它与本地覆盖范围不同，单独存储、不相加。当前额度为 7 天窗口，首次验证已用 51%，双节点快照均未过期。历史额度快照从本次启用后开始累积，无法回推 10 月 1 日的额度状态。
 
 接口契约见 [CODEX-API.md](./CODEX-API.md)，部署与运行见 [CODEX-DEPLOYMENT.md](./CODEX-DEPLOYMENT.md)。
