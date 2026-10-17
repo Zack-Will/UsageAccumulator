@@ -19,8 +19,6 @@ final class PanelController: NSObject, WKScriptMessageHandlerWithReply, WKNaviga
     private var web: WKWebView!
     /// 压在材质之上的一层色调：材质单独用太透，压一层才够"厚"
     private let tint = NSView()
-    /// 菜单栏里的迷你条，自绘 —— 不走 NSImage（见 TrayBarsView 的注释）
-    private let bars = TrayBarsView()
     private var ready = false
     /// 页面就绪前推来的状态先存着，就绪后补发 —— 否则首帧是空的
     private var pending: PanelState?
@@ -71,17 +69,12 @@ final class PanelController: NSObject, WKScriptMessageHandlerWithReply, WKNaviga
         statusItem.button?.action = #selector(togglePopover)
         statusItem.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
 
-        if let button = statusItem.button {
-            bars.translatesAutoresizingMaskIntoConstraints = false
-            button.addSubview(bars)
-            NSLayoutConstraint.activate([
-                bars.leadingAnchor.constraint(equalTo: button.leadingAnchor),
-                bars.trailingAnchor.constraint(equalTo: button.trailingAnchor),
-                bars.topAnchor.constraint(equalTo: button.topAnchor),
-                bars.bottomAnchor.constraint(equalTo: button.bottomAnchor),
-            ])
-            bars.showsBars = false
-        }
+        /*
+         * 迷你条用按钮自带的 image，不往按钮里塞自绘子视图：多屏时其他屏幕的菜单栏
+         * 是系统照着按钮的标题和图片复制出来的，不会复制子视图 —— 2026-10-17 三屏实测，
+         * 主屏画着条，副屏一直停在启动时的「—」。
+         */
+        statusItem.button?.imagePosition = .imageOnly
     }
 
     // ---- WKWebView ---------------------------------------------------------
@@ -193,7 +186,6 @@ final class PanelController: NSObject, WKScriptMessageHandlerWithReply, WKNaviga
         let windows = state.summary?.windows ?? []
         let drawable = (state.status == .ok || state.status == .stale)
             && !TrayIcon.meaningful(windows).isEmpty
-        statusItem.button?.image = nil
         // 一行说清「现在菜单栏上是什么」：条 还是 文字，文字的话是哪一句。
         // 面板的错误占位符与这里的兜底文案都是「—」，光看外观分不出是哪一种。
         Log.info(
@@ -201,14 +193,15 @@ final class PanelController: NSObject, WKScriptMessageHandlerWithReply, WKNaviga
             + " · status=\(state.status.rawValue)"
             + " · windows=\(windows.count) 有效=\(TrayIcon.meaningful(windows).count)"
         )
-        if drawable {
-            bars.windows = windows
-            bars.showsBars = true
+        if drawable, let image = TrayIcon.image(for: windows) {
             statusItem.button?.title = ""
-            statusItem.length = TrayBarsView.preferredWidth
+            statusItem.button?.image = image
+            statusItem.button?.imagePosition = .imageOnly
+            statusItem.length = TrayIcon.preferredWidth
         } else {
             // 异常态要传达的是「出事了」，不是某个百分比；画几根空条会让人以为用量为 0
-            bars.showsBars = false
+            statusItem.button?.image = nil
+            statusItem.button?.imagePosition = .noImage
             statusItem.button?.title = tray.title
             statusItem.length = NSStatusItem.variableLength
         }

@@ -15,6 +15,8 @@ enum TrayIcon {
     private static let barHeight: CGFloat = 3
     private static let gap: CGFloat = 3
     private static let maxBars = 3
+    /// 状态栏按钮宽度：条宽两侧各留 4pt
+    static let preferredWidth: CGFloat = barWidth + 8
 
     /// 窗口长度，与渲染层的 WINDOW_META 对应。未知 kind 返回 nil = 算不出配速。
     private static func periodSeconds(_ kind: String) -> Double? {

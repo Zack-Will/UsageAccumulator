@@ -34,13 +34,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel.onClearToken = { [weak self] in
             guard let self else { return }
             var p = SettingsPatch(); p.token = ""
-            _ = self.config.patch(p)
+            _ = config.patch(p)
             self.refreshSettingsView()
             self.poll()
         }
         panel.onSaveSettings = { [weak self] patch in
             guard let self else { return }
-            let changed = self.config.patch(patch)
+            let changed = config.patch(patch)
             self.refreshSettingsView()
             if changed { self.poll() }
         }
@@ -70,8 +70,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         tickTimer?.invalidate()
         tickTimer = Timer.scheduledTimer(withTimeInterval: TrayTitle.tickInterval, repeats: true) { [weak self] _ in
             guard let self else { return }
-            self.state.snapshotAgeSeconds = Self.age(of: self.state.summary)
-            self.panel.push(self.state)
+            state.snapshotAgeSeconds = Self.age(of: state.summary)
+            self.panel.push(state)
         }
     }
 
@@ -96,28 +96,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             token: config.data.token,
             profileId: config.data.profileId
         ) { [weak self] result in
-            guard let self else { return }
-            switch result {
-            case .success(let summary):
-                self.state.summary = summary
-                self.state.snapshotAgeSeconds = Self.age(of: summary)
-                // 服务端回显的 profile 与本地配置不一致时必须显式提示，
-                // 否则会盯着别的 profile 的数字做判断
-                self.state.profileMismatch =
-                    !self.config.data.profileId.isEmpty && summary.profile_id != self.config.data.profileId
-                self.state.error = nil
-                self.state.errorCode = nil
-                self.state.status = summary.stale ? .stale : .ok
-                // 只记结构化事实，不记响应正文；排障时第一眼要看的就是这行
-                Log.info("summary ok · windows=\(summary.windows.count) · stale=\(summary.stale) · age=\(TrayTitle.ageText(self.state.snapshotAgeSeconds))")
-            case .failure(let err):
-                self.state.errorCode = err.code
-                self.state.error = err.message
-                // 拿不到新数据不代表旧数据要清空，保留并由 status 表达新鲜度
-                self.state.status = err.code.isAuth ? .auth : (err.code == .config ? .unconfigured : .offline)
-                Log.warn("summary 失败 · code=\(err.code.rawValue) · \(err.message)")
-            }
-            self.panel.push(self.state)
+            // URLSession 的回调在后台队列上；在那里改状态栏按钮，AppKit 记下了新标题与图片
+            // 却不重绘，菜单栏一直停在启动时的「—」（2026-10-17 实测）。state 也只在主线程改。
+            DispatchQueue.main.async { self?.apply(result) }
         }
+    }
+
+    private func apply(_ result: Result<Summary, SummaryError>) {
+        switch result {
+        case .success(let summary):
+            state.summary = summary
+            state.snapshotAgeSeconds = Self.age(of: summary)
+            // 服务端回显的 profile 与本地配置不一致时必须显式提示，
+            // 否则会盯着别的 profile 的数字做判断
+            state.profileMismatch =
+                !config.data.profileId.isEmpty && summary.profile_id != config.data.profileId
+            state.error = nil
+            state.errorCode = nil
+            state.status = summary.stale ? .stale : .ok
+            // 只记结构化事实，不记响应正文；排障时第一眼要看的就是这行
+            Log.info("summary ok · windows=\(summary.windows.count) · stale=\(summary.stale) · age=\(TrayTitle.ageText(state.snapshotAgeSeconds))")
+        case .failure(let err):
+            state.errorCode = err.code
+            state.error = err.message
+            // 拿不到新数据不代表旧数据要清空，保留并由 status 表达新鲜度
+            state.status = err.code.isAuth ? .auth : (err.code == .config ? .unconfigured : .offline)
+            Log.warn("summary 失败 · code=\(err.code.rawValue) · \(err.message)")
+        }
+        panel.push(state)
     }
 }
