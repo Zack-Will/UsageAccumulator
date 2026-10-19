@@ -210,7 +210,8 @@ Idempotency-Key: <批次内容的 sha256 前 32 位>
       "usd": 80.0,                              // 最近 ≤8 个「本地占比 ≥ 30%」已结束窗口的「已花 ÷ 本地占比」中位数
       "windows": 5,
       "partial_output_events": 1453             // > 0：其中有事件的最终输出没写进 JSONL，usd 偏低
-    }
+    },
+    "quota_weights": { "fable": 2 }             // 额度当量倍率：家族 → 倍率，没列出的按 1；目前只有 seven_day 有 fable: 2
   }],
   "products": {                                 // 官方「本周按产品」拆分；team 组织没有，为 null
     "as_of": "2026-09-29T03:54:23Z",
@@ -233,7 +234,9 @@ Idempotency-Key: <批次内容的 sha256 前 32 位>
 
 > 2026-10-03：7d 用到 36% 时 Cowork 份额 1→2，折成 5h 是 3.4 点，那段 5h 一动没动；旧公式 `max(non_code_pct, …)` 仍把 7% 的窗口记成 4 点非 Code，「满额约」外推出 $302。
 
-**「满额约」**：前端按 `已花 ÷ local_utilization_pct` 外推；本地占比 < 20% 时改用 `full_cost_reference`（弱化显示）——分母只有几个点时取整与归属误差在 ±20% 以上。
+**「满额约」**：前端按 `Σ(各模型费用 × quota_weights 倍率) ÷ local_utilization_pct` 外推（「已用」仍显示原价）；本地占比 < 20% 时改用 `full_cost_reference`（弱化显示）——分母只有几个点时取整与归属误差在 ±20% 以上。
+
+**`quota_weights` 的来历**（2026-10-19 生产库回归）：额度按各模型 API 价目计（含 Fable 5.1 缓存读 0.025x），但总周限对 Fable 约按 2 倍计 —— 同 1 美元 Fable 推动 seven_day 是 Opus 5.5 的 1.79 倍（95% 区间 1.35~2.36），与「Fable 周限用满 = 总周限 50%」互相印证；5h 里两者基本同价（1.21，区间含 1），不加倍率。不加倍率时 7d「满额约」把 Fable 与 Opus 的美元混算，Fable 用得越多越偏低。倍率只在服务端 `quotaWeights()` 维护一处，三端照乘。
 
 周刻度的非 Code 累计量要先做单调拟合（PAVA）再相减：份额是整数，Code 在涨、聊天没动时份额会被稀释，直接相减会得到负数。
 

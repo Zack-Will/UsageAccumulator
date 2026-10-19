@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { WindowState } from "../src/api/types";
-import { displayWindows, isActiveWindow, quotaSpans } from "../src/components/WindowCards";
+import type { DistributionBucket, WindowState } from "../src/api/types";
+import { displayWindows, isActiveWindow, quotaCostUsd, quotaSpans } from "../src/components/WindowCards";
 
 function win(kind: string, over: Partial<WindowState> = {}): WindowState {
   return {
@@ -60,5 +60,25 @@ describe("quotaSpans", () => {
     const { span, mdSpan } = quotaSpans(n);
     expect((span * n) % 12).toBe(0);
     expect((mdSpan * n) % 6).toBe(0);
+  });
+});
+
+describe("quotaCostUsd", () => {
+  const bucket = (key: string, cost_usd: number | null): DistributionBucket =>
+    ({ key, events: 1, cost_usd, unpriced_events: cost_usd === null ? 1 : 0 }) as DistributionBucket;
+
+  it("按家族倍率折成额度当量，没列出的家族按 1", () => {
+    const b = [bucket("claude-fable-5-1", 100), bucket("claude-opus-5-5", 300)];
+    expect(quotaCostUsd(b, { fable: 2 })).toBe(500);
+  });
+
+  it("没有倍率时就是原价合计", () => {
+    const b = [bucket("claude-fable-5-1", 100), bucket("claude-opus-5-5", 300)];
+    expect(quotaCostUsd(b, undefined)).toBe(400);
+    expect(quotaCostUsd(b, {})).toBe(400);
+  });
+
+  it("全是缺价桶时是未知，不是 0", () => {
+    expect(quotaCostUsd([bucket("qwen3.7-plus", null)], { fable: 2 })).toBeNull();
   });
 });

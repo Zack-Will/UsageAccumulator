@@ -122,6 +122,11 @@ export interface WindowState {
    * 旧服务端不带 → 缺省按 null。
    */
   full_cost_reference?: FullCostReference | null;
+  /**
+   * 额度当量倍率：模型家族 → 倍率，没列出的按 1。7d 上 Fable 按 2 倍计（服务端 quotaWeights 有标定依据）。
+   * 「满额约」= Σ(各模型费用 × 倍率) ÷ 本地占比；「已用」仍是原价。旧服务端不带 → 全按 1。
+   */
+  quota_weights?: Record<string, number>;
 }
 
 export interface FullCostReference {

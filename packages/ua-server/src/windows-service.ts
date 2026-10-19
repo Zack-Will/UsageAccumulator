@@ -84,6 +84,30 @@ export interface CurrentWindowDto {
    * 其他窗口、或最近两周没有本地占比 ≥ 30% 的已结束窗口时为 null。
    */
   full_cost_reference: FullCostReferenceDto | null;
+  /**
+   * 把本窗口的 API 折算费用换成「额度当量」的家族倍率（见 quotaWeights）。
+   * 没列出的家族按 1；「满额约」= Σ(各模型费用 × 倍率) ÷ 本地占比。
+   */
+  quota_weights: Record<string, number>;
+}
+
+/**
+ * 订阅额度对各模型家族的计价倍率，按 window_kind 分。
+ *
+ * 2026-10-19 用生产库 claude-official（9-27~10-19）逐段回归标定：
+ * 额度按各模型的 API 价目计（含 Fable 5.1 缓存读 0.025x），但**总周限对 Fable 约按 2 倍计**
+ * —— 同 1 美元，Fable 推动 seven_day 是 Opus 5.5 的 1.79 倍（95% 区间 1.35~2.36），
+ * 与「Fable 周限用满 = 总周限 50%」的官方标定互相印证；5h 里两者基本同价（1.21，区间含 1）。
+ * 不加倍率时 7d「满额约」把便宜的 Fable 美元和 Opus 美元混算，Fable 用得越多越偏低。
+ *
+ * seven_day_fable 只算 Fable 自己，单位就是 Fable 美元，不需要倍率。
+ */
+const QUOTA_WEIGHTS: Record<string, Record<string, number>> = {
+  seven_day: { fable: 2 },
+};
+
+export function quotaWeights(windowKind: string): Record<string, number> {
+  return { ...(QUOTA_WEIGHTS[windowKind] ?? {}) };
 }
 
 export interface AttributionDto {
@@ -502,6 +526,7 @@ export async function computeCurrentWindows(
         local_utilization_pct: Math.max(0, w.utilizationPct - otherPct),
       },
       full_cost_reference: w.windowKind === "five_hour" ? reference : null,
+      quota_weights: quotaWeights(w.windowKind),
       projected_curve: buildProjectedCurve({
         now,
         windowEnd,

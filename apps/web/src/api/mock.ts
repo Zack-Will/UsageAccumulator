@@ -286,6 +286,7 @@ function makeWindow(
     stale: spec.stale ?? false,
     metrics: { ...MOCK_METRICS },
     full_cost_reference: kind === "five_hour" ? { usd: 104, windows: 8, partial_output_events: 0 } : null,
+    quota_weights: kind === "seven_day" ? { fable: 2 } : {},
     // 演示数据里给一份「有别处的消耗」的归因，好让那条提示在 mock 下也看得见
     attribution: {
       other_pct_lower_bound: Math.round(spec.used * 0.12 * 10) / 10,
