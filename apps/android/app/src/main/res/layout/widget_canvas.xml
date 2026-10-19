@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  由 apps/android/scripts/gen-widget-layouts.py 生成（整图 · pad 10dp），不要手改。
+  layout/ 与 layout-night/ 各一份，只差文字位图的浅色 / 深色哪张可见。
+  小米规范：根布局必须是 @android:id/background，且背景不能全透明。
+-->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@android:id/background"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/widget_bg"
+    android:padding="10dp">
+
+    <ImageView android:id="@+id/canvas_d" android:layout_width="match_parent" android:layout_height="match_parent" android:scaleType="fitXY" android:importantForAccessibility="no" />
+    <ImageView android:id="@+id/canvas_n" android:layout_width="match_parent" android:layout_height="match_parent" android:scaleType="fitXY" android:importantForAccessibility="no" android:visibility="gone" />
+</FrameLayout>

@@ -126,3 +126,51 @@ object TextArt {
         return bmp
     }
 }
+
+/**
+ * 额度条画成位图（看板 .qbar / .qbar__pace）：轨道 + 浅色「重置时预计」段 + 实色「已用」段 + 一根比条高出一截的时间刻度。
+ * 不用 ProgressBar 的原因见 gen-widget-layouts.py 的 bars()。
+ */
+object BarArt {
+    data class Colors(val track: Int, val projected: Int, val used: Int, val pace: Int)
+
+    /** used / projected / pace 都是 0..100；pace 为 null 不画刻度 */
+    fun draw(
+        context: android.content.Context,
+        widthDp: Int,
+        barDp: Int,
+        tickDp: Int,
+        used: Int,
+        projected: Int,
+        pace: Int?,
+        c: Colors,
+    ): android.graphics.Bitmap {
+        val d = context.resources.displayMetrics.density
+        val w = (widthDp * d).toInt().coerceAtLeast(1)
+        val h = (tickDp * d).toInt().coerceAtLeast(1)
+        val bar = barDp * d
+        val top = (h - bar) / 2f
+        val r = bar / 2f
+        val bmp = android.graphics.Bitmap.createBitmap(w, h, android.graphics.Bitmap.Config.ARGB_8888)
+        val canvas = android.graphics.Canvas(bmp)
+        val p = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
+
+        fun capsule(fraction: Int, color: Int) {
+            if (fraction <= 0) return
+            // 太短的段至少画成一个圆点，否则 1% 会细成看不见的一条缝
+            val right = (w * fraction.coerceAtMost(100) / 100f).coerceAtLeast(bar)
+            p.color = color
+            canvas.drawRoundRect(0f, top, right, top + bar, r, r, p)
+        }
+        capsule(100, c.track)
+        capsule(projected, c.projected)
+        capsule(used, c.used)
+        if (pace != null) {
+            val tickW = 2 * d
+            val x = (w * pace.coerceIn(0, 100) / 100f).coerceIn(tickW / 2, w - tickW / 2)
+            p.color = c.pace
+            canvas.drawRoundRect(x - tickW / 2, 0f, x + tickW / 2, h.toFloat(), tickW / 2, tickW / 2, p)
+        }
+        return bmp
+    }
+}

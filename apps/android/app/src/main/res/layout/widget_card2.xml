@@ -98,56 +98,13 @@
             android:layout_height="12dp"
             android:layout_marginTop="4dp">
 
-            <ProgressBar
-                android:id="@+id/c0_bar_ok"
-                style="@style/UaWidgetBar"
+            <FrameLayout
+                android:id="@+id/c0_bar"
                 android:layout_width="match_parent"
-                android:layout_height="8dp"
-                android:layout_gravity="center_vertical"
-                android:maxHeight="8dp"
-                android:minHeight="8dp"
-                android:progressDrawable="@drawable/qbar_ok"
-                android:visibility="gone" />
-            <ProgressBar
-                android:id="@+id/c0_bar_warn"
-                style="@style/UaWidgetBar"
-                android:layout_width="match_parent"
-                android:layout_height="8dp"
-                android:layout_gravity="center_vertical"
-                android:maxHeight="8dp"
-                android:minHeight="8dp"
-                android:progressDrawable="@drawable/qbar_warn"
-                android:visibility="gone" />
-            <ProgressBar
-                android:id="@+id/c0_bar_danger"
-                style="@style/UaWidgetBar"
-                android:layout_width="match_parent"
-                android:layout_height="8dp"
-                android:layout_gravity="center_vertical"
-                android:maxHeight="8dp"
-                android:minHeight="8dp"
-                android:progressDrawable="@drawable/qbar_danger"
-                android:visibility="gone" />
-            <ProgressBar
-                android:id="@+id/c0_bar_muted"
-                style="@style/UaWidgetBar"
-                android:layout_width="match_parent"
-                android:layout_height="8dp"
-                android:layout_gravity="center_vertical"
-                android:maxHeight="8dp"
-                android:minHeight="8dp"
-                android:progressDrawable="@drawable/qbar_muted"
-                android:visibility="gone" />
-
-            <ProgressBar
-                android:id="@+id/c0_pace"
-                style="@style/UaWidgetBar"
-                android:layout_width="match_parent"
-                android:layout_height="match_parent"
-                android:maxHeight="12dp"
-                android:minHeight="12dp"
-                android:progressDrawable="@drawable/qbar_pace"
-                android:visibility="gone" />
+                android:layout_height="match_parent">
+                <ImageView android:id="@+id/c0_bar_d" android:layout_width="match_parent" android:layout_height="match_parent" android:scaleType="fitXY" />
+                <ImageView android:id="@+id/c0_bar_n" android:layout_width="match_parent" android:layout_height="match_parent" android:scaleType="fitXY" android:visibility="gone" />
+            </FrameLayout>
         </FrameLayout>
 
         <LinearLayout
@@ -261,56 +218,13 @@
             android:layout_height="12dp"
             android:layout_marginTop="4dp">
 
-            <ProgressBar
-                android:id="@+id/c1_bar_ok"
-                style="@style/UaWidgetBar"
+            <FrameLayout
+                android:id="@+id/c1_bar"
                 android:layout_width="match_parent"
-                android:layout_height="8dp"
-                android:layout_gravity="center_vertical"
-                android:maxHeight="8dp"
-                android:minHeight="8dp"
-                android:progressDrawable="@drawable/qbar_ok"
-                android:visibility="gone" />
-            <ProgressBar
-                android:id="@+id/c1_bar_warn"
-                style="@style/UaWidgetBar"
-                android:layout_width="match_parent"
-                android:layout_height="8dp"
-                android:layout_gravity="center_vertical"
-                android:maxHeight="8dp"
-                android:minHeight="8dp"
-                android:progressDrawable="@drawable/qbar_warn"
-                android:visibility="gone" />
-            <ProgressBar
-                android:id="@+id/c1_bar_danger"
-                style="@style/UaWidgetBar"
-                android:layout_width="match_parent"
-                android:layout_height="8dp"
-                android:layout_gravity="center_vertical"
-                android:maxHeight="8dp"
-                android:minHeight="8dp"
-                android:progressDrawable="@drawable/qbar_danger"
-                android:visibility="gone" />
-            <ProgressBar
-                android:id="@+id/c1_bar_muted"
-                style="@style/UaWidgetBar"
-                android:layout_width="match_parent"
-                android:layout_height="8dp"
-                android:layout_gravity="center_vertical"
-                android:maxHeight="8dp"
-                android:minHeight="8dp"
-                android:progressDrawable="@drawable/qbar_muted"
-                android:visibility="gone" />
-
-            <ProgressBar
-                android:id="@+id/c1_pace"
-                style="@style/UaWidgetBar"
-                android:layout_width="match_parent"
-                android:layout_height="match_parent"
-                android:maxHeight="12dp"
-                android:minHeight="12dp"
-                android:progressDrawable="@drawable/qbar_pace"
-                android:visibility="gone" />
+                android:layout_height="match_parent">
+                <ImageView android:id="@+id/c1_bar_d" android:layout_width="match_parent" android:layout_height="match_parent" android:scaleType="fitXY" />
+                <ImageView android:id="@+id/c1_bar_n" android:layout_width="match_parent" android:layout_height="match_parent" android:scaleType="fitXY" android:visibility="gone" />
+            </FrameLayout>
         </FrameLayout>
 
         <LinearLayout

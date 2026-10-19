@@ -18,7 +18,6 @@
 from pathlib import Path
 
 RES = Path(__file__).resolve().parent.parent / "app/src/main/res/layout"
-TONES = ("ok", "warn", "danger", "muted")
 LIST_ROWS = 4
 
 # 小米设计规范（2K 屏）：安全边距 ≥ 55px ≈ 15dp。宽松档按它来；紧凑档只在格子比规范还小时才用，只能再收
@@ -41,6 +40,9 @@ NL = "\n"
 
 # 生成浅色（layout/）还是深色（layout-night/）那一份；img() 按它决定两张位图谁可见
 NIGHT = False
+# 所有文字容器的 id，生成完写进 TextIds.kt：代码按它找到每段文字的 _d / _n 两张位图
+TEXT_IDS: set = set()
+KT = Path(__file__).resolve().parent.parent / "app/src/main/java/space/zackwill/ua/widget/TextIds.kt"
 
 
 def img(vid: str, indent: str, width: str = "wrap_content", extra: tuple = ()) -> str:
@@ -55,6 +57,7 @@ def img(vid: str, indent: str, width: str = "wrap_content", extra: tuple = ()) -
     scaleType=matrix：按位图原尺寸从左上角画，**绝不缩放**——
     fitStart/adjustViewBounds 会按可用宽度把字放大或缩小（实测标题被放大到占满半张卡）。
     """
+    TEXT_IDS.add(vid)
     attrs = "".join(f"{NL}{indent}    {a}" for a in extra)
     day_vis = ' android:visibility="gone"' if NIGHT else ""
     night_vis = "" if NIGHT else ' android:visibility="gone"'
@@ -69,28 +72,25 @@ def img(vid: str, indent: str, width: str = "wrap_content", extra: tuple = ()) -
 
 
 def bars(p: str, height: int, tick: int, indent: str) -> str:
-    out = "".join(f'''
-{indent}<ProgressBar
-{indent}    android:id="@+id/{p}_bar_{t}"
-{indent}    style="@style/UaWidgetBar"
-{indent}    android:layout_width="match_parent"
-{indent}    android:layout_height="{height}dp"
-{indent}    android:layout_gravity="center_vertical"
-{indent}    android:maxHeight="{height}dp"
-{indent}    android:minHeight="{height}dp"
-{indent}    android:progressDrawable="@drawable/qbar_{t}"
-{indent}    android:visibility="gone" />''' for t in TONES)
-    return out + f'''
+    """
+    额度条（已用 / 预计 / 时间刻度）整条画成位图，浅色、深色各一张，结构与 img() 相同。
 
-{indent}<ProgressBar
-{indent}    android:id="@+id/{p}_pace"
-{indent}    style="@style/UaWidgetBar"
+    不用 ProgressBar：HyperOS 桌面重建界面后会把几根条的 setProgress 混在一起，
+    实测 5h、7d 两张卡的条和刻度全停在最后一次设置的值上（都画成了 7d 的 22%）。
+    位图按 BarDims 算出的宽度画，fitXY 只是兜底，算对了就不会拉伸。
+    height（条粗）与 tick（刻度高）由代码按 BarDims 画，这里只占位。
+    """
+    TEXT_IDS.add(f"{p}_bar")
+    day_vis = ' android:visibility="gone"' if NIGHT else ""
+    night_vis = "" if NIGHT else ' android:visibility="gone"'
+    return f'''
+{indent}<FrameLayout
+{indent}    android:id="@+id/{p}_bar"
 {indent}    android:layout_width="match_parent"
-{indent}    android:layout_height="match_parent"
-{indent}    android:maxHeight="{tick}dp"
-{indent}    android:minHeight="{tick}dp"
-{indent}    android:progressDrawable="@drawable/qbar_pace"
-{indent}    android:visibility="gone" />'''
+{indent}    android:layout_height="match_parent">
+{indent}    <ImageView android:id="@+id/{p}_bar_d" android:layout_width="match_parent" android:layout_height="match_parent" android:scaleType="fitXY"{day_vis} />
+{indent}    <ImageView android:id="@+id/{p}_bar_n" android:layout_width="match_parent" android:layout_height="match_parent" android:scaleType="fitXY"{night_vis} />
+{indent}</FrameLayout>'''
 
 
 def eta(p: str, indent: str) -> str:
@@ -355,6 +355,11 @@ def list_shell(d: dict, what: str, row=list_row) -> str:
 
 def write_all(out: Path) -> None:
     out.mkdir(parents=True, exist_ok=True)
+    # 紧凑 / 宽松两档的 pad 在卡片、列表、窄列表里都一样，整图布局各一份
+    assert {CARD["compact"]["pad"], LIST["compact"]["pad"], NARROW["compact"]["pad"]} == {10}
+    assert {CARD["roomy"]["pad"], LIST["roomy"]["pad"], NARROW["roomy"]["pad"]} == {16}
+    (out / "widget_canvas.xml").write_text(canvas_shell(10), encoding="utf-8")
+    (out / "widget_canvas_roomy.xml").write_text(canvas_shell(16), encoding="utf-8")
     full = 'android:layout_width="match_parent"\n        android:layout_height="wrap_content"'
     half = 'android:layout_width="0dp"\n        android:layout_height="wrap_content"\n        android:layout_weight="1"'
     for density, d in CARD.items():
@@ -372,11 +377,79 @@ def write_all(out: Path) -> None:
             list_shell(d, f"窄列表 · {density}", row=narrow_row), encoding="utf-8")
 
 
+def canvas_shell(pad: int) -> str:
+    """
+    真正推给桌面的布局：圆角底板 + 一张整图（浅色 / 深色各一张，可见性随 layout-night 切换）。
+    上面那些卡片 / 列表布局只在我们自己的进程里渲染、截图（见 Snapshot.kt），不再交给桌面拼：
+    HyperOS 桌面拼几十个位图时总会丢一部分（实测左边那张卡的元素成片消失）。
+    内边距与卡片布局的 pad 一致：截图只截内容区，四角的圆角交给这里的底板。
+    """
+    day_vis = ' android:visibility="gone"' if NIGHT else ""
+    night_vis = "" if NIGHT else ' android:visibility="gone"'
+    return HEADER.format(what=f"整图 · pad {pad}dp") + f'''<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@android:id/background"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/widget_bg"
+    android:padding="{pad}dp">
+
+    <ImageView android:id="@+id/canvas_d" android:layout_width="match_parent" android:layout_height="match_parent" android:scaleType="fitXY" android:importantForAccessibility="no"{day_vis} />
+    <ImageView android:id="@+id/canvas_n" android:layout_width="match_parent" android:layout_height="match_parent" android:scaleType="fitXY" android:importantForAccessibility="no"{night_vis} />
+</FrameLayout>
+'''
+
+
 def main() -> None:
     global NIGHT
     for night, out in ((False, RES), (True, RES.parent / "layout-night")):
         NIGHT = night
         write_all(out)
+    entries = "\n".join(f"        R.id.{v} to (R.id.{v}_d to R.id.{v}_n)," for v in sorted(TEXT_IDS))
+
+    def dims(name: str, d: dict, columns: int, reserve: int, gap: int = 0) -> str:
+        return f"    val {name} = BarDims(padDp = {d['pad']}, reserveDp = {reserve}, columns = {columns}, gapDp = {gap}, barDp = {d['bar']}, tickDp = {d['tick']})"
+    dim_lines = "\n".join([
+        dims("CARD1_COMPACT", CARD["compact"], 1, 0),
+        dims("CARD1_ROOMY", CARD["roomy"], 1, 0),
+        dims("CARD2_COMPACT", CARD["compact"], 2, 0, CARD["compact"]["gap"]),
+        dims("CARD2_ROOMY", CARD["roomy"], 2, 0, CARD["roomy"]["gap"]),
+        dims("LIST_COMPACT", LIST["compact"], 1, LIST["compact"]["label_w"] + LIST["compact"]["num_w"] + LIST["compact"]["eta_w"]),
+        dims("LIST_ROOMY", LIST["roomy"], 1, LIST["roomy"]["label_w"] + LIST["roomy"]["num_w"] + LIST["roomy"]["eta_w"]),
+        dims("NARROW_COMPACT", NARROW["compact"], 1, 0),
+        dims("NARROW_ROOMY", NARROW["roomy"], 1, 0),
+    ])
+    KT.write_text(f'''// 由 apps/android/scripts/gen-widget-layouts.py 生成，不要手改。
+package space.zackwill.ua.widget
+
+import space.zackwill.ua.R
+
+/** 位图容器 id → (浅色位图 id, 深色位图 id)。文字和额度条都是一个容器 + 两张位图，见生成脚本 img() / bars() */
+internal object TextIds {{
+    val PAIRS: Map<Int, Pair<Int, Int>> = mapOf(
+{entries}
+    )
+}}
+
+/**
+ * 额度条的几何尺寸，与布局同源（生成脚本里的 CARD / LIST / NARROW）。
+ * 条宽 =（格子宽 − 两侧内边距 − 同一行里别的列 − 卡片间距）÷ 卡片数
+ */
+internal data class BarDims(
+    val padDp: Int,
+    val reserveDp: Int,
+    val columns: Int,
+    val gapDp: Int,
+    val barDp: Int,
+    val tickDp: Int,
+) {{
+    fun widthDp(widgetWidthDp: Int): Int =
+        ((widgetWidthDp - 2 * padDp - reserveDp - gapDp * (columns - 1)) / columns).coerceAtLeast(24)
+}}
+
+internal object Dims {{
+{dim_lines}
+}}
+''', encoding="utf-8")
     print("ok:", ", ".join(sorted(p.name for p in RES.glob("widget_*.xml"))), "（layout/ 与 layout-night/ 各一份）")
 
 
