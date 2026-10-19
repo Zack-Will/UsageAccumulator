@@ -112,7 +112,8 @@ describe("Codex independent account ledger", () => {
 
   it("reports known USD subtotal, missing prices, quality and Shanghai calendar-day buckets", async () => {
     await ingest(batch({ events: [event({ ts: START }), event({ event_id: "event-2", model: "unpublished-model", ts: "2026-10-01T16:00:00.000Z", quality_flags: ["model_missing"] })] }));
-    const r = (await get(`usage?${RANGE}&by=day`)).json();
+    // 显式给时区：缺省取服务器系统时区，CI 是 UTC，会差一天
+    const r = (await get(`usage?${RANGE}&by=day&timezone=Asia/Shanghai`)).json();
     expect(r.totals).toMatchObject({ events: 2, cost_usd: 0.00262, cost_basis: "api_equivalent_current_rates",
       cost_complete: false, priced_events: 1, unpriced_events: 1, cost_coverage_pct: 50,
       missing_reasons: { unknown_model: 1 }, quality_flags: { model_missing: 1 } });
