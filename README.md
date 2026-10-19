@@ -346,3 +346,7 @@ git tag v0.2.0 && git push origin v0.2.0
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)：设计取舍、指标定义（预计用量、耗尽 ETA、标定、窗口重叠度）、安全与隐私
 - [`docs/CONTRACT.md`](docs/CONTRACT.md)：HTTP API、数据类型、去重规则、额度会话接口
 - [`apps/menubar-mac/README.md`](apps/menubar-mac/README.md)、[`apps/android/README.md`](apps/android/README.md)：各端实现细节
+
+## 许可证
+
+[MIT](LICENSE)
