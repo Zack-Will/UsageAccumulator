@@ -81,56 +81,13 @@
                 android:layout_height="10dp"
                 android:layout_marginTop="2dp">
 
-                <ProgressBar
-                    android:id="@+id/r0_bar_ok"
-                    style="@style/UaWidgetBar"
+                <FrameLayout
+                    android:id="@+id/r0_bar"
                     android:layout_width="match_parent"
-                    android:layout_height="6dp"
-                    android:layout_gravity="center_vertical"
-                    android:maxHeight="6dp"
-                    android:minHeight="6dp"
-                    android:progressDrawable="@drawable/qbar_ok"
-                    android:visibility="gone" />
-                <ProgressBar
-                    android:id="@+id/r0_bar_warn"
-                    style="@style/UaWidgetBar"
-                    android:layout_width="match_parent"
-                    android:layout_height="6dp"
-                    android:layout_gravity="center_vertical"
-                    android:maxHeight="6dp"
-                    android:minHeight="6dp"
-                    android:progressDrawable="@drawable/qbar_warn"
-                    android:visibility="gone" />
-                <ProgressBar
-                    android:id="@+id/r0_bar_danger"
-                    style="@style/UaWidgetBar"
-                    android:layout_width="match_parent"
-                    android:layout_height="6dp"
-                    android:layout_gravity="center_vertical"
-                    android:maxHeight="6dp"
-                    android:minHeight="6dp"
-                    android:progressDrawable="@drawable/qbar_danger"
-                    android:visibility="gone" />
-                <ProgressBar
-                    android:id="@+id/r0_bar_muted"
-                    style="@style/UaWidgetBar"
-                    android:layout_width="match_parent"
-                    android:layout_height="6dp"
-                    android:layout_gravity="center_vertical"
-                    android:maxHeight="6dp"
-                    android:minHeight="6dp"
-                    android:progressDrawable="@drawable/qbar_muted"
-                    android:visibility="gone" />
-
-                <ProgressBar
-                    android:id="@+id/r0_pace"
-                    style="@style/UaWidgetBar"
-                    android:layout_width="match_parent"
-                    android:layout_height="match_parent"
-                    android:maxHeight="10dp"
-                    android:minHeight="10dp"
-                    android:progressDrawable="@drawable/qbar_pace"
-                    android:visibility="gone" />
+                    android:layout_height="match_parent">
+                    <ImageView android:id="@+id/r0_bar_d" android:layout_width="match_parent" android:layout_height="match_parent" android:scaleType="fitXY" android:visibility="gone" />
+                    <ImageView android:id="@+id/r0_bar_n" android:layout_width="match_parent" android:layout_height="match_parent" android:scaleType="fitXY" />
+                </FrameLayout>
             </FrameLayout>
 
             <!-- 窄列表不放时刻；留着这些 id 只为与宽列表共用同一套绑定代码 -->
@@ -197,56 +154,13 @@
                 android:layout_height="10dp"
                 android:layout_marginTop="2dp">
 
-                <ProgressBar
-                    android:id="@+id/r1_bar_ok"
-                    style="@style/UaWidgetBar"
+                <FrameLayout
+                    android:id="@+id/r1_bar"
                     android:layout_width="match_parent"
-                    android:layout_height="6dp"
-                    android:layout_gravity="center_vertical"
-                    android:maxHeight="6dp"
-                    android:minHeight="6dp"
-                    android:progressDrawable="@drawable/qbar_ok"
-                    android:visibility="gone" />
-                <ProgressBar
-                    android:id="@+id/r1_bar_warn"
-                    style="@style/UaWidgetBar"
-                    android:layout_width="match_parent"
-                    android:layout_height="6dp"
-                    android:layout_gravity="center_vertical"
-                    android:maxHeight="6dp"
-                    android:minHeight="6dp"
-                    android:progressDrawable="@drawable/qbar_warn"
-                    android:visibility="gone" />
-                <ProgressBar
-                    android:id="@+id/r1_bar_danger"
-                    style="@style/UaWidgetBar"
-                    android:layout_width="match_parent"
-                    android:layout_height="6dp"
-                    android:layout_gravity="center_vertical"
-                    android:maxHeight="6dp"
-                    android:minHeight="6dp"
-                    android:progressDrawable="@drawable/qbar_danger"
-                    android:visibility="gone" />
-                <ProgressBar
-                    android:id="@+id/r1_bar_muted"
-                    style="@style/UaWidgetBar"
-                    android:layout_width="match_parent"
-                    android:layout_height="6dp"
-                    android:layout_gravity="center_vertical"
-                    android:maxHeight="6dp"
-                    android:minHeight="6dp"
-                    android:progressDrawable="@drawable/qbar_muted"
-                    android:visibility="gone" />
-
-                <ProgressBar
-                    android:id="@+id/r1_pace"
-                    style="@style/UaWidgetBar"
-                    android:layout_width="match_parent"
-                    android:layout_height="match_parent"
-                    android:maxHeight="10dp"
-                    android:minHeight="10dp"
-                    android:progressDrawable="@drawable/qbar_pace"
-                    android:visibility="gone" />
+                    android:layout_height="match_parent">
+                    <ImageView android:id="@+id/r1_bar_d" android:layout_width="match_parent" android:layout_height="match_parent" android:scaleType="fitXY" android:visibility="gone" />
+                    <ImageView android:id="@+id/r1_bar_n" android:layout_width="match_parent" android:layout_height="match_parent" android:scaleType="fitXY" />
+                </FrameLayout>
             </FrameLayout>
 
             <!-- 窄列表不放时刻；留着这些 id 只为与宽列表共用同一套绑定代码 -->
@@ -313,56 +227,13 @@
                 android:layout_height="10dp"
                 android:layout_marginTop="2dp">
 
-                <ProgressBar
-                    android:id="@+id/r2_bar_ok"
-                    style="@style/UaWidgetBar"
+                <FrameLayout
+                    android:id="@+id/r2_bar"
                     android:layout_width="match_parent"
-                    android:layout_height="6dp"
-                    android:layout_gravity="center_vertical"
-                    android:maxHeight="6dp"
-                    android:minHeight="6dp"
-                    android:progressDrawable="@drawable/qbar_ok"
-                    android:visibility="gone" />
-                <ProgressBar
-                    android:id="@+id/r2_bar_warn"
-                    style="@style/UaWidgetBar"
-                    android:layout_width="match_parent"
-                    android:layout_height="6dp"
-                    android:layout_gravity="center_vertical"
-                    android:maxHeight="6dp"
-                    android:minHeight="6dp"
-                    android:progressDrawable="@drawable/qbar_warn"
-                    android:visibility="gone" />
-                <ProgressBar
-                    android:id="@+id/r2_bar_danger"
-                    style="@style/UaWidgetBar"
-                    android:layout_width="match_parent"
-                    android:layout_height="6dp"
-                    android:layout_gravity="center_vertical"
-                    android:maxHeight="6dp"
-                    android:minHeight="6dp"
-                    android:progressDrawable="@drawable/qbar_danger"
-                    android:visibility="gone" />
-                <ProgressBar
-                    android:id="@+id/r2_bar_muted"
-                    style="@style/UaWidgetBar"
-                    android:layout_width="match_parent"
-                    android:layout_height="6dp"
-                    android:layout_gravity="center_vertical"
-                    android:maxHeight="6dp"
-                    android:minHeight="6dp"
-                    android:progressDrawable="@drawable/qbar_muted"
-                    android:visibility="gone" />
-
-                <ProgressBar
-                    android:id="@+id/r2_pace"
-                    style="@style/UaWidgetBar"
-                    android:layout_width="match_parent"
-                    android:layout_height="match_parent"
-                    android:maxHeight="10dp"
-                    android:minHeight="10dp"
-                    android:progressDrawable="@drawable/qbar_pace"
-                    android:visibility="gone" />
+                    android:layout_height="match_parent">
+                    <ImageView android:id="@+id/r2_bar_d" android:layout_width="match_parent" android:layout_height="match_parent" android:scaleType="fitXY" android:visibility="gone" />
+                    <ImageView android:id="@+id/r2_bar_n" android:layout_width="match_parent" android:layout_height="match_parent" android:scaleType="fitXY" />
+                </FrameLayout>
             </FrameLayout>
 
             <!-- 窄列表不放时刻；留着这些 id 只为与宽列表共用同一套绑定代码 -->
@@ -429,56 +300,13 @@
                 android:layout_height="10dp"
                 android:layout_marginTop="2dp">
 
-                <ProgressBar
-                    android:id="@+id/r3_bar_ok"
-                    style="@style/UaWidgetBar"
+                <FrameLayout
+                    android:id="@+id/r3_bar"
                     android:layout_width="match_parent"
-                    android:layout_height="6dp"
-                    android:layout_gravity="center_vertical"
-                    android:maxHeight="6dp"
-                    android:minHeight="6dp"
-                    android:progressDrawable="@drawable/qbar_ok"
-                    android:visibility="gone" />
-                <ProgressBar
-                    android:id="@+id/r3_bar_warn"
-                    style="@style/UaWidgetBar"
-                    android:layout_width="match_parent"
-                    android:layout_height="6dp"
-                    android:layout_gravity="center_vertical"
-                    android:maxHeight="6dp"
-                    android:minHeight="6dp"
-                    android:progressDrawable="@drawable/qbar_warn"
-                    android:visibility="gone" />
-                <ProgressBar
-                    android:id="@+id/r3_bar_danger"
-                    style="@style/UaWidgetBar"
-                    android:layout_width="match_parent"
-                    android:layout_height="6dp"
-                    android:layout_gravity="center_vertical"
-                    android:maxHeight="6dp"
-                    android:minHeight="6dp"
-                    android:progressDrawable="@drawable/qbar_danger"
-                    android:visibility="gone" />
-                <ProgressBar
-                    android:id="@+id/r3_bar_muted"
-                    style="@style/UaWidgetBar"
-                    android:layout_width="match_parent"
-                    android:layout_height="6dp"
-                    android:layout_gravity="center_vertical"
-                    android:maxHeight="6dp"
-                    android:minHeight="6dp"
-                    android:progressDrawable="@drawable/qbar_muted"
-                    android:visibility="gone" />
-
-                <ProgressBar
-                    android:id="@+id/r3_pace"
-                    style="@style/UaWidgetBar"
-                    android:layout_width="match_parent"
-                    android:layout_height="match_parent"
-                    android:maxHeight="10dp"
-                    android:minHeight="10dp"
-                    android:progressDrawable="@drawable/qbar_pace"
-                    android:visibility="gone" />
+                    android:layout_height="match_parent">
+                    <ImageView android:id="@+id/r3_bar_d" android:layout_width="match_parent" android:layout_height="match_parent" android:scaleType="fitXY" android:visibility="gone" />
+                    <ImageView android:id="@+id/r3_bar_n" android:layout_width="match_parent" android:layout_height="match_parent" android:scaleType="fitXY" />
+                </FrameLayout>
             </FrameLayout>
 
             <!-- 窄列表不放时刻；留着这些 id 只为与宽列表共用同一套绑定代码 -->

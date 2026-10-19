@@ -16,12 +16,15 @@ export function UsageSummary({
   state,
   span = 5,
   mdSpan,
+  incomplete,
 }: {
   title: string;
   totals: UsageTotals | null;
   state: "loading" | "error";
   span?: number;
   mdSpan?: number;
+  /** 已知有缺口：数字是看到的部分，不是全部。悬停给出原因 */
+  incomplete?: string;
 }) {
   return (
     <Card
@@ -31,6 +34,12 @@ export function UsageSummary({
       aside={
         totals ? (
           <span>
+            {incomplete && (
+              <span title={incomplete}>
+                <Mono tone="warn">不完整</Mono>
+                {" · "}
+              </span>
+            )}
             {totals.events.toLocaleString("en-US")} 次调用
             {totals.avgCostPerCall !== null && ` · 均 ${fmtUsdSmall(totals.avgCostPerCall)}`}
           </span>

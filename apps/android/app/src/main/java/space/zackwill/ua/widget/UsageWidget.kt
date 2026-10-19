@@ -6,7 +6,6 @@ import android.appwidget.AppWidgetProvider
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
-import android.content.res.ColorStateList
 import android.content.res.Configuration
 import android.os.Bundle
 import android.util.Log
@@ -50,7 +49,7 @@ data class WidgetSize(val widthDp: Int, val heightDp: Int) {
  * 所有小部件共用的刷新逻辑。刷新来源：
  *   · 系统定时（updatePeriodMillis，最短 30 分钟）
  *   · 小米曝光刷新：看到桌面时系统发 miui.appwidget.action.APPWIDGET_UPDATE（要过审，见 README）
- *   · App 自己：页面加载完、离开前台、改设置、App 升级后（WidgetUpdater.requestAll）
+ *   · App 自己：离开前台、改设置、App 升级后（WidgetUpdater.requestAll）
  *   · 拖动改大小后按新尺寸重画（用缓存，不重新拉取）
  */
 abstract class UsageWidget : AppWidgetProvider() {
@@ -82,12 +81,20 @@ abstract class UsageWidget : AppWidgetProvider() {
         val app = context.applicationContext
         val manager = AppWidgetManager.getInstance(app)
         val cached = WidgetCache.load(app)
-        // 先把缓存画上去：网络再慢，桌面上也不会是一块空白
-        push(app, manager, ids, cached)
-
         val now = System.currentTimeMillis()
-        // 几个小部件同时收到刷新时，别各发一次请求
-        if (!force && cached != null && cached.error == null && now - cached.fetchedAt < THROTTLE_MS) return
+        // 几个小部件同时收到刷新时，别各发一次请求：缓存够新就直接画缓存
+        if (!force && cached != null && cached.error == null && now - cached.fetchedAt < THROTTLE_MS) {
+            push(app, manager, ids, cached)
+            return
+        }
+
+        // ★ 一次刷新只推一批。HyperOS 桌面对短时间内连续到达的几批更新有「跨批次保护」
+        //   （cross-batch protection），会跳过其中一部分位图：实测先推缓存、1 秒后再推新数据，
+        //   左边那张卡的标题、大数字、额度条全没了。所以只有新数据迟迟不来时才先拿缓存顶上。
+        val pushed = java.util.concurrent.atomic.AtomicBoolean(false)
+        fun pushOnce(state: WidgetState?) {
+            if (pushed.compareAndSet(false, true)) push(app, manager, ids, state)
+        }
 
         // 不用 goAsync：HyperOS 的进程冻结（GreezeManager）不认它——onReceive 一返回，
         // 小部件进程就被冻住，网络请求停在半路，直到用户打开 App 才解冻，拿到的是 TIMEOUT。
@@ -116,13 +123,20 @@ abstract class UsageWidget : AppWidgetProvider() {
                     is FetchResult.Err -> WidgetState(cached?.raw, now, r.error, cached?.moneyRaw)
                 }
                 WidgetCache.save(app, next)
+                if (!pushed.compareAndSet(false, true)) {
+                    // 已经拿缓存顶过一批：等桌面处理完那一批再推，免得两批挨得太近
+                    Thread.sleep(BATCH_GAP_MS)
+                }
                 push(app, manager, ids, next)
             } catch (e: Exception) {
                 Log.w(TAG, "widget refresh failed: ${e.javaClass.simpleName}")
             }
         }
+        // 新数据 1.5 秒内没到（网络慢、刚解冻），先拿缓存顶上，桌面不至于空着
+        worker.join(CACHE_FALLBACK_MS)
+        if (worker.isAlive && cached != null) pushOnce(cached)
         // 广播处理的上限是 10 秒，留出余量；超时就先返回，线程若被冻结，解冻后照样会画完
-        worker.join(RECEIVE_WAIT_MS)
+        worker.join(RECEIVE_WAIT_MS - CACHE_FALLBACK_MS)
     }
 
     private fun push(context: Context, manager: AppWidgetManager, ids: IntArray, state: WidgetState?) {
@@ -132,7 +146,8 @@ abstract class UsageWidget : AppWidgetProvider() {
         val tap = tapIntent(context, model)
         for (id in ids) {
             val size = WidgetSize.of(manager.getAppWidgetOptions(id), defaultSize)
-            val views = render(context, model, state, size)
+            // 设计稿在自己进程里渲染成整图，桌面只拿到一张图（见 Snapshot）
+            val views = Snapshot.wrap(context, render(context, model, state, size), size, Snapshot.describe(model))
             views.setOnClickPendingIntent(android.R.id.background, tap)
             manager.updateAppWidget(id, views)
             Log.i(TAG, "${javaClass.simpleName}#$id size=${size.widthDp}x${size.heightDp} " +
@@ -156,6 +171,9 @@ abstract class UsageWidget : AppWidgetProvider() {
         const val ACTION_MIUI_UPDATE = "miui.appwidget.action.APPWIDGET_UPDATE"
         const val EXTRA_FORCE = "space.zackwill.ua.FORCE"
         private const val THROTTLE_MS = 20_000L
+        private const val CACHE_FALLBACK_MS = 1_500L
+        /** 两批更新之间至少隔这么久，见 refresh() 里的说明 */
+        private const val BATCH_GAP_MS = 2_000L
         /** 主线程最多等这么久（广播处理上限 10 秒） */
         private const val RECEIVE_WAIT_MS = 8_500L
         /** summary 之后留给金额请求的时间（从本次刷新开始算），整体要落在 RECEIVE_WAIT_MS 以内 */
@@ -167,12 +185,10 @@ abstract class UsageWidget : AppWidgetProvider() {
 
 // ── 绑定：卡片和列表共用 ────────────────────────────────────────────
 //
-// 所有文字都是 TextArt 画的白色衬线位图（小米会把 TextView 的字体强制换成 MiSans），颜色靠着色。
-//
-// 着色**不能给资源 id** 让桌面去解析：小米桌面在调整大小后重建界面时，按资源 id 读颜色的指令会失效，
-// 字形停在白色、画在白卡片上，实测整块小部件的文字全部「消失」（进度条这类写在布局里的颜色不受影响）。
-// 所以浅色、深色两套颜色值由我们在自己的进程里算好，直接放进指令（API 31 的日/夜双值写法），
-// 桌面只按自己当前的深浅色挑一个——系统切换深色模式时仍然不用等下一次刷新。
+// 所有文字都是 TextArt 画的衬线位图（小米会把 TextView 的字体强制换成 MiSans），
+// 颜色直接画进位图，浅色、深色各一张，由 layout/ 与 layout-night/ 决定显示哪张（见 Bind.put）。
+// 不用着色指令：HyperOS 桌面调整大小后会丢掉所有着色指令（不管给资源 id 还是给日/夜两个值），
+// 白字画在白卡片上，实测整块小部件的文字全部「消失」。
 
 /** 字号（sp）。与看板 claude.css 对应：.card__title 13 · .num--xl 46（桌面上收到 40）· .quota__eta 13 */
 data class Type(
@@ -195,14 +211,18 @@ data class Type(
     }
 }
 
+/** 额度条的尺寸：布局几何（Dims）+ 桌面报的格子宽度 */
+internal data class BarSpec(val dims: BarDims, val widgetWidthDp: Int) {
+    val widthDp: Int get() = dims.widthDp(widgetWidthDp)
+}
+
 /** 一个窗口在布局里用到的 view id。卡片和列表的额度条、时刻部分结构相同 */
 data class SlotIds(
     val root: Int,
     val label: Int,
     val pct: Int,
-    /** 四种状态色各一根条，按 OK / WARN / DANGER / MUTED 的顺序 */
-    val bars: List<Int>,
-    val pace: Int,
+    /** 额度条（位图容器，见 BarArt） */
+    val bar: Int,
     val dot: Int,
     val eta: Int,
     /** 卡片才有：重置时预计 */
@@ -221,33 +241,34 @@ data class SlotIds(
 )
 
 internal object Bind {
-    /**
-     * 实验开关：true = 按当前深浅色把颜色直接画进位图，不下着色指令。
-     * 用来判断 HyperOS 桌面调整大小后文字消失，是丢了着色还是丢了位图。
-     */
-    private const val BAKE_COLORS = true
 
-    private val BAR_TONES = listOf(Tone.OK, Tone.WARN, Tone.DANGER, Tone.MUTED)
-
-    /** 颜色资源 → (浅色值, 深色值)。按 uiMode 各建一个配置上下文去读，不经过桌面 */
-    private val tints = HashMap<Int, Pair<ColorStateList, ColorStateList>>()
+    /** 颜色资源 → (浅色值, 深色值)。按 uiMode 各建一个配置上下文去读 */
+    private val colors = HashMap<Int, Pair<Int, Int>>()
 
     @Synchronized
-    private fun tintPair(context: Context, colorRes: Int): Pair<ColorStateList, ColorStateList> =
-        tints.getOrPut(colorRes) {
-            fun read(night: Boolean): ColorStateList {
-                val cfg = Configuration(context.resources.configuration)
-                cfg.uiMode = (cfg.uiMode and Configuration.UI_MODE_NIGHT_MASK.inv()) or
-                    (if (night) Configuration.UI_MODE_NIGHT_YES else Configuration.UI_MODE_NIGHT_NO)
-                return ColorStateList.valueOf(context.createConfigurationContext(cfg).getColor(colorRes))
-            }
-            read(night = false) to read(night = true)
+    private fun colorPair(context: Context, colorRes: Int): Pair<Int, Int> = colors.getOrPut(colorRes) {
+        fun read(night: Boolean): Int {
+            val cfg = Configuration(context.resources.configuration)
+            cfg.uiMode = (cfg.uiMode and Configuration.UI_MODE_NIGHT_MASK.inv()) or
+                (if (night) Configuration.UI_MODE_NIGHT_YES else Configuration.UI_MODE_NIGHT_NO)
+            return context.createConfigurationContext(cfg).getColor(colorRes)
         }
+        read(night = false) to read(night = true)
+    }
 
-    /** 给一段文字位图着色（日/夜两个值都带上，见文件开头的说明） */
-    fun tint(views: RemoteViews, context: Context, id: Int, colorRes: Int) {
-        val (day, night) = tintPair(context, colorRes)
-        views.setColorStateList(id, "setImageTintList", day, night)
+    private fun color(context: Context, colorRes: Int, night: Boolean): Int =
+        colorPair(context, colorRes).let { if (night) it.second else it.first }
+
+    /**
+     * 画浅色、深色两张位图，放进容器里的 _d / _n 两个 ImageView（文字和额度条都这样）。
+     * 颜色画在位图里，不下任何着色或 setProgress 指令：HyperOS 桌面重建界面后会丢掉着色指令、
+     * 把几根条的进度混在一起。哪张可见由 layout/ 与 layout-night/ 决定，桌面按自己的深浅色选布局。
+     */
+    private fun put(views: RemoteViews, context: Context, id: Int, contentDescription: String, draw: (night: Boolean) -> android.graphics.Bitmap) {
+        val (dayId, nightId) = TextIds.PAIRS[id] ?: error("不是位图容器：${context.resources.getResourceEntryName(id)}")
+        views.setImageViewBitmap(dayId, draw(false))
+        views.setImageViewBitmap(nightId, draw(true))
+        views.setContentDescription(id, contentDescription)
     }
 
     fun textColor(tone: Tone?): Int = when (tone) {
@@ -273,32 +294,19 @@ internal object Bind {
         sizeSp: Float,
         color: Int,
         face: TextArt.Face = TextArt.Face.REGULAR,
-    ) {
-        if (BAKE_COLORS) {
-            views.setImageViewBitmap(id, TextArt.text(context, text, sizeSp, face, context.getColor(color)))
-        } else {
-            views.setImageViewBitmap(id, TextArt.text(context, text, sizeSp, face))
-            tint(views, context, id, color)
-        }
-        views.setContentDescription(id, text)
-    }
+    ) = put(views, context, id, text) { night -> TextArt.text(context, text, sizeSp, face, color(context, color, night)) }
 
     /** 衬线大数字。看板：ok 时是正文色，warn/danger 才上色。bottomPadPx 见 TextArt.number */
-    fun number(views: RemoteViews, context: Context, id: Int, text: String, sizeSp: Float, tone: Tone?, bottomPadPx: Float) {
-        if (BAKE_COLORS) {
-            views.setImageViewBitmap(id, TextArt.number(context, text, sizeSp, bottomPadPx, color = context.getColor(textColor(tone))))
-        } else {
-            views.setImageViewBitmap(id, TextArt.number(context, text, sizeSp, bottomPadPx))
-            tint(views, context, id, textColor(tone))
+    fun number(views: RemoteViews, context: Context, id: Int, text: String, sizeSp: Float, tone: Tone?, bottomPadPx: Float) =
+        put(views, context, id, "$text%") { night ->
+            TextArt.number(context, text, sizeSp, bottomPadPx, color = color(context, textColor(tone), night))
         }
-        views.setContentDescription(id, "$text%")
-    }
 
     fun empty(views: RemoteViews, context: Context, s: SlotIds, type: Type) {
         text(views, context, s.label, "额度", type.title, R.color.ua_text_2, TextArt.Face.SEMIBOLD)
         number(views, context, s.pct, "--", type.num, Tone.MUTED, TextArt.descentPx(context, type.proj))
         s.proj?.let { views.setViewVisibility(it, View.GONE) }
-        for (id in s.bars + listOf(s.pace, s.dot, s.eta)) views.setViewVisibility(id, View.GONE)
+        for (id in listOf(s.bar, s.dot, s.eta)) views.setViewVisibility(id, View.GONE)
     }
 
     fun slot(
@@ -308,6 +316,7 @@ internal object Bind {
         row: WidgetRow,
         dim: Boolean,
         type: Type,
+        bar: BarSpec,
         label: String = row.label,
         /** 布局里有没有金额行（只有宽松档卡片有）；对不存在的 view 下指令会让整个小部件加载失败 */
         withMoney: Boolean = false,
@@ -332,23 +341,25 @@ internal object Bind {
             }
         }
 
-        // 每种状态色一根条，只显示一根——不在运行时染色，深浅色由资源自动切换
         val barTone = if (dim) Tone.MUTED else row.tone
-        BAR_TONES.forEachIndexed { i, tone ->
-            val id = s.bars[i]
-            if (tone == barTone) {
-                views.setViewVisibility(id, View.VISIBLE)
-                views.setInt(id, "setSecondaryProgress", row.projectedFill)
-                views.setInt(id, "setProgress", row.used)
-            } else {
-                views.setViewVisibility(id, View.GONE)
-            }
+        val (usedRes, projRes) = when (barTone) {
+            Tone.OK -> R.color.ua_ok_g to R.color.ua_ok_p
+            Tone.WARN -> R.color.ua_warn_g to R.color.ua_warn_p
+            Tone.DANGER -> R.color.ua_danger_g to R.color.ua_danger_p
+            Tone.MUTED -> R.color.ua_muted_g to R.color.ua_muted_p
         }
-        if (row.pace != null) {
-            views.setViewVisibility(s.pace, View.VISIBLE)
-            views.setInt(s.pace, "setProgress", row.pace)
-        } else {
-            views.setViewVisibility(s.pace, View.GONE)
+        views.setViewVisibility(s.bar, View.VISIBLE)
+        put(views, context, s.bar, "已用 ${row.used}%，预计 ${row.projectedFill}%") { night ->
+            BarArt.draw(
+                context, bar.widthDp, bar.dims.barDp, bar.dims.tickDp,
+                row.used, row.projectedFill, row.pace,
+                BarArt.Colors(
+                    track = color(context, R.color.ua_ring_track, night),
+                    projected = color(context, projRes, night),
+                    used = color(context, usedRes, night),
+                    pace = color(context, R.color.ua_pace, night),
+                ),
+            )
         }
 
         val etaTone = if (dim) Tone.MUTED else row.etaTone
@@ -403,6 +414,15 @@ abstract class CardWidget : UsageWidget() {
         }
         val views = RemoteViews(context.packageName, layout)
         val type = if (size.roomy) Type.CARD_ROOMY else Type.CARD_COMPACT
+        val bar = BarSpec(
+            when {
+                two && size.roomy -> Dims.CARD2_ROOMY
+                two -> Dims.CARD2_COMPACT
+                size.roomy -> Dims.CARD1_ROOMY
+                else -> Dims.CARD1_COMPACT
+            },
+            size.widthDp,
+        )
 
         if (!two) {
             val row = WidgetModels.primary(state?.summary, model)
@@ -412,7 +432,7 @@ abstract class CardWidget : UsageWidget() {
                 return views
             }
             // 紧凑档 110dp 宽放不下「预计 128%」：浅色那段额度条已经表达了预计
-            Bind.slot(views, context, C0, row, model.dim, type, withMoney = size.roomy, withProjected = size.roomy)
+            Bind.slot(views, context, C0, row, model.dim, type, bar, withMoney = size.roomy, withProjected = size.roomy)
             if (state?.error != null) {
                 // 窄卡的标题行放不下「7d 窗口」+「无法连接」：原因挪到底行，替掉已经不新鲜的时刻
                 Bind.status(views, context, R.id.c0_status, null, type.status)
@@ -432,8 +452,8 @@ abstract class CardWidget : UsageWidget() {
             Bind.status(views, context, R.id.c0_status, model, type.status)
             return views
         }
-        Bind.slot(views, context, C0, rows[0], model.dim, type, withMoney = size.roomy)
-        if (rows.size >= 2) Bind.slot(views, context, C1, rows[1], model.dim, type, withMoney = size.roomy)
+        Bind.slot(views, context, C0, rows[0], model.dim, type, bar, withMoney = size.roomy)
+        if (rows.size >= 2) Bind.slot(views, context, C1, rows[1], model.dim, type, bar, withMoney = size.roomy)
         else views.setViewVisibility(C1.root, View.GONE)
         // 状态放在最右一张卡的标题行尾，与看板顶栏右侧的「额度更新时刻」同一个位置
         Bind.status(views, context, R.id.c0_status, if (rows.size >= 2) null else model, type.status)
@@ -444,15 +464,15 @@ abstract class CardWidget : UsageWidget() {
     companion object {
         private val C0 = SlotIds(
             R.id.c0, R.id.c0_label, R.id.c0_pct,
-            listOf(R.id.c0_bar_ok, R.id.c0_bar_warn, R.id.c0_bar_danger, R.id.c0_bar_muted),
-            R.id.c0_pace, R.id.c0_dot, R.id.c0_eta,
+            R.id.c0_bar,
+            R.id.c0_dot, R.id.c0_eta,
             proj = R.id.c0_proj, projLabel = R.id.c0_proj_label, projValue = R.id.c0_proj_val, status = R.id.c0_status,
             spendLabel = R.id.c0_spend_label, spend = R.id.c0_spend, fullLabel = R.id.c0_full_label, full = R.id.c0_full,
         )
         private val C1 = SlotIds(
             R.id.c1, R.id.c1_label, R.id.c1_pct,
-            listOf(R.id.c1_bar_ok, R.id.c1_bar_warn, R.id.c1_bar_danger, R.id.c1_bar_muted),
-            R.id.c1_pace, R.id.c1_dot, R.id.c1_eta,
+            R.id.c1_bar,
+            R.id.c1_dot, R.id.c1_eta,
             proj = R.id.c1_proj, projLabel = R.id.c1_proj_label, projValue = R.id.c1_proj_val, status = R.id.c1_status,
             spendLabel = R.id.c1_spend_label, spend = R.id.c1_spend, fullLabel = R.id.c1_full_label, full = R.id.c1_full,
         )
@@ -491,6 +511,15 @@ class ListWidget : UsageWidget() {
             size.wide -> if (size.roomy) Type.LIST_ROOMY else Type.LIST_COMPACT
             else -> if (size.roomy) Type.NARROW_ROOMY else Type.NARROW_COMPACT
         }
+        val bar = BarSpec(
+            when {
+                size.wide && size.roomy -> Dims.LIST_ROOMY
+                size.wide -> Dims.LIST_COMPACT
+                size.roomy -> Dims.NARROW_ROOMY
+                else -> Dims.NARROW_COMPACT
+            },
+            size.widthDp,
+        )
         // 110dp 高的格子：宽列表排得下三行，窄列表每行两层只排得下两行
         val maxRows = when {
             size.roomy -> ROWS.size
@@ -512,7 +541,7 @@ class ListWidget : UsageWidget() {
             if (row == null) {
                 views.setViewVisibility(s.root, View.GONE)
             } else {
-                Bind.slot(views, context, s, row, model.dim, type, label = if (size.wide) row.label else row.shortLabel)
+                Bind.slot(views, context, s, row, model.dim, type, bar, label = if (size.wide) row.label else row.shortLabel)
                 views.setViewVisibility(s.etaBox!!, if (size.wide) View.VISIBLE else View.GONE)
             }
         }
@@ -522,17 +551,17 @@ class ListWidget : UsageWidget() {
     companion object {
         private val ROWS = listOf(
             SlotIds(R.id.r0, R.id.r0_label, R.id.r0_pct,
-                listOf(R.id.r0_bar_ok, R.id.r0_bar_warn, R.id.r0_bar_danger, R.id.r0_bar_muted),
-                R.id.r0_pace, R.id.r0_dot, R.id.r0_eta, etaBox = R.id.r0_eta_box),
+                R.id.r0_bar,
+                R.id.r0_dot, R.id.r0_eta, etaBox = R.id.r0_eta_box),
             SlotIds(R.id.r1, R.id.r1_label, R.id.r1_pct,
-                listOf(R.id.r1_bar_ok, R.id.r1_bar_warn, R.id.r1_bar_danger, R.id.r1_bar_muted),
-                R.id.r1_pace, R.id.r1_dot, R.id.r1_eta, etaBox = R.id.r1_eta_box),
+                R.id.r1_bar,
+                R.id.r1_dot, R.id.r1_eta, etaBox = R.id.r1_eta_box),
             SlotIds(R.id.r2, R.id.r2_label, R.id.r2_pct,
-                listOf(R.id.r2_bar_ok, R.id.r2_bar_warn, R.id.r2_bar_danger, R.id.r2_bar_muted),
-                R.id.r2_pace, R.id.r2_dot, R.id.r2_eta, etaBox = R.id.r2_eta_box),
+                R.id.r2_bar,
+                R.id.r2_dot, R.id.r2_eta, etaBox = R.id.r2_eta_box),
             SlotIds(R.id.r3, R.id.r3_label, R.id.r3_pct,
-                listOf(R.id.r3_bar_ok, R.id.r3_bar_warn, R.id.r3_bar_danger, R.id.r3_bar_muted),
-                R.id.r3_pace, R.id.r3_dot, R.id.r3_eta, etaBox = R.id.r3_eta_box),
+                R.id.r3_bar,
+                R.id.r3_dot, R.id.r3_eta, etaBox = R.id.r3_eta_box),
         )
     }
 }
@@ -541,7 +570,19 @@ class ListWidget : UsageWidget() {
 object WidgetUpdater {
     val PROVIDERS = listOf(SmallWidget::class.java, WideWidget::class.java, ListWidget::class.java)
 
-    fun requestAll(context: Context) {
+    private const val DEBOUNCE_MS = 10_000L
+
+    @Volatile
+    private var lastRequestAt = 0L
+
+    /**
+     * debounce = true：10 秒内重复调用只算一次（App 来回切前后台时用）。
+     * 每次刷新都是一批更新，HyperOS 桌面受不了短时间里连来好几批，见 UsageWidget.refresh()。
+     */
+    fun requestAll(context: Context, debounce: Boolean = false) {
+        val now = System.currentTimeMillis()
+        if (debounce && now - lastRequestAt < DEBOUNCE_MS) return
+        lastRequestAt = now
         val manager = AppWidgetManager.getInstance(context)
         for (cls in PROVIDERS) {
             val ids = manager.getAppWidgetIds(ComponentName(context, cls))

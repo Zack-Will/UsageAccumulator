@@ -17,6 +17,8 @@ export interface QueuedEvent {
   dedupKey: string;
   payload: string;
   backfill: boolean;
+  /** 取出时的 usage_rank —— 回执凭它判断这一行在途期间有没有被更完整的版本替换 */
+  rank: number;
 }
 
 export interface QueuedQuota {
@@ -254,22 +256,28 @@ export class ProbeStore {
 
   takeEvents(limit: number): QueuedEvent[] {
     return this.db
-      .prepare("SELECT id, dedup_key, payload, backfill FROM event_queue ORDER BY id LIMIT ?")
+      .prepare("SELECT id, dedup_key, payload, backfill, usage_rank FROM event_queue ORDER BY id LIMIT ?")
       .all(limit)
       .map((row) => ({
         id: asNumber(row["id"]),
         dedupKey: asString(row["dedup_key"]),
         payload: asString(row["payload"]),
         backfill: asNumber(row["backfill"]) === 1,
+        rank: asNumber(row["usage_rank"]),
       }));
   }
 
-  ackEvents(ids: number[]): void {
-    if (ids.length === 0) return;
-    const stmt = this.db.prepare("DELETE FROM event_queue WHERE id = ?");
+  /**
+   * 回执：删掉已发出的行。只删「发出去的正是当前版本」的行 ——
+   * HTTP 在途时扫描可能把同一行替换成更完整的用量（rank 只增不减），
+   * 那一行服务端还没见过，必须留在队列里等下一批。
+   */
+  ackEvents(rows: Pick<QueuedEvent, "id" | "rank">[]): void {
+    if (rows.length === 0) return;
+    const stmt = this.db.prepare("DELETE FROM event_queue WHERE id = ? AND usage_rank = ?");
     this.db.exec("BEGIN");
     try {
-      for (const id of ids) stmt.run(id);
+      for (const r of rows) stmt.run(r.id, r.rank);
       this.db.exec("COMMIT");
     } catch (err) {
       this.db.exec("ROLLBACK");

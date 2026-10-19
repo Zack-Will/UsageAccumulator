@@ -1,5 +1,11 @@
 import type {
   Calibration,
+  CodexAccount,
+  CodexCollector,
+  CodexPeriods,
+  CodexSessionStatus,
+  CodexQuotaResponse,
+  CodexUsage,
   Distribution,
   QuotaHistory,
   QuotaSessionStatus,
@@ -130,6 +136,19 @@ export function createLiveApi(opts: { base: string; token?: string | undefined }
       }),
     clearQuotaSession: (profileId) =>
       send<QuotaSessionStatus>("DELETE", "/v1/quota/session", { profile_id: profileId }),
+    codexAccounts: async (signal) =>
+      (await get<{ accounts: CodexAccount[] }>("/v1/codex/accounts", undefined, signal)).accounts,
+    codexQuota: (accountId, signal) =>
+      get<CodexQuotaResponse>("/v1/codex/quota", { account_id: accountId }, signal),
+    codexUsage: (p, signal) =>
+      get<CodexUsage>("/v1/codex/usage", { account_id: p.account_id, from: p.from, to: p.to, by: p.by, timezone: p.timezone }, signal),
+    codexCollectors: async (accountId, signal) =>
+      (await get<{ collectors: CodexCollector[] }>("/v1/codex/collectors", { account_id: accountId }, signal)).collectors,
+    codexPeriods: (p, signal) =>
+      get<CodexPeriods>("/v1/codex/periods", { account_id: p.account_id, weeks: String(p.weeks), timezone: p.timezone }, signal),
+    codexSession: (signal) => get<CodexSessionStatus>("/v1/codex/session", undefined, signal),
+    saveCodexSession: (credential) => send<CodexSessionStatus>("PUT", "/v1/codex/session", undefined, { credential }),
+    clearCodexSession: () => send<CodexSessionStatus>("DELETE", "/v1/codex/session"),
     stream(profileId, handlers) {
       handlers.onStatus("connecting");
       const src = new EventSource(joinUrl(base, "/v1/stream", { profile_id: profileId }), {

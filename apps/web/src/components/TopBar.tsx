@@ -20,6 +20,7 @@ const ROUTE_LABEL: Record<RouteId, string> = {
   weeks: "周历史",
   windows: "窗口分析",
   distribution: "用量分布",
+  codex: "Codex",
 };
 
 const STATUS_TONE: Record<StreamStatus, "ok" | "warn" | "danger"> = {
@@ -116,21 +117,26 @@ export function TopBar(props: {
 
       <span className="topbar__spacer" />
 
-      <label className="visually-hidden" htmlFor="profile-select">
-        Profile
-      </label>
-      <select
-        id="profile-select"
-        className="select"
-        value={props.profileId}
-        onChange={(e) => props.onProfile(e.target.value)}
-      >
-        {props.profiles.map((p) => (
-          <option key={p.id} value={p.id}>
-            {planLabel(p.plan) ?? p.label}
-          </option>
-        ))}
-      </select>
+      {/* Codex 是独立账本，不挂在 Claude 的 profile 下：那一页没有可选的 */}
+      {props.route !== "codex" && (
+        <>
+          <label className="visually-hidden" htmlFor="profile-select">
+            Profile
+          </label>
+          <select
+            id="profile-select"
+            className="select"
+            value={props.profileId}
+            onChange={(e) => props.onProfile(e.target.value)}
+          >
+            {props.profiles.map((p) => (
+              <option key={p.id} value={p.id}>
+                {planLabel(p.plan) ?? p.label}
+              </option>
+            ))}
+          </select>
+        </>
+      )}
 
       <Segmented
         label="时间范围"

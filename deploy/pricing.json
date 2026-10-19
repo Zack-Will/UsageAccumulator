@@ -24,6 +24,12 @@
         "sha256_prefix": "3a9fb996911926b5",
         "cross_checked": "Anthropic 官方口径 $4 / $20 per MTok、cache read $0.20；写入按标准 1.25x（5m）/ 2x（1h）= $5 / $8，逐字段一致",
         "note": "只追加这一条，其余条目未随新快照重算，避免顺手改动已核实过的价格"
+      },
+      {
+        "model": "claude-sonnet-5-5",
+        "added_at": "2026-10-18",
+        "from": "Anthropic 官方口径（claude-api skill 模型表，缓存 2026-10-06）：$2 / $10 per MTok、cache read $0.20；写入按标准 1.25x（5m）/ 2x（1h）= $2.5 / $4",
+        "note": "与 claude-sonnet-5 同价。claude-haiku-5-5 未加：官方按 prompt 是否超过 100K 分两档（$0.10/$0.50 与 $0.50/$2.50），本表固定五项单价表达不了，宁可缺价显示未知"
       }
     ]
   },
@@ -233,6 +239,13 @@
       "cacheWrite1hPerMTok": 6.0
     },
     "claude-sonnet-5": {
+      "inputPerMTok": 2.0,
+      "outputPerMTok": 10.0,
+      "cacheReadPerMTok": 0.2,
+      "cacheWrite5mPerMTok": 2.5,
+      "cacheWrite1hPerMTok": 4.0
+    },
+    "claude-sonnet-5-5": {
       "inputPerMTok": 2.0,
       "outputPerMTok": 10.0,
       "cacheReadPerMTok": 0.2,

@@ -28,14 +28,16 @@ execFileSync(process.execPath, [join(here, "bundle.mjs"), "--out", outDir], { st
 rmSync(join(outDir, "ua-probe.mjs.sha256"));
 chmodSync(join(outDir, "ua-probe.mjs"), 0o755);
 copyFileSync(join(pkgDir, "npm-README.md"), join(outDir, "README.md"));
+copyFileSync(join(pkgDir, "..", "..", "LICENSE"), join(outDir, "LICENSE"));
 
 const manifest = {
   name: "@zack-will/ua-probe",
   version,
   description: "UsageAccumulator 探针：把本机 Claude Code 用量上报到自建的 UsageAccumulator 服务端",
+  license: "MIT",
   type: "module",
   bin: { "ua-probe": "ua-probe.mjs" },
-  files: ["ua-probe.mjs", "README.md"],
+  files: ["ua-probe.mjs", "README.md", "LICENSE"],
   // node:sqlite 从 22.13 起不再需要实验开关
   engines: { node: ">=22.13" },
   os: ["darwin", "linux"],

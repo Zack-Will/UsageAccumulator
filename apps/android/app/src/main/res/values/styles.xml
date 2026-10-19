@@ -64,12 +64,4 @@
         <item name="android:ellipsize">end</item>
     </style>
 
-    <!-- 父样式选不带着色的老 Horizontal：Material 版会按主题色给 progress 层染色，盖掉我们自己的状态色 -->
-    <style name="UaWidgetBar" parent="@android:style/Widget.ProgressBar.Horizontal">
-        <item name="android:max">100</item>
-        <item name="android:indeterminate">false</item>
-        <item name="android:indeterminateOnly">false</item>
-        <item name="android:minHeight">8dp</item>
-        <item name="android:maxHeight">8dp</item>
-    </style>
 </resources>

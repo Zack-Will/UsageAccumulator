@@ -53,6 +53,11 @@ export interface QuotaSample {
 export interface Projection {
   ratePctPerMin: number;
   projected: { p25: number; mid: number; p75: number };
+  /**
+   * 未截到 100 的窗口末值（可以超过 100）。画预测曲线要用它再逐点截断 ——
+   * 拿截断后的终点去插值，会把提前耗尽的增长摊薄到整个剩余窗口，曲线在 ETA 处到不了 100。
+   */
+  projectedUnclamped: { p25: number; mid: number; p75: number };
   /** null 表示按当前速率本窗口不会耗尽 */
   exhaustEta: Date | null;
 }
@@ -125,10 +130,15 @@ export function projectWindow(args: {
   const rHi = sortedRates.length > 0 ? quantile(sortedRates, 0.75) : 0;
 
   const clamp = (v: number) => Math.min(100, Math.max(0, v));
+  const projectedUnclamped = {
+    p25: lastPct + rLo * remainingMin,
+    mid: lastPct + rMid * remainingMin,
+    p75: lastPct + rHi * remainingMin,
+  };
   const projected = {
-    p25: clamp(lastPct + rLo * remainingMin),
-    mid: clamp(lastPct + rMid * remainingMin),
-    p75: clamp(lastPct + rHi * remainingMin),
+    p25: clamp(projectedUnclamped.p25),
+    mid: clamp(projectedUnclamped.mid),
+    p75: clamp(projectedUnclamped.p75),
   };
 
   let exhaustEta: Date | null = null;
@@ -139,7 +149,7 @@ export function projectWindow(args: {
     }
   }
 
-  return { ratePctPerMin: rMid, projected, exhaustEta };
+  return { ratePctPerMin: rMid, projected, projectedUnclamped, exhaustEta };
 }
 
 /** 本地推算窗口终点与官方 resets_at 的偏移（分钟，正数=官方更晚）。 */

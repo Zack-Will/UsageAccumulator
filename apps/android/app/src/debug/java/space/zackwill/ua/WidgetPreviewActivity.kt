@@ -14,6 +14,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import space.zackwill.ua.widget.ListWidget
 import space.zackwill.ua.widget.SmallWidget
+import space.zackwill.ua.widget.Snapshot
 import space.zackwill.ua.widget.UsageWidget
 import space.zackwill.ua.widget.WideWidget
 import space.zackwill.ua.widget.WidgetModels
@@ -67,7 +68,9 @@ class WidgetPreviewActivity : Activity() {
 
     private fun frame(ctx: Context, widget: UsageWidget, state: WidgetState, w: Int, h: Int): FrameLayout {
         val model = WidgetModels.build(state.summary, state.error, System.currentTimeMillis(), ZoneId.systemDefault(), state.money)
-        val views = widget.render(ctx, model, state, WidgetSize(w, h))
+        // 与真机同一条路：设计稿先渲染成整图，再套进 widget_canvas
+        val size = WidgetSize(w, h)
+        val views = Snapshot.wrap(this, widget.render(ctx, model, state, size), size, Snapshot.describe(model))
         val host = FrameLayout(ctx)
         host.addView(views.apply(ctx, host))
         host.layoutParams = LinearLayout.LayoutParams(dp(w), dp(h))

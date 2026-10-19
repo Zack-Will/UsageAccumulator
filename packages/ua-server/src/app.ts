@@ -11,6 +11,8 @@ import type { Config } from "./config.js";
 import { createLogger } from "./logger.js";
 import { EventBus, formatSse } from "./bus.js";
 import { eventCostUsd } from "./pricing.js";
+import { registerCodexRoutes } from "./codex-api.js";
+import { CodexHttpError } from "./codex-store.js";
 import {
   buildDistribution,
   buildTimelineLanes,
@@ -25,6 +27,8 @@ import { decodeEventBatch, enrollWireSchema, quotaSnapshotWireSchema, quotaWireT
 import type { EventRow, Store } from "./store.js";
 import { LoginGuard } from "./login-guard.js";
 import { QuotaSampler, type SamplerStatus } from "./quota-sampler.js";
+import { CODEX_SERVER_MACHINE_ID, CodexSampler } from "./codex-sampler.js";
+import type { CodexFetch } from "./codex-web.js";
 import { isVaultSafeId, type SessionVault } from "./quota-vault.js";
 import {
   DEFAULT_SESSION_MS,
@@ -61,6 +65,14 @@ export interface BuildAppOptions {
   quota?: {
     vault: SessionVault;
     client: Pick<ClaudeWebClient, "organizations" | "snapshot">;
+    intervalMs?: number;
+    jitterMs?: number;
+    authBackoffMs?: number[];
+  };
+  /** 服务端直接抓 Codex 额度。不给就不开，/v1/codex/session 报 disabled */
+  codex?: {
+    vault: SessionVault;
+    http: CodexFetch;
     intervalMs?: number;
     jitterMs?: number;
     authBackoffMs?: number[];
@@ -235,6 +247,10 @@ export function buildApp(opts: BuildAppOptions) {
   }
 
   app.setErrorHandler((err: FastifyError | HttpError, _req, reply: FastifyReply) => {
+    if (err instanceof CodexHttpError) {
+      void reply.status(err.status).send({ error: { code: err.code, message: err.message } });
+      return;
+    }
     if (err instanceof HttpError) {
       void reply.status(err.status).send({ error: { code: err.code, message: err.message } });
       return;
@@ -264,6 +280,7 @@ export function buildApp(opts: BuildAppOptions) {
     const current = await computeCurrentWindows(store, snapshot.profileId, {
       now: now(),
       quotaStaleMs: config.quotaStaleMs,
+      timeZone: config.timeZone,
     });
     bus.publish({ name: "window_update", profileId: snapshot.profileId, data: current });
   }
@@ -334,6 +351,23 @@ export function buildApp(opts: BuildAppOptions) {
     if (!path.startsWith("/v1/")) return;
     await authenticate(req);
   });
+
+  const codexSampler = opts.codex
+    ? new CodexSampler({
+        vault: opts.codex.vault,
+        http: opts.codex.http,
+        configuredEmail: () => config.codexAccountEmail,
+        record: async (batch) => {
+          await store.codex.ingest(batch, CODEX_SERVER_MACHINE_ID, [], now().toISOString());
+        },
+        log,
+        now,
+        ...(opts.codex.intervalMs !== undefined ? { intervalMs: opts.codex.intervalMs } : {}),
+        ...(opts.codex.jitterMs !== undefined ? { jitterMs: opts.codex.jitterMs } : {}),
+        ...(opts.codex.authBackoffMs !== undefined ? { authBackoffMs: opts.codex.authBackoffMs } : {}),
+      })
+    : null;
+  registerCodexRoutes(app, { store, config, now, sampler: codexSampler });
 
   async function resolveProfileId(raw: string | undefined): Promise<string> {
     if (raw && raw.length > 0) return raw;
@@ -742,6 +776,7 @@ export function buildApp(opts: BuildAppOptions) {
     const result = await computeCurrentWindows(store, profileId, {
       now: now(),
       quotaStaleMs: config.quotaStaleMs,
+      timeZone: config.timeZone,
       ...(q.burn_points !== undefined ? { maxBurnPoints: q.burn_points } : {}),
     });
     return reply.send(result);
@@ -754,6 +789,7 @@ export function buildApp(opts: BuildAppOptions) {
     const current = await computeCurrentWindows(store, profileId, {
       now: now(),
       quotaStaleMs: config.quotaStaleMs,
+      timeZone: config.timeZone,
       // 菜单栏不画燃尽曲线，最少取两点够算速率即可
       maxBurnPoints: 2,
     });
@@ -993,6 +1029,7 @@ export function buildApp(opts: BuildAppOptions) {
         await computeCurrentWindows(store, profileId, {
           now: now(),
           quotaStaleMs: config.quotaStaleMs,
+          timeZone: config.timeZone,
         }),
       );
     } catch {
@@ -1016,5 +1053,5 @@ export function buildApp(opts: BuildAppOptions) {
     req.raw.on("error", cleanup);
   });
 
-  return { fastify: app, bus, sampler };
+  return { fastify: app, bus, sampler, codexSampler };
 }

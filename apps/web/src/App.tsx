@@ -15,6 +15,7 @@ import { useAsync } from "./hooks/useAsync";
 import { useRoute } from "./hooks/useRoute";
 import { useTheme } from "./hooks/useTheme";
 import { useTokens } from "./hooks/useTokens";
+import { Codex } from "./pages/Codex";
 import { Distribution } from "./pages/Distribution";
 import { Overview } from "./pages/Overview";
 import { Weeks } from "./pages/Weeks";
@@ -232,6 +233,17 @@ export function App() {
         )}
         {route === "distribution" && (
           <Distribution api={api} t={tokens} profileId={profileId} from={from} to={to} nonce={nonce} />
+        )}
+        {route === "codex" && (
+          <Codex
+            api={api}
+            t={tokens}
+            from={from}
+            to={to}
+            rangeLabel={RANGES.find((r) => r.value === range)?.label ?? range}
+            nonce={nonce}
+            nowMs={nowMs}
+          />
         )}
       </main>
     </div>

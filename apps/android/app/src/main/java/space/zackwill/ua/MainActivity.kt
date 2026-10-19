@@ -83,7 +83,7 @@ class MainActivity : Activity() {
         // 离开前台时把会话抄给小部件，并让它立刻重拉：回到桌面看到的就是最新数字，
         // 在页面里登录/退出后桌面也马上跟上
         captureSession()
-        WidgetUpdater.requestAll(this)
+        WidgetUpdater.requestAll(this, debounce = true)
         // 暂停 JS 定时器与 SSE，后台不耗电
         web.onPause()
     }
@@ -129,7 +129,6 @@ class MainActivity : Activity() {
             override fun onPageFinished(view: WebView, url: String?) {
                 if (!mainFrameFailed) errorView.visibility = View.GONE
                 captureSession()
-                WidgetUpdater.requestAll(this@MainActivity)
             }
 
             override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {

@@ -55,9 +55,14 @@ services:
       # 定价表挂进来，模型缺价时成本字段是 null 而不是 0
       UA_PRICING_FILE: /app/deploy/pricing.json
       UA_LOG_LEVEL: ${UA_LOG_LEVEL:-info}
+      UA_CODEX_ACCOUNT_EMAIL: ${UA_CODEX_ACCOUNT_EMAIL:-}
+      UA_CODEX_SAMPLING: ${UA_CODEX_SAMPLING:-true}
+      UA_CODEX_SESSION_DIR: /data/codex-session
       # 服务端直接抓 claude.ai 额度；会话在看板上登录后存这里（0600 文件，不进数据库）
       UA_QUOTA_SAMPLING: ${UA_QUOTA_SAMPLING:-true}
       UA_CLAUDE_SESSION_DIR: /data/claude-sessions
+      # 用户所在时区：7d 预测按星期几加权，日界要按这个切（进程 TZ 保持 UTC）
+      UA_TIME_ZONE: ${UA_TIME_ZONE:-Asia/Shanghai}
       TZ: UTC
     volumes:
       # 改价格不用重建镜像；migrations 同理（服务启动时自动执行）

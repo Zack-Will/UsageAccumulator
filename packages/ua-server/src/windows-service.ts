@@ -225,6 +225,9 @@ export async function loadNonCode(store: Store, profileId: string, now: Date) {
  * ★ 它随负载类型变：子代理为主的窗口每块钱吃额度更快（实测 5h/7d 刻度比 12 vs 主线 8.5），
  *   所以只取最近几个窗口，跟着用法走。子代理输出缺失（output_final = false）会让已花偏小，
  *   一并报出 partial_output_events，让前端知道它可能偏低。
+ *
+ * 输入不完整的窗口直接不参与：有缺价事件（花费少算）、采样有洞或最后一个快照离窗口结束太远
+ * （花费与百分比对不上）。全被排除时返回 null，前端显示未知，而不是一个偏差的数。
  */
 export interface FullCostReferenceDto {
   /** 中位数：每个窗口「已花 ÷ 本地占比」 */
@@ -237,6 +240,12 @@ export interface FullCostReferenceDto {
 
 /** 窗口结束时本地占比至少这么多才拿来当参考：取整误差 ±0.5 点在 30 点里 < 2% */
 export const REFERENCE_MIN_LOCAL_PCT = 30;
+/**
+ * 最后一个快照离窗口结束超过这么久就不用：分子是整窗的花费，分母是最后一次看到的百分比，
+ * 中间那段的花费没有对应的百分比（采样器停了才会这样；正常空闲时采样照常进行）。
+ * 与 attributeQuota 的 maxGapMs 一致。
+ */
+const REFERENCE_MAX_TAIL_GAP_MS = 30 * 60_000;
 /** 只取最近这么多个合格窗口：负载类型变了，参考值要跟得上 */
 const REFERENCE_MAX_WINDOWS = 8;
 const REFERENCE_CACHE_MS = 10 * 60_000;
@@ -278,23 +287,26 @@ export async function fullCostReference(
       const start = new Date(end.getTime() - FIVE_HOURS_MS);
       const samples = allSamples.filter((x) => x.ts >= start && x.ts < end);
       if (samples.length === 0) continue;
+      const lastSample = samples[samples.length - 1]!;
+      if (end.getTime() - lastSample.ts.getTime() > REFERENCE_MAX_TAIL_GAP_MS) continue;
       let spend = 0;
-      let priced = 0;
+      let unpriced = 0;
       let partial = 0;
       const evTs: { ts: Date }[] = [];
       for (const r of rows) {
         const e = r.event;
         if (e.ts < start || e.ts >= end || !countsTowardQuota(e.model)) continue;
         evTs.push({ ts: e.ts });
-        if (r.costUsd !== null) {
-          spend += r.costUsd;
-          priced++;
-        }
+        if (r.costUsd !== null) spend += r.costUsd;
+        else unpriced++;
         if (e.outputFinal === false) partial++;
       }
-      if (priced === 0 || spend <= 0) continue;
-      const util = samples[samples.length - 1]!.pct;
+      // 有缺价事件的窗口不用：它的用量算进了百分比，花费却是 0，参考值会被拉低
+      if (unpriced > 0 || spend <= 0) continue;
+      const util = lastSample.pct;
       const attr = attributeQuota(samples, evTs, nonCodeIn ? { nonCode: nonCodeIn, windowStart: start } : {});
+      // 采样有洞时差额归因不可信，「本地占比」跟着不可信
+      if (attr.hasSamplingGap) continue;
       const other = fuseOtherPct(attr, nonCodeIn ? nonCode.quantumAt(kind, end) : null, util);
       const local = util - other;
       if (local < REFERENCE_MIN_LOCAL_PCT) continue;
@@ -322,6 +334,8 @@ export interface WindowsOptions {
   now?: Date;
   quotaStaleMs?: number;
   maxBurnPoints?: number;
+  /** 用户所在时区（IANA），7d 日历模式按它切日；缺省 UTC */
+  timeZone?: string;
 }
 
 /**
@@ -354,6 +368,7 @@ export async function computeCurrentWindows(
   const now = opts.now ?? new Date();
   const staleMs = opts.quotaStaleMs ?? 15 * 60_000;
   const maxBurnPoints = opts.maxBurnPoints ?? 240;
+  const timeZone = opts.timeZone ?? "UTC";
 
   const latest = await store.latestQuotaWindows(profileId);
   const windows: CurrentWindowDto[] = [];
@@ -392,6 +407,7 @@ export async function computeCurrentWindows(
     //    7 天窗口里周末和工作日差异巨大，线性外推会系统性高估，所以必须分开处理。
     const isLongWindow = windowMs >= SEVEN_DAYS_MS;
     let projected = linear.projected;
+    let projectedUnclamped = linear.projectedUnclamped;
     let exhaustEta = linear.exhaustEta;
     let ratePctPerMin = linear.ratePctPerMin;
     let shape: (t: Date) => number = (t) =>
@@ -401,22 +417,24 @@ export async function computeCurrentWindows(
       // 星期几节律从本地事件里解；不足一周的数据会退化成全 1，即等价线性
       const historyFrom = new Date(windowStart.getTime() - 4 * SEVEN_DAYS_MS);
       const history = await store.eventsInRange(profileId, historyFrom, now);
-      const weights = weekdayWeightsFromEvents(history.map((r) => r.event));
+      const weights = weekdayWeightsFromEvents(history.map((r) => r.event), { timeZone });
       const calendar = projectCalendarWindow({
         pctNow: w.utilizationPct,
         now,
         windowStart,
         windowEnd,
         weights,
-        dispersion: dispersionFrom(w.utilizationPct, linear.projected),
+        dispersion: dispersionFrom(w.utilizationPct, linear.projectedUnclamped),
+        timeZone,
       });
       projected = calendar.projected;
+      projectedUnclamped = calendar.projectedUnclamped;
       exhaustEta = calendar.exhaustEta;
       ratePctPerMin = calendar.ratePctPerMin;
-      const remainingWeight = calendarWeight(now, windowEnd, weights);
+      const remainingWeight = calendarWeight(now, windowEnd, weights, timeZone);
       shape =
         remainingWeight > 0
-          ? (t) => calendarWeight(now, t, weights) / remainingWeight
+          ? (t) => calendarWeight(now, t, weights, timeZone) / remainingWeight
           : () => 0;
     }
 
@@ -488,7 +506,7 @@ export async function computeCurrentWindows(
         now,
         windowEnd,
         pctNow: w.utilizationPct,
-        endpoint: projected,
+        endpoint: projectedUnclamped,
         shape,
         points: projectedPointCount(burnCurve, now, windowEnd, maxBurnPoints),
       }),

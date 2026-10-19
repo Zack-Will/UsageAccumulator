@@ -46,4 +46,45 @@ describe("fullCostReference", () => {
     });
     expect(ref).toBeNull();
   });
+
+  it("有缺价事件的窗口不参与：用量进了百分比，花费却是 0", async () => {
+    const store = new MemoryStore();
+    await seedWindow(store, new Date(NOW.getTime() - 18 * H), 40, 40, "ok");
+    const end = new Date(NOW.getTime() - 12 * H);
+    await seedWindow(store, end, 40, 20, "half");
+    await store.insertEvents([
+      { event: makeEvent({ messageId: "unpriced", ts: new Date(end.getTime() - 2 * H) }), costUsd: null },
+    ]);
+    const ref = await fullCostReference(store, "claude-official", NOW, await loadNonCode(store, "claude-official", NOW), {
+      cache: false,
+    });
+    expect(ref!.windows).toBe(1);
+    expect(ref!.usd).toBeCloseTo(100, 6);
+  });
+
+  it("最后一个快照离窗口结束太远的窗口不参与：尾段花费没有对应的百分比", async () => {
+    const store = new MemoryStore();
+    const end = new Date(NOW.getTime() - 12 * H);
+    const start = end.getTime() - 5 * H;
+    // 前 1 小时涨到 40%、花 $40，之后采样器停了，又花了 $40
+    for (let i = 1; i <= 6; i++) {
+      const ts = new Date(start + i * 10 * 60_000);
+      await store.insertQuotaSnapshot({
+        profileId: "claude-official",
+        capturedAt: ts,
+        windows: [{ windowKind: "five_hour", utilizationPct: Math.round((40 * i) / 6), resetsAt: end }],
+        raw: {},
+      });
+      await store.insertEvents([
+        { event: makeEvent({ messageId: `head-${i}`, ts: new Date(ts.getTime() - 60_000) }), costUsd: 40 / 6 },
+      ]);
+    }
+    await store.insertEvents([
+      { event: makeEvent({ messageId: "tail", ts: new Date(start + 3 * H) }), costUsd: 40 },
+    ]);
+    const ref = await fullCostReference(store, "claude-official", NOW, await loadNonCode(store, "claude-official", NOW), {
+      cache: false,
+    });
+    expect(ref).toBeNull();
+  });
 });
