@@ -4,39 +4,22 @@ import type { UaApi } from "./types";
 
 export * from "./types";
 export { ApiError, type ApiErrorCode } from "./live";
-export { MOCK_PROFILES, MOCK_MACHINES } from "./mock";
 
 export type DataSource = "mock" | "live";
 
-const LS_KEY = "ua.source";
-
 /**
- * 数据源解析优先级（服务端未就绪，默认 mock）：
- *   1. URL 查询参数 ?source=mock|live      —— 临时试，不落盘
- *   2. localStorage "ua.source"            —— 顶栏开关写入，刷新后保持
- *   3. 构建期环境变量 VITE_UA_DATA_SOURCE  —— .env / CI
- *   4. "mock"
+ * 数据源。**生产构建只有 live**：mock 是开发期没有服务端时调界面用的，不进线上产物，也不给切换。
+ * 以前顶栏有个 mock/live 开关、还记在 localStorage 里 —— 点过一次 mock 的浏览器，线上看板就一直是假数据。
+ *
+ * 开发期优先级：URL ?source=mock|live（临时试）> 环境变量 VITE_UA_DATA_SOURCE（.env.local）> mock。
  */
 export function resolveDataSource(): DataSource {
+  if (import.meta.env.PROD) return "live";
   const fromUrl = new URLSearchParams(globalThis.location?.search ?? "").get("source");
   if (fromUrl === "mock" || fromUrl === "live") return fromUrl;
-  try {
-    const stored = globalThis.localStorage?.getItem(LS_KEY);
-    if (stored === "mock" || stored === "live") return stored;
-  } catch {
-    /* 隐私模式下 localStorage 可能抛错 */
-  }
   const fromEnv = import.meta.env.VITE_UA_DATA_SOURCE;
   if (fromEnv === "mock" || fromEnv === "live") return fromEnv;
   return "mock";
-}
-
-export function persistDataSource(source: DataSource): void {
-  try {
-    globalThis.localStorage?.setItem(LS_KEY, source);
-  } catch {
-    /* 忽略 */
-  }
 }
 
 const TOKEN_KEY = "ua.token";
@@ -127,11 +110,10 @@ export async function logout(): Promise<void> {
 }
 
 export function createApi(source: DataSource): UaApi {
-  if (source === "live") {
-    return createLiveApi({
-      base: import.meta.env.VITE_UA_API_BASE ?? "",
-      token: readToken(),
-    });
-  }
-  return createMockApi();
+  // import.meta.env.DEV 在生产构建里是常量 false：这一支连同 mock 模块一起被摇掉
+  if (import.meta.env.DEV && source === "mock") return createMockApi();
+  return createLiveApi({
+    base: import.meta.env.VITE_UA_API_BASE ?? "",
+    token: readToken(),
+  });
 }

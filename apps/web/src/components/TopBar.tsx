@@ -1,5 +1,5 @@
 import type { ThemeName } from "@ua/tokens";
-import type { CodexSessionStatus, DataSource, Profile, QuotaSessionStatus, StreamStatus } from "../api";
+import type { CodexSessionStatus, Profile, QuotaSessionStatus, StreamStatus } from "../api";
 import type { Provider } from "../hooks/useProvider";
 import { codexSessionBadge, codexSessionTone } from "./CodexSession";
 import { ClaudeIcon, OpenAIIcon } from "./ProviderIcons";
@@ -95,8 +95,6 @@ export function TopBar(props: {
   onRange: (r: RangeId) => void;
   theme: ThemeName;
   onTheme: (t: ThemeName) => void;
-  source: DataSource;
-  onSource: (s: DataSource) => void;
   streamStatus: StreamStatus;
   /** 最近一次额度快照的采集时刻（CONTRACT §2.1 captured_at）。 */
   capturedAt: number | null;
@@ -165,16 +163,6 @@ export function TopBar(props: {
         value={props.range}
         options={RANGES.map((r) => ({ value: r.value, label: r.label }))}
         onChange={props.onRange}
-      />
-
-      <Segmented
-        label="数据源"
-        value={props.source}
-        options={[
-          { value: "mock", label: "mock" },
-          { value: "live", label: "live" },
-        ]}
-        onChange={props.onSource}
       />
 
       {/* 点开是服务端抓额度用的那份登录（Claude：claude.ai 会话；Codex：服务端专用的 ChatGPT 登录）——

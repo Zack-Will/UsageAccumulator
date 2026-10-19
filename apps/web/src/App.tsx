@@ -3,7 +3,6 @@ import {
   createApi,
   fetchSessionStatus,
   readToken,
-  persistDataSource,
   resolveDataSource,
   type DataSource,
   type StreamStatus,
@@ -42,7 +41,8 @@ export function App() {
   const [provider, setProvider] = useProvider();
   const nowMs = useNow(10_000);
 
-  const [source, setSource] = useState<DataSource>(resolveDataSource);
+  // 页面生命周期内不变：生产构建恒为 live，开发期看 ?source= 与 .env.local
+  const [source] = useState<DataSource>(resolveDataSource);
   const [token, setToken] = useState(readToken);
   /**
    * 门口的状态。null = 还没问出结果，先什么都别画 ——
@@ -83,10 +83,6 @@ export function App() {
     };
   }, [needGate, authNonce]);
 
-  const onSource = useCallback((s: DataSource) => {
-    persistDataSource(s);
-    setSource(s);
-  }, []);
 
   const onRefresh = useCallback(() => {
     setNonce((n) => n + 1);
@@ -195,8 +191,6 @@ export function App() {
         onRange={setRange}
         theme={theme}
         onTheme={setTheme}
-        source={source}
-        onSource={onSource}
         streamStatus={streamStatus}
         capturedAt={capturedAt}
         stale={stale}
