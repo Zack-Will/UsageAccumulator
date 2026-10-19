@@ -207,19 +207,74 @@ export function CodexOverview({ api, t, core, from, to, rangeLabel, nonce, nowMs
   );
 }
 
-/** 周历史：每个一天以上的窗口逐期列出，含官方重置 */
-export function CodexWeeks({ api, core, nonce, nowMs }: Pick<CoreProps, "api" | "core" | "nonce" | "nowMs">) {
+/** 周历史：本周（最长那个窗口的当前一期）的燃尽与小结，以及逐期列表 */
+export function CodexWeeks({ api, t, core, nonce, nowMs }: Pick<CoreProps, "api" | "t" | "core" | "nonce" | "nowMs">) {
   const accountId = core.account?.account_id ?? null;
   const periods = useAsync(
     (s) => (accountId ? api.codexPeriods({ account_id: accountId, weeks: 8, timezone: TIME_ZONE }, s) : Promise.resolve(null)),
     [api, accountId, nonce],
   );
+  // 「本周」= 时长最长的那个窗口（通常是 7d）的当前一期
+  const week = useMemo(() => {
+    const all = core.quota.data?.analysis ?? [];
+    return [...all].sort((a, b) => (b.period.duration_minutes ?? 0) - (a.period.duration_minutes ?? 0))[0] ?? null;
+  }, [core.quota.data]);
+  const burn = useMemo(() => (week && week.period.samples.length > 0 ? codexBurnOption(t, week, nowMs) : null), [t, week, nowMs]);
+  const failed = Boolean(core.accounts.error);
+
   if (notConnected(core)) return <NotConnected />;
+  const p = week?.period ?? null;
+  const usage = week?.local_usage ?? null;
+  const full = week?.full_cost ?? null;
   return (
     <div className="grid">
+      <Card title="本周燃尽" span={7} mdSpan={4}>
+        {burn ? (
+          <Chart option={burn} height={220} ariaLabel="本周已用与预计，竖线为官方重置" />
+        ) : (
+          <Placeholder state={core.quota.error || failed ? "error" : "loading"} height={220} />
+        )}
+      </Card>
+
+      <Card title="这一周用了多少" span={5} mdSpan={2}>
+        {p ? (
+          <div className="weekstat">
+            <div className="weekstat__row" title={p.has_gap ? "采样有断档，累计是下界" : undefined}>
+              <Mono tone="muted">本期累计</Mono>
+              <span className="num num--lg">{fmtCumulative(p)}</span>
+            </div>
+            <div className="weekstat__row">
+              <Mono tone="muted">重置时预计</Mono>
+              <Num value={week!.projected_pct.mid} digits={0} suffix="%" size="md" />
+            </div>
+            <div className="weekstat__row">
+              <Mono tone="muted">折算费用</Mono>
+              {usage ? <Cost usd={usage.events === 0 ? 0 : usage.cost_usd} unpriced={usage.unpriced_events} /> : <Mono tone="muted">—</Mono>}
+            </div>
+            <div className="weekstat__row">
+              <Mono tone="muted">调用 / tokens</Mono>
+              <Mono>{usage ? `${usage.events.toLocaleString("en-US")} 次 · ${fmtTokens(usage.tokens.total)}` : "—"}</Mono>
+            </div>
+            <div className="weekstat__row" title={full?.basis === "reference" ? `最近 ${full.reference_periods} 期的中位数` : full?.lower_bound ? "期内有缺价调用，这是下界" : undefined}>
+              <Mono tone="muted">周限额约</Mono>
+              <span className="cost">
+                <Mono>{full ? `$${full.usd.toFixed(0)}` : "—"}</Mono>
+                {full?.lower_bound && <span className="cost__mark" aria-hidden="true">†</span>}
+              </span>
+            </div>
+            <div className="weekstat__row">
+              <Mono tone="muted">官方重置</Mono>
+              <Mono>{p.resets.length + (p.opened_by_reset ? 1 : 0)} 次</Mono>
+            </div>
+          </div>
+        ) : (
+          <Placeholder state={core.quota.error || failed ? "error" : "loading"} height={220} />
+        )}
+      </Card>
+
       <PeriodsCard
         periods={periods.data ? longPeriods(periods.data.periods) : null}
-        failed={Boolean(periods.error || core.accounts.error)}
+        failed={Boolean(periods.error) || failed}
         nowMs={nowMs}
       />
     </div>
@@ -374,6 +429,9 @@ function CodexWindowCard({
   const remain = Number.isFinite(etaMs) ? etaMs - nowMs : null;
   const pace = codexPace(w, nowMs);
   const period = a?.period ?? null;
+  const usage = a?.local_usage ?? null;
+  const full = a?.full_cost ?? null;
+  const reset = period ? periodWasReset(period) : false;
   const resetTimes = period
     ? [...(period.opened_by_reset ? [period.opened_by_reset] : []), ...period.resets]
         .map((r) => `${fmtWhen(Date.parse(r.at), nowMs)} 重置 ${Math.round(r.from_pct)}% → ${Math.round(r.to_pct)}%`)
@@ -427,16 +485,51 @@ function CodexWindowCard({
             <span>{a ? "按当前速率不会耗尽" : `${fmtClock(msOf(capturedAt))} 采集`}</span>
           )}
         </div>
-        {/* 本期被重置过：现值只是重置之后的那一截，本期真正用掉的是各段之和 */}
-        {period && periodWasReset(period) && (
-          <div className="quota__money" title={resetTimes}>
+        {/* 与 Claude 卡同一个形状：左边本期已花，右边打满值多少钱。
+            本期被重置过时，右下角写本期累计 —— 现值只是重置之后的那一截 */}
+        {(usage || reset) && (
+          <div className="quota__money" title={resetTimes || undefined}>
             <div className="quota__money-col">
-              <span className="quota__k">本期累计</span>
-              <span className="quota__v quota__v--strong">{fmtCumulative(period)}</span>
+              <span className="quota__k">已用</span>
+              {usage ? (
+                <>
+                  <span className="quota__v">
+                    <Cost usd={usage.events === 0 ? 0 : usage.cost_usd} unpriced={usage.unpriced_events} />
+                  </span>
+                  <Mono tone="muted">
+                    {usage.events.toLocaleString("en-US")} 次调用 · {fmtTokens(usage.tokens.total)}
+                  </Mono>
+                </>
+              ) : (
+                <Mono tone="muted">—</Mono>
+              )}
             </div>
             <div className="quota__money-col quota__money-col--end">
-              <span className="quota__k">官方重置</span>
-              <span className="quota__v">{period.resets.length + (period.opened_by_reset ? 1 : 0)} 次</span>
+              <span className="quota__k">满额约</span>
+              <span
+                className={`quota__v quota__v--strong${full?.basis === "reference" ? " quota__v--ref" : ""}`}
+                title={
+                  full?.basis === "reference"
+                    ? `最近 ${full.reference_periods} 期的中位数`
+                    : full?.lower_bound
+                      ? "期内有缺价调用，这是下界"
+                      : undefined
+                }
+              >
+                {full ? `$${full.usd.toFixed(0)}` : "—"}
+                {full?.lower_bound && (
+                  <span className="cost__mark" aria-hidden="true">
+                    †
+                  </span>
+                )}
+              </span>
+              {reset && period ? (
+                <Mono tone="muted">
+                  本期累计 {fmtCumulative(period)} · 重置 {period.resets.length + (period.opened_by_reset ? 1 : 0)} 次
+                </Mono>
+              ) : (
+                <Mono tone="muted">&nbsp;</Mono>
+              )}
             </div>
           </div>
         )}
@@ -582,6 +675,7 @@ function PeriodsCard({ periods, failed, nowMs }: { periods: CodexPeriodRecord[] 
               <th scope="col" className="btable__barcol" />
               <th scope="col">tokens</th>
               <th scope="col">折算</th>
+              <th scope="col">满额约</th>
             </tr>
           </thead>
           <tbody>
@@ -610,6 +704,12 @@ function PeriodsCard({ periods, failed, nowMs }: { periods: CodexPeriodRecord[] 
                   <td className="btable__hit">{fmtTokens(p.local_usage.tokens.total)}</td>
                   <td className="btable__cost">
                     <Cost usd={p.local_usage.cost_usd} unpriced={p.local_usage.unpriced_events} />
+                  </td>
+                  <td className="btable__cost" title={p.local_usage.unpriced_events > 0 ? "期内有缺价调用，这是下界" : undefined}>
+                    <span className="cost">
+                      <Mono>{p.full_cost_usd != null ? `$${p.full_cost_usd.toFixed(0)}` : "—"}</Mono>
+                      {p.full_cost_usd != null && p.local_usage.unpriced_events > 0 && <span className="cost__mark" aria-hidden="true">†</span>}
+                    </span>
                   </td>
                 </tr>
               );

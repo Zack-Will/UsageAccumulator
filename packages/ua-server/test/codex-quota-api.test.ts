@@ -65,6 +65,11 @@ describe("Codex 额度：重置感知的 API", () => {
     expect(a.period).toMatchObject({ cumulative_pct: 53, final_pct: 2 });
     expect(a.period.resets).toHaveLength(1);
     expect(a.rate_pct_per_min).toBeCloseTo(0.2, 6);
+    // 本期本地花费含重置前的事件（b），不含本期开始之前的（a 在 resets_at − 7d 之前）；
+    // 满额约按本期累计（含重置前那一截）外推
+    expect(a.local_usage.tokens.input).toBe(2000);
+    expect(a.full_cost.basis).toBe("current");
+    expect(a.full_cost.usd).toBeCloseTo(a.local_usage.cost_usd / 0.53, 9);
   });
 
   it("/periods：重置推走 resets_at 时切成两期，本地花费按期归属", async () => {
@@ -81,6 +86,9 @@ describe("Codex 额度：重置感知的 API", () => {
     // 旧期 [T0−7d+…, 重置) 里有 a、b；新期从重置起只有 c
     expect(body.periods[1].local_usage.tokens.input).toBe(3000);
     expect(body.periods[0].local_usage.tokens.input).toBe(4000);
+    expect(body.periods[1].full_cost_usd).toBeCloseTo(body.periods[1].local_usage.cost_usd / 0.51, 9);
+    // 只有被重置提前结束、累计 51% 的那一期够当参考
+    expect(body.full_cost_references["codex:secondary"]).toMatchObject({ periods: 1 });
   });
 
   it("登录只有看板身份能改；读状态不回显任何 token", async () => {

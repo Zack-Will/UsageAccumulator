@@ -467,18 +467,36 @@ export interface CodexWindowAnalysis {
   projected_pct: { p25: Pct; mid: Pct; p75: Pct };
   exhaust_eta: Rfc3339 | null;
   period: CodexPeriod & { samples: Array<{ ts: Rfc3339; pct: Pct; segment: number }> };
+  /** 本期（从期开头或第一次观测起）的本地用量 */
+  local_usage?: CodexAggregate;
+  local_usage_from?: Rfc3339;
+  /** 这一期打满值多少钱；null = 没有可外推的花费 */
+  full_cost?: CodexFullCost | null;
+}
+
+export interface CodexFullCost {
+  usd: number;
+  /** current：本期外推；reference：本期累计太小，用往期中位数 */
+  basis: "current" | "reference";
+  reference_periods: number | null;
+  /** 期内有缺价事件：花费少算，满额值是下界 */
+  lower_bound: boolean;
 }
 
 export interface CodexPeriodRecord extends CodexPeriod {
   local_usage: CodexAggregate;
   local_usage_from: Rfc3339;
   local_usage_to: Rfc3339;
+  /** 本期花费 ÷ 本期累计；旧服务端没有 */
+  full_cost_usd?: number | null;
 }
 
 export interface CodexPeriods {
   account_id: string;
   weeks: number;
   periods: CodexPeriodRecord[];
+  /** window_id → 往期满额值中位数 */
+  full_cost_references?: Record<string, { usd: number; periods: number } | null>;
 }
 
 /** 服务端专用的那份 ChatGPT 登录。任何接口都不回显 token */

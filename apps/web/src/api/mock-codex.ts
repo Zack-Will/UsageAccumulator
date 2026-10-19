@@ -175,7 +175,12 @@ export function buildCodexQuota(accountId: string, nowMs: number): CodexQuotaRes
   ];
   const samples = weekSamples(nowMs, weekReset);
   const resetIdx = samples.findIndex((s) => s.segment === 1);
+  const weekUsage = aggregate(events(weekReset - WEEK, nowMs));
+  const fiveUsage = aggregate(events(fiveReset - 5 * HOUR, nowMs));
   const week: CodexWindowAnalysis = {
+    local_usage: weekUsage,
+    local_usage_from: iso(weekReset - WEEK),
+    full_cost: weekUsage.cost_usd ? { usd: weekUsage.cost_usd / 0.97, basis: "current", reference_periods: null, lower_bound: true } : null,
     window_id: "codex:secondary",
     rate_pct_per_min: 51 / (2 * 24 * 60),
     projected_pct: { p25: 68, mid: 74, p75: 81 },
@@ -198,6 +203,10 @@ export function buildCodexQuota(accountId: string, nowMs: number): CodexQuotaRes
     .filter((t) => t <= nowMs)
     .map((t) => ({ ts: iso(t), pct: Math.round(34 * ((t - fiveStart) / (nowMs - fiveStart))), segment: 0 }));
   const five: CodexWindowAnalysis = {
+    local_usage: fiveUsage,
+    local_usage_from: iso(fiveReset - 5 * HOUR),
+    // 5h 本期才 34%：外推仍可以，但演示一下「历史参考」那条分支
+    full_cost: { usd: 18.4, basis: "reference", reference_periods: 6, lower_bound: false },
     window_id: "codex:primary",
     rate_pct_per_min: 0.2,
     projected_pct: { p25: 52, mid: 60, p75: 71 },
@@ -244,6 +253,10 @@ export function buildCodexPeriods(accountId: string, weeks: number, nowMs: numbe
     local_usage: local(start, Math.min(end, nowMs)), local_usage_from: iso(start), local_usage_to: iso(Math.min(end, nowMs)),
     ...extra,
   });
+  const withFull = (p: CodexPeriodRecord): CodexPeriodRecord => ({
+    ...p,
+    full_cost_usd: p.local_usage.cost_usd && p.cumulative_pct > 0 ? p.local_usage.cost_usd / (p.cumulative_pct / 100) : null,
+  });
   const p0Start = reset - WEEK;
   const p1Start = p0Start - WEEK;
   // 上上期被官方提前重置打断：旧期提前结束，新期从重置那一刻起算
@@ -260,7 +273,8 @@ export function buildCodexPeriods(accountId: string, weeks: number, nowMs: numbe
     }),
     record(p3Start, earlyReset, 71, 71, { end_reason: "reset", ended_at: iso(earlyReset), has_gap: true }),
   ];
-  return { account_id: accountId, weeks, periods };
+  const full = periods.map(withFull);
+  return { account_id: accountId, weeks, periods: full, full_cost_references: { "codex:secondary": { usd: 39.6, periods: 3 } } };
 }
 
 export function mockCodexSession(state: CodexSessionStatus["state"], nowMs: number): CodexSessionStatus {

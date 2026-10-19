@@ -180,3 +180,48 @@ export function analyzeCodexWindow(period: CodexPeriod, now: Date): CodexWindowA
     period,
   };
 }
+
+/** 本期累计低于它时不外推「满额约」，改用历史参考：分母只有几个点时取整误差太大（与 Claude 5h 同一口径） */
+export const CODEX_FULL_COST_MIN_PCT = 20;
+/** 拿来当参考的往期：累计至少这么多 */
+export const CODEX_REFERENCE_MIN_PCT = 30;
+const REFERENCE_MAX_PERIODS = 8;
+
+/**
+ * 这一期打满值多少钱：本地花费 ÷ 本期累计。累计含重置前的那一截，
+ * 所以官方提前重置不会把单价算高。花费为 0 或累计为 0 时没有可外推的东西，给 null。
+ */
+export function codexFullCost(costUsd: number | null, cumulativePct: number): number | null {
+  return costUsd !== null && costUsd > 0 && cumulativePct > 0 ? costUsd / (cumulativePct / 100) : null;
+}
+
+/** 往期（已结束、累计够大）满额值的中位数，最近 8 期 */
+export function codexFullCostReference(
+  periods: ReadonlyArray<{ ended_at: string | null; cumulative_pct: number; full_cost_usd: number | null }>,
+): { usd: number; periods: number } | null {
+  const picks = periods
+    .filter((p) => p.ended_at !== null && p.cumulative_pct >= CODEX_REFERENCE_MIN_PCT && p.full_cost_usd !== null)
+    .slice(-REFERENCE_MAX_PERIODS)
+    .map((p) => p.full_cost_usd!)
+    .sort((a, b) => a - b);
+  if (picks.length === 0) return null;
+  const mid = picks.length >> 1;
+  return { usd: picks.length % 2 ? picks[mid]! : (picks[mid - 1]! + picks[mid]!) / 2, periods: picks.length };
+}
+
+/**
+ * 卡片上的「满额约」：本期累计够大就外推本期，否则用往期参考（没有参考再退回外推）。
+ * lower_bound：期内有缺价事件（codex-auto-review 没有公开价）—— 花费少算，满额值也只是下界。
+ */
+export function codexFullCostEstimate(
+  current: { cost_usd: number | null; cumulative_pct: number; unpriced_events: number },
+  reference: { usd: number; periods: number } | null,
+): { usd: number; basis: "current" | "reference"; reference_periods: number | null; lower_bound: boolean } | null {
+  const extrapolated = codexFullCost(current.cost_usd, current.cumulative_pct);
+  if (reference && (current.cumulative_pct < CODEX_FULL_COST_MIN_PCT || extrapolated === null)) {
+    return { usd: reference.usd, basis: "reference", reference_periods: reference.periods, lower_bound: false };
+  }
+  return extrapolated === null
+    ? null
+    : { usd: extrapolated, basis: "current", reference_periods: null, lower_bound: current.unpriced_events > 0 };
+}

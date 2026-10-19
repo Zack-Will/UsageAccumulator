@@ -86,3 +86,32 @@ describe("Codex 额度：期与段", () => {
     expect(periods.get("codex:secondary")![0]!.resets).toHaveLength(0);
   });
 });
+
+import { codexFullCost, codexFullCostEstimate, codexFullCostReference } from "../src/codex-quota-analysis.js";
+
+describe("Codex 满额约", () => {
+  it("本地花费 ÷ 本期累计；没有花费或累计为 0 时不编数", () => {
+    expect(codexFullCost(20, 40)).toBeCloseTo(50, 9);
+    expect(codexFullCost(0, 40)).toBeNull();
+    expect(codexFullCost(null, 40)).toBeNull();
+    expect(codexFullCost(20, 0)).toBeNull();
+  });
+
+  it("往期参考只取已结束、累计 ≥ 30% 的期，取中位数", () => {
+    const p = (ended: boolean, cum: number, usd: number | null) => ({ ended_at: ended ? "x" : null, cumulative_pct: cum, full_cost_usd: usd });
+    expect(codexFullCostReference([p(true, 80, 100), p(true, 20, 999), p(true, 60, 140), p(false, 90, 1), p(true, 50, 120)]))
+      .toEqual({ usd: 120, periods: 3 });
+    expect(codexFullCostReference([p(true, 10, 50)])).toBeNull();
+  });
+
+  it("本期累计太小就用往期参考；够大就外推本期，缺价时标下界", () => {
+    const ref = { usd: 120, periods: 4 };
+    expect(codexFullCostEstimate({ cost_usd: 2, cumulative_pct: 5, unpriced_events: 0 }, ref))
+      .toEqual({ usd: 120, basis: "reference", reference_periods: 4, lower_bound: false });
+    expect(codexFullCostEstimate({ cost_usd: 30, cumulative_pct: 40, unpriced_events: 3 }, ref))
+      .toEqual({ usd: 75, basis: "current", reference_periods: null, lower_bound: true });
+    // 没有参考时小累计照样外推：使用者知情
+    expect(codexFullCostEstimate({ cost_usd: 2, cumulative_pct: 5, unpriced_events: 0 }, null)?.basis).toBe("current");
+    expect(codexFullCostEstimate({ cost_usd: 0, cumulative_pct: 5, unpriced_events: 0 }, null)).toBeNull();
+  });
+});

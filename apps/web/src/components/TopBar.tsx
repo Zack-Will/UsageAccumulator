@@ -87,7 +87,7 @@ export function TopBar(props: {
   provider: Provider;
   onProvider: (p: Provider) => void;
   /** Codex 下顶栏的同步按钮改说 Codex：额度快照时刻 + 服务端那份登录的状态 */
-  codex: { session: CodexSessionStatus | null; capturedAt: number | null; stale: boolean; onSession: () => void };
+  codex: { session: CodexSessionStatus | null; capturedAt: number | null; stale: boolean; onSession: () => void; plan: string | null };
   profiles: Profile[];
   profileId: string;
   onProfile: (id: string) => void;
@@ -137,7 +137,13 @@ export function TopBar(props: {
         </button>
       </div>
 
-      {/* Codex 是独立账本，不挂在 Claude 的 profile 下：选 Codex 时没有可选的 profile */}
+      {/* Codex 是独立账本，不挂在 Claude 的 profile 下：选 Codex 时没有可选的 profile，
+          原位置只写订阅档位（ChatGPT Plus / Pro…） */}
+      {codex && props.codex.plan && (
+        <span className="plan-pill" title="Codex 订阅档位">
+          {planLabel(props.codex.plan)}
+        </span>
+      )}
       {!codex && (
         <>
           <label className="visually-hidden" htmlFor="profile-select">

@@ -185,6 +185,21 @@ body {
   opacity: 0.5;
 }
 
+/* Codex 下顶栏原来放 profile 下拉框的位置：只读的订阅档位，形状跟下拉框一样但没有箭头 */
+.plan-pill {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+  background: var(--surface);
+  white-space: nowrap;
+}
+
 .select {
   border-radius: 999px;
   padding: 6px 30px 6px 14px;

@@ -10,7 +10,15 @@ import type { Store } from "./store.js";
 import { CodexHttpError, normalizeCodexEmail, type CodexCollectorRecord } from "./codex-store.js";
 import { codexIngestSchema, codexTimestamp } from "./codex-wire.js";
 import { aggregateCodexUsage } from "./codex-aggregate.js";
-import { analyzeCodexWindow, codexPeriods, type CodexPeriod } from "./codex-quota-analysis.js";
+import {
+  analyzeCodexWindow,
+  codexFullCost,
+  codexFullCostEstimate,
+  codexFullCostReference,
+  codexPeriods,
+  type CodexPeriod,
+} from "./codex-quota-analysis.js";
+import type { CodexEventRow } from "./codex-store.js";
 import { CODEX_SERVER_MACHINE_ID, type CodexSampler, type CodexSamplerStatus } from "./codex-sampler.js";
 
 const accountQuery = z.object({ account_id: z.string().min(1).max(256).optional() }).strict();
@@ -120,14 +128,43 @@ export function registerCodexRoutes(app: FastifyInstance<RawServerDefault, Incom
    * 当前每个窗口所在的一期。回看 = 最长窗口 + 1 天，够看见本期开头和打开它的那次重置。
    * 预测只用当前段（最近一次重置之后）的样本。
    */
+  /** 期内本地用量：期开头没观测到时从第一次观测算起 */
+  function periodUsage(p: CodexPeriod, rows: CodexEventRow[], end: string, timezone: string) {
+    const start = p.starts_at ?? p.first_sample_at;
+    const totals = aggregateCodexUsage(rows.filter((r) => r.event.ts >= start && r.event.ts < end), "day", timezone).totals;
+    return { start, totals };
+  }
+
   async function currentAnalysis(accountId: string, windows: CodexQuotaSnapshotWindows, at: Date) {
     if (windows.length === 0) return [];
+    // 回看够看见本期开头，外加几期往期当「满额约」的参考（7d 是 3 周，5h 至少两天）
     const longest = Math.max(...windows.map((w) => w.duration_minutes ?? 7 * 24 * 60));
-    const from = new Date(at.getTime() - Math.min(15 * DAY_MS, longest * 60_000 + DAY_MS)).toISOString();
-    const periods = codexPeriods(await store.codex.quotaHistory(accountId, from, new Date(at.getTime() + 60_000).toISOString()));
+    const lookbackMs = Math.min(29 * DAY_MS, Math.max(longest * 60_000 * 3, 2 * DAY_MS) + DAY_MS);
+    const from = new Date(at.getTime() - lookbackMs).toISOString();
+    const nowIso = at.toISOString();
+    const [history, rows] = await Promise.all([
+      store.codex.quotaHistory(accountId, from, new Date(at.getTime() + 60_000).toISOString()),
+      store.codex.events(accountId, from, nowIso),
+    ]);
+    const periods = codexPeriods(history);
     return windows.flatMap((w) => {
-      const current = periods.get(w.window_id)?.at(-1);
-      return current ? [analyzeCodexWindow(current, at)] : [];
+      const list = periods.get(w.window_id) ?? [];
+      const current = list.at(-1);
+      if (!current) return [];
+      const past = list.slice(0, -1).map((p) => {
+        const u = periodUsage(p, rows, p.ended_at ?? nowIso, config.timeZone).totals;
+        return { ended_at: p.ended_at, cumulative_pct: p.cumulative_pct, full_cost_usd: codexFullCost(u.cost_usd, p.cumulative_pct) };
+      });
+      const usage = periodUsage(current, rows, nowIso, config.timeZone);
+      return [{
+        ...analyzeCodexWindow(current, at),
+        local_usage: usage.totals,
+        local_usage_from: usage.start,
+        full_cost: codexFullCostEstimate(
+          { cost_usd: usage.totals.cost_usd, cumulative_pct: current.cumulative_pct, unpriced_events: usage.totals.unpriced_events },
+          codexFullCostReference(past),
+        ),
+      }];
     });
   }
 
@@ -151,13 +188,15 @@ export function registerCodexRoutes(app: FastifyInstance<RawServerDefault, Incom
       .sort((a, b) => b.first_sample_at.localeCompare(a.first_sample_at))
       .map((p) => {
         // 本期的本地用量：期内的事件。期开头没观测到时从第一次观测算起，并如实标出
-        const start = p.starts_at ?? p.first_sample_at;
         const end = p.ended_at ?? to;
-        const inPeriod = rows.filter((r) => r.event.ts >= start && r.event.ts < end);
-        return { ...periodView(p), local_usage: aggregateCodexUsage(inPeriod, "day", timezone).totals,
-          local_usage_from: start, local_usage_to: end };
+        const usage = periodUsage(p, rows, end, timezone);
+        return { ...periodView(p), local_usage: usage.totals, local_usage_from: usage.start, local_usage_to: end,
+          full_cost_usd: codexFullCost(usage.totals.cost_usd, p.cumulative_pct) };
       });
-    return { account_id: accountId, weeks: q.weeks, periods,
+    // 每个窗口的往期参考：已结束、累计 ≥ 30% 的最近 8 期的中位数
+    const references = Object.fromEntries([...new Set(periods.map((p) => p.window_id))].map((id) => [id,
+      codexFullCostReference(periods.filter((p) => p.window_id === id).slice().reverse())]));
+    return { account_id: accountId, weeks: q.weeks, periods, full_cost_references: references,
       reset_detection: { min_drop_pct: 2, gap_minutes: 30 } };
   });
 

@@ -180,6 +180,7 @@ export function App() {
           capturedAt: codexCapturedAt,
           stale: codexCore.quota.data?.stale ?? false,
           onSession: () => setCodexSessionOpen(true),
+          plan: codexCore.account?.plan_type ?? codexCore.session.data?.plan_type ?? null,
         }}
         profiles={profileList}
         profileId={profileId}
@@ -234,7 +235,7 @@ export function App() {
               nowMs={nowMs}
             />
           )}
-          {route === "weeks" && <CodexWeeks api={api} core={codexCore} nonce={nonce} nowMs={nowMs} />}
+          {route === "weeks" && <CodexWeeks api={api} t={tokens} core={codexCore} nonce={nonce} nowMs={nowMs} />}
           {route === "distribution" && (
             <CodexDistribution api={api} t={tokens} core={codexCore} from={from} to={to} nonce={nonce} nowMs={nowMs} />
           )}
