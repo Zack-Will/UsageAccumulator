@@ -44,7 +44,7 @@ node packages/ua-probe/scripts/bundle.mjs --out /tmp/ua-codex-bundle
 - macOS：独立 launchd label `com.ua.codex-probe`，`KeepAlive=true`，日志位于 `~/Library/Logs/ua-probe/codex-{out,err}.log`。
 - Linux：独立 systemd 用户服务 `ua-codex-probe.service`，`Restart=always`、`RestartSec=10`，日志使用 journal。
 - 服务端继续由现有 `ua-server.service` 运行；新迁移随启动执行。变更只涉及 Codex 模块与必要的路由/存储组合入口。
-- **额度改由服务端直接抓**：看板 Codex 页「重置券」卡右上角打开登录框，粘贴一份**服务端专用**登录的 auth.json（步骤见 [CODEX-API.md](./CODEX-API.md)「Server-side quota collection」）。绝不能用日常的 `~/.codex/auth.json`：refresh token 一次性，共用会把本机 Codex 踢下线。探针照常上报本地用量；它读到的额度只在服务端抓不到时兜底。
+- **额度改由服务端直接抓**：看板顶栏切到 Codex（OpenAI 标志），点右侧的同步状态按钮打开登录框，粘贴一份**服务端专用**登录的 auth.json（步骤见 [CODEX-API.md](./CODEX-API.md)「Server-side quota collection」）。绝不能用日常的 `~/.codex/auth.json`：refresh token 一次性，共用会把本机 Codex 踢下线。探针照常上报本地用量；它读到的额度只在服务端抓不到时兜底。
 - **先升级服务端，再升级探针。** 新探针在 collector 里带 `warning_scope`，旧服务端的严格校验会以 400 拒收整批；探针不会因此隔离事件（同一信封不带事件也被拒，说明问题不在事件），只会停在重试，升级服务端后自动恢复。
 - 探针解析器修订号（`CODEX_PARSER_REVISION`）进入扫描身份：升级后第一次同步会清游标重扫全部文件。已产出过的事件 id 不变，按 `event_id` 去重，不会重复入账；只补上旧版漏掉的请求（如上下文压缩那一轮）。
 

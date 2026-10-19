@@ -165,6 +165,26 @@ body {
   font-weight: 500;
 }
 
+/* 顶栏的「看哪一家」：两枚标志，选中的那枚亮、另一枚压暗 */
+.seg--provider .seg__btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 5px 14px;
+}
+.provider-icon {
+  width: 18px;
+  height: 18px;
+  display: block;
+  fill: currentColor;
+}
+.provider-icon--claude {
+  fill: var(--accent);
+}
+.seg--provider .seg__btn[aria-pressed="false"] .provider-icon {
+  opacity: 0.5;
+}
+
 .select {
   border-radius: 999px;
   padding: 6px 30px 6px 14px;

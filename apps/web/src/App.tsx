@@ -11,11 +11,13 @@ import {
 } from "./api";
 import { RANGES, TopBar, type RangeId } from "./components/TopBar";
 import { QuotaSessionDialog } from "./components/QuotaSession";
+import { CodexSessionDialog } from "./components/CodexSession";
+import { useProvider } from "./hooks/useProvider";
 import { useAsync } from "./hooks/useAsync";
 import { useRoute } from "./hooks/useRoute";
 import { useTheme } from "./hooks/useTheme";
 import { useTokens } from "./hooks/useTokens";
-import { Codex } from "./pages/Codex";
+import { CodexDistribution, CodexOverview, CodexWeeks, useCodexCore } from "./pages/Codex";
 import { Distribution } from "./pages/Distribution";
 import { Overview } from "./pages/Overview";
 import { Weeks } from "./pages/Weeks";
@@ -37,6 +39,7 @@ export function App() {
   const [theme, setTheme] = useTheme();
   const tokens = useTokens(theme);
   const route = useRoute();
+  const [provider, setProvider] = useProvider();
   const nowMs = useNow(10_000);
 
   const [source, setSource] = useState<DataSource>(resolveDataSource);
@@ -130,6 +133,12 @@ export function App() {
     return () => clearInterval(id);
   }, []);
 
+  // Codex：账号、额度、服务端登录、采集器 —— 顶栏同步按钮与三个选项卡共用。只在看 Codex 时取
+  const [codexTick, setCodexTick] = useState(0);
+  const [codexSessionOpen, setCodexSessionOpen] = useState(false);
+  const codexCore = useCodexCore(api, provider === "codex", nonce, codexTick + sessionTick);
+  const codexCapturedAt = codexCore.quota.data?.snapshot ? Date.parse(codexCore.quota.data.snapshot.captured_at) : null;
+
   // 同步状态取额度快照的时刻，不是本次请求时刻（CONTRACT §2.2 的说明同样适用于看板）
   const head = windows?.windows[0];
   const capturedAt = head ? Date.parse(head.captured_at) : null;
@@ -168,6 +177,14 @@ export function App() {
     <div className="shell">
       <TopBar
         route={route}
+        provider={provider}
+        onProvider={setProvider}
+        codex={{
+          session: codexCore.session.data,
+          capturedAt: codexCapturedAt,
+          stale: codexCore.quota.data?.stale ?? false,
+          onSession: () => setCodexSessionOpen(true),
+        }}
         profiles={profileList}
         profileId={profileId}
         onProfile={(id) => {
@@ -199,6 +216,36 @@ export function App() {
         />
       )}
 
+      {codexSessionOpen && (
+        <CodexSessionDialog
+          api={api}
+          status={codexCore.session.data}
+          onClose={() => setCodexSessionOpen(false)}
+          onChanged={() => setCodexTick((n) => n + 1)}
+        />
+      )}
+
+      {provider === "codex" ? (
+        <main className="main">
+          {/* 窗口分析（标定、多机甘特）只属于 Claude：停在那一页时切过来就看总览 */}
+          {(route === "overview" || route === "windows") && (
+            <CodexOverview
+              api={api}
+              t={tokens}
+              core={codexCore}
+              from={from}
+              to={to}
+              rangeLabel={RANGES.find((r) => r.value === range)?.label ?? range}
+              nonce={nonce}
+              nowMs={nowMs}
+            />
+          )}
+          {route === "weeks" && <CodexWeeks api={api} core={codexCore} nonce={nonce} nowMs={nowMs} />}
+          {route === "distribution" && (
+            <CodexDistribution api={api} t={tokens} core={codexCore} from={from} to={to} nonce={nonce} nowMs={nowMs} />
+          )}
+        </main>
+      ) : (
       <main className="main">
         {route === "overview" && (
           <Overview
@@ -234,18 +281,8 @@ export function App() {
         {route === "distribution" && (
           <Distribution api={api} t={tokens} profileId={profileId} from={from} to={to} nonce={nonce} />
         )}
-        {route === "codex" && (
-          <Codex
-            api={api}
-            t={tokens}
-            from={from}
-            to={to}
-            rangeLabel={RANGES.find((r) => r.value === range)?.label ?? range}
-            nonce={nonce}
-            nowMs={nowMs}
-          />
-        )}
       </main>
+      )}
     </div>
   );
 }

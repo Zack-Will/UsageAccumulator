@@ -17,6 +17,15 @@ export function codexSessionTone(state: CodexSessionState | undefined): "ok" | "
   return "muted";
 }
 
+/** 顶栏上的四个字：出问题时直接说是什么问题，正常时照旧是「额度更新」 */
+export function codexSessionBadge(state: CodexSessionState | undefined): string {
+  if (state === "none") return "未登录";
+  if (state === "auth") return "登录失效";
+  if (state === "blocked") return "被拦截";
+  if (state === "account") return "账号不符";
+  return "额度更新";
+}
+
 export function codexSessionLine(s: CodexSessionStatus | null, nowMs: number): string {
   if (!s) return "—";
   const when = (v: string | null) => (v ? fmtWhen(Date.parse(v), nowMs) : "");

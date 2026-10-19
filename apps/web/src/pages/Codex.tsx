@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import type {
+  CodexAccount,
   CodexAggregate,
   CodexCollector,
   CodexPeriodRecord,
@@ -7,6 +8,7 @@ import type {
   CodexQuotaWindow,
   CodexResetCredits,
   CodexSessionStatus,
+  CodexUsageBy,
   CodexWindowAnalysis,
   UaApi,
 } from "../api";
@@ -34,21 +36,10 @@ import { colorMapFor } from "../charts/registry";
 import { ringTone } from "../charts/rings";
 import type { Tokens } from "../charts/tokens";
 import { Chart } from "../components/Chart";
-import { CodexSessionDialog, codexSessionLine, codexSessionTone } from "../components/CodexSession";
 import { Card, Cost, Dot, Mono, Num, Placeholder, Segmented } from "../components/primitives";
 import { BreakdownTable, UsageSummary } from "../components/UsagePanels";
 import { QuotaBar, quotaSpans } from "../components/WindowCards";
-import { useAsync } from "../hooks/useAsync";
-
-interface Props {
-  api: UaApi;
-  t: Tokens;
-  from: string;
-  to: string;
-  rangeLabel: string;
-  nonce: number;
-  nowMs: number;
-}
+import { useAsync, type AsyncState } from "../hooks/useAsync";
 
 /** 按天的桶要和浏览器的本地日期对上：请求时把这个时区交给服务端 */
 const TIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
@@ -62,36 +53,76 @@ function coverageNote(a: CodexAggregate, warnings: number): string | undefined {
   return a.usage_complete ? undefined : parts.join("，") || "覆盖不完整";
 }
 
+interface CoreProps {
+  api: UaApi;
+  t: Tokens;
+  core: CodexCore;
+  from: string;
+  to: string;
+  nonce: number;
+  nowMs: number;
+}
+
 /**
- * Codex 独立账本。与 Claude 的 profile 无关：额度、本地用量、采集器三份数据各说各的，不相加。
- * 额度由服务端直接抓（服务端专用的 ChatGPT 登录），并按官方提前重置切期与段。
+ * 三个选项卡共用的那部分：账号、额度（含期/段分析）、服务端登录状态、采集器。
+ * App 层取一次 —— 顶栏的同步按钮也要用额度快照时刻与登录状态。
  */
-export function Codex({ api, t, from, to, rangeLabel, nonce, nowMs }: Props) {
-  const accounts = useAsync((s) => api.codexAccounts(s), [api, nonce]);
-  const account = accounts.data?.[0] ?? null;
+export interface CodexCore {
+  accounts: AsyncState<CodexAccount[]>;
+  account: CodexAccount | null;
+  quota: AsyncState<CodexQuotaResponse | null>;
+  session: AsyncState<CodexSessionStatus | null>;
+  collectors: AsyncState<CodexCollector[] | null>;
+}
+
+export function useCodexCore(api: UaApi, enabled: boolean, nonce: number, sessionTick: number): CodexCore {
+  const accounts = useAsync((s) => (enabled ? api.codexAccounts(s) : Promise.resolve([])), [api, enabled, nonce]);
+  const account = enabled ? (accounts.data?.[0] ?? null) : null;
   const accountId = account?.account_id ?? null;
-
-  const [sessionTick, setSessionTick] = useState(0);
-  const [sessionOpen, setSessionOpen] = useState(false);
-  const session = useAsync((s) => api.codexSession(s), [api, nonce, sessionTick]);
-
+  const session = useAsync(
+    (s): Promise<CodexSessionStatus | null> => (enabled ? api.codexSession(s) : Promise.resolve(null)),
+    [api, enabled, nonce, sessionTick],
+  );
   const quota = useAsync(
     (s) => (accountId ? api.codexQuota(accountId, s) : Promise.resolve(null)),
     [api, accountId, nonce, sessionTick],
   );
-  const periods = useAsync(
-    (s) => (accountId ? api.codexPeriods({ account_id: accountId, weeks: 8, timezone: TIME_ZONE }, s) : Promise.resolve(null)),
-    [api, accountId, nonce, sessionTick],
-  );
-  const usageQuery = (by: "day" | "model" | "project") => (s: AbortSignal) =>
-    accountId ? api.codexUsage({ account_id: accountId, from, to, by, timezone: TIME_ZONE }, s) : Promise.resolve(null);
-  const byDay = useAsync(usageQuery("day"), [api, accountId, from, to, nonce]);
-  const byModel = useAsync(usageQuery("model"), [api, accountId, from, to, nonce]);
-  const byProject = useAsync(usageQuery("project"), [api, accountId, from, to, nonce]);
   const collectors = useAsync(
     (s) => (accountId ? api.codexCollectors(accountId, s) : Promise.resolve(null)),
     [api, accountId, nonce, sessionTick],
   );
+  return { accounts, account, quota, session, collectors };
+}
+
+/** 服务端还没收到过任何 Codex 数据：登录入口在顶栏的同步按钮 */
+function notConnected(core: CodexCore): boolean {
+  return Boolean(core.accounts.data && core.accounts.data.length === 0);
+}
+
+function NotConnected() {
+  return (
+    <div className="grid">
+      <Card title="Codex" span={12}>
+        <div className="btable__empty">
+          <Mono tone="muted">未接入</Mono>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+function useCodexUsage(api: UaApi, core: CodexCore, by: CodexUsageBy, from: string, to: string, nonce: number) {
+  const accountId = core.account?.account_id ?? null;
+  return useAsync(
+    (s) => (accountId ? api.codexUsage({ account_id: accountId, from, to, by, timezone: TIME_ZONE }, s) : Promise.resolve(null)),
+    [api, accountId, by, from, to, nonce],
+  );
+}
+
+/** 总览：额度、燃尽与重置券、区间用量与时间线、按模型、采集器 */
+export function CodexOverview({ api, t, core, from, to, rangeLabel, nonce, nowMs }: CoreProps & { rangeLabel: string }) {
+  const byDay = useCodexUsage(api, core, "day", from, to, nonce);
+  const byModel = useCodexUsage(api, core, "model", from, to, nonce);
 
   const [metric, setMetric] = useState<UsageMetric>("cost");
   const timeline = useMemo(() => {
@@ -102,46 +133,28 @@ export function Codex({ api, t, from, to, rangeLabel, nonce, nowMs }: Props) {
   }, [t, byDay.data, from, to, metric]);
 
   const modelBuckets = useMemo(() => (byModel.data ? codexBuckets(byModel.data.buckets) : null), [byModel.data]);
-  const projectBuckets = useMemo(() => (byProject.data ? codexBuckets(byProject.data.buckets) : null), [byProject.data]);
   const modelColors = useMemo(() => colorMapFor("model", (modelBuckets ?? []).map((b) => b.key), t), [modelBuckets, t]);
-  const projectColors = useMemo(() => colorMapFor("project", (projectBuckets ?? []).map((b) => b.key), t), [projectBuckets, t]);
-
   // 汇总读服务端的 totals，不自己把桶加起来：totals 才带账户级的完整性判断
   const totalsData = byModel.data?.totals ?? null;
   const totals = useMemo(() => (totalsData ? usageTotals([codexBucket("total", totalsData)]) : null), [totalsData]);
-  const warnings = (collectors.data ?? []).reduce((n, c) => n + c.parse_warnings_total, 0);
+  const warnings = (core.collectors.data ?? []).reduce((n, c) => n + c.parse_warnings_total, 0);
+  const failed = Boolean(core.accounts.error);
+  const quota = core.quota;
 
-  const analyses = quota.data?.analysis ?? [];
-  const failed = Boolean(accounts.error);
-
-  // 账户列表回来了但是空的：服务端没收到过任何 Codex 数据。登录入口照样给，否则没处开始
-  if (accounts.data && accounts.data.length === 0) {
-    return (
-      <div className="grid">
-        <Card title="Codex" span={12} aside={<SessionButton status={session.data} nowMs={nowMs} onOpen={() => setSessionOpen(true)} />}>
-          <div className="btable__empty">
-            <Mono tone="muted">未接入</Mono>
-          </div>
-        </Card>
-        {sessionOpen && (
-          <CodexSessionDialog api={api} status={session.data} onClose={() => setSessionOpen(false)} onChanged={() => setSessionTick((n) => n + 1)} />
-        )}
-      </div>
-    );
-  }
-
+  if (notConnected(core)) return <NotConnected />;
   return (
     <div className="grid">
       <QuotaRow quota={quota.data} failed={Boolean(quota.error) || failed} nowMs={nowMs} />
 
-      <BurnCard analyses={analyses} windows={quota.data?.snapshot?.windows ?? []} t={t} nowMs={nowMs} failed={Boolean(quota.error) || failed} loading={!quota.data} />
-      <CreditsCard
-        credits={quota.data?.snapshot?.reset_credits}
-        loading={!quota.data}
-        session={session.data}
+      <BurnCard
+        analyses={quota.data?.analysis ?? []}
+        windows={quota.data?.snapshot?.windows ?? []}
+        t={t}
         nowMs={nowMs}
-        onOpen={() => setSessionOpen(true)}
+        failed={Boolean(quota.error) || failed}
+        loading={!quota.data}
       />
+      <CreditsCard credits={quota.data?.snapshot?.reset_credits} loading={!quota.data} nowMs={nowMs} />
 
       <UsageSummary
         title={`${rangeLabel} 用量`}
@@ -174,15 +187,72 @@ export function Codex({ api, t, from, to, rangeLabel, nonce, nowMs }: Props) {
         )}
       </Card>
 
-      <PeriodsCard periods={periods.data ? longPeriods(periods.data.periods) : null} failed={Boolean(periods.error) || failed} nowMs={nowMs} />
-
       <BreakdownTable
         title="按模型"
         buckets={modelBuckets}
         colors={modelColors}
         labelOf={(b) => b.key}
         state={byModel.error || failed ? "error" : "loading"}
-        span={5}
+        span={8}
+        mdSpan={4}
+      />
+      <CollectorsCard
+        collectors={core.collectors.data ?? null}
+        failed={Boolean(core.collectors.error) || failed}
+        plan={core.account?.plan_type ?? null}
+        nowMs={nowMs}
+        span={4}
+      />
+    </div>
+  );
+}
+
+/** 周历史：每个一天以上的窗口逐期列出，含官方重置 */
+export function CodexWeeks({ api, core, nonce, nowMs }: Pick<CoreProps, "api" | "core" | "nonce" | "nowMs">) {
+  const accountId = core.account?.account_id ?? null;
+  const periods = useAsync(
+    (s) => (accountId ? api.codexPeriods({ account_id: accountId, weeks: 8, timezone: TIME_ZONE }, s) : Promise.resolve(null)),
+    [api, accountId, nonce],
+  );
+  if (notConnected(core)) return <NotConnected />;
+  return (
+    <div className="grid">
+      <PeriodsCard
+        periods={periods.data ? longPeriods(periods.data.periods) : null}
+        failed={Boolean(periods.error || core.accounts.error)}
+        nowMs={nowMs}
+      />
+    </div>
+  );
+}
+
+/** 用量分布：按模型 / 项目 / 机器，以及采集器 */
+export function CodexDistribution({ api, t, core, from, to, nonce, nowMs }: CoreProps) {
+  const byModel = useCodexUsage(api, core, "model", from, to, nonce);
+  const byProject = useCodexUsage(api, core, "project", from, to, nonce);
+  const byMachine = useCodexUsage(api, core, "machine", from, to, nonce);
+  const modelBuckets = useMemo(() => (byModel.data ? codexBuckets(byModel.data.buckets) : null), [byModel.data]);
+  const projectBuckets = useMemo(() => (byProject.data ? codexBuckets(byProject.data.buckets) : null), [byProject.data]);
+  const machineBuckets = useMemo(() => (byMachine.data ? codexBuckets(byMachine.data.buckets) : null), [byMachine.data]);
+  const modelColors = useMemo(() => colorMapFor("model", (modelBuckets ?? []).map((b) => b.key), t), [modelBuckets, t]);
+  const projectColors = useMemo(() => colorMapFor("project", (projectBuckets ?? []).map((b) => b.key), t), [projectBuckets, t]);
+  const machineColors = useMemo(() => colorMapFor("machine", (machineBuckets ?? []).map((b) => b.key), t), [machineBuckets, t]);
+  const machineName = useMemo(() => {
+    const names = new Map((core.collectors.data ?? []).map((c) => [c.machine_id, collectorName(c)]));
+    return (key: string) => names.get(key) ?? key.slice(0, 8);
+  }, [core.collectors.data]);
+  const failed = Boolean(core.accounts.error);
+
+  if (notConnected(core)) return <NotConnected />;
+  return (
+    <div className="grid">
+      <BreakdownTable
+        title="按模型"
+        buckets={modelBuckets}
+        colors={modelColors}
+        labelOf={(b) => b.key}
+        state={byModel.error || failed ? "error" : "loading"}
+        span={6}
         mdSpan={3}
       />
       <BreakdownTable
@@ -191,34 +261,27 @@ export function Codex({ api, t, from, to, rangeLabel, nonce, nowMs }: Props) {
         colors={projectColors}
         labelOf={(b) => b.key.split("/").filter(Boolean).at(-1) ?? b.key}
         state={byProject.error || failed ? "error" : "loading"}
-        span={4}
+        span={6}
         mdSpan={3}
-        limit={8}
+        limit={10}
       />
-      <CollectorsCard collectors={collectors.data ?? null} failed={Boolean(collectors.error) || failed} plan={account?.plan_type ?? null} nowMs={nowMs} />
-
-      {sessionOpen && (
-        <CodexSessionDialog api={api} status={session.data} onClose={() => setSessionOpen(false)} onChanged={() => setSessionTick((n) => n + 1)} />
-      )}
+      <BreakdownTable
+        title="按机器"
+        buckets={machineBuckets}
+        colors={machineColors}
+        labelOf={(b) => machineName(b.key)}
+        state={byMachine.error || failed ? "error" : "loading"}
+        span={6}
+        mdSpan={3}
+      />
+      <CollectorsCard
+        collectors={core.collectors.data ?? null}
+        failed={Boolean(core.collectors.error) || failed}
+        plan={core.account?.plan_type ?? null}
+        nowMs={nowMs}
+        span={6}
+      />
     </div>
-  );
-}
-
-/** 卡片右上角的登录状态：点开就是登录框 —— 登录失效时要做的事就在这里 */
-function SessionButton({ status, nowMs, onOpen }: { status: CodexSessionStatus | null; nowMs: number; onOpen: () => void }) {
-  const tone = codexSessionTone(status?.state);
-  return (
-    <button
-      type="button"
-      className={`sync${tone === "danger" || tone === "warn" ? " sync--alert" : ""}`}
-      onClick={onOpen}
-      aria-haspopup="dialog"
-      aria-label={`Codex 登录：${codexSessionLine(status, nowMs)}`}
-      title={status?.error ?? undefined}
-    >
-      <Dot tone={tone} />
-      <span>{status?.state === "ok" ? "已登录" : codexSessionLine(status, nowMs)}</span>
-    </button>
   );
 }
 
@@ -442,21 +505,17 @@ function BurnCard({
 function CreditsCard({
   credits,
   loading,
-  session,
   nowMs,
-  onOpen,
 }: {
   /** undefined = 当前快照不是服务端抓的（探针读不到券）—— 不知道，不是 0 张 */
   credits: CodexResetCredits | null | undefined;
   loading: boolean;
-  session: CodexSessionStatus | null;
   nowMs: number;
-  onOpen: () => void;
 }) {
   const expiry = earliestCreditExpiry(credits);
   const available = (credits?.credits ?? []).filter((c) => c.status === "available");
   return (
-    <Card title="重置券" span={4} mdSpan={2} aside={<SessionButton status={session} nowMs={nowMs} onOpen={onOpen} />}>
+    <Card title="重置券" span={4} mdSpan={2}>
       {loading ? (
         <Placeholder state="loading" height={200} />
       ) : (
@@ -567,14 +626,16 @@ function CollectorsCard({
   failed,
   plan,
   nowMs,
+  span,
 }: {
   collectors: CodexCollector[] | null;
   failed: boolean;
   plan: string | null;
   nowMs: number;
+  span: number;
 }) {
   return (
-    <Card title="采集器" span={3} mdSpan={6} aside={plan ? <Mono tone="muted">{plan}</Mono> : undefined}>
+    <Card title="采集器" span={span} mdSpan={6} aside={plan ? <Mono tone="muted">{plan}</Mono> : undefined}>
       {collectors === null ? (
         <Placeholder state={failed ? "error" : "loading"} height={148} />
       ) : collectors.length === 0 ? (

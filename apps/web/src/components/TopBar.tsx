@@ -1,5 +1,8 @@
 import type { ThemeName } from "@ua/tokens";
-import type { DataSource, Profile, QuotaSessionStatus, StreamStatus } from "../api";
+import type { CodexSessionStatus, DataSource, Profile, QuotaSessionStatus, StreamStatus } from "../api";
+import type { Provider } from "../hooks/useProvider";
+import { codexSessionBadge, codexSessionTone } from "./CodexSession";
+import { ClaudeIcon, OpenAIIcon } from "./ProviderIcons";
 import { appBridge } from "../app-bridge";
 import { fmtClock } from "../charts/base";
 import { hrefFor, ROUTES, type RouteId } from "../hooks/useRoute";
@@ -20,8 +23,11 @@ const ROUTE_LABEL: Record<RouteId, string> = {
   weeks: "周历史",
   windows: "窗口分析",
   distribution: "用量分布",
-  codex: "Codex",
 };
+
+/** Codex 没有标定、也没有多机重叠的甘特：窗口分析只属于 Claude */
+export const routesFor = (provider: Provider): readonly RouteId[] =>
+  provider === "codex" ? ROUTES.filter((r) => r !== "windows") : ROUTES;
 
 const STATUS_TONE: Record<StreamStatus, "ok" | "warn" | "danger"> = {
   open: "ok",
@@ -78,6 +84,10 @@ function SettingsIcon() {
 
 export function TopBar(props: {
   route: RouteId;
+  provider: Provider;
+  onProvider: (p: Provider) => void;
+  /** Codex 下顶栏的同步按钮改说 Codex：额度快照时刻 + 服务端那份登录的状态 */
+  codex: { session: CodexSessionStatus | null; capturedAt: number | null; stale: boolean; onSession: () => void };
   profiles: Profile[];
   profileId: string;
   onProfile: (id: string) => void;
@@ -98,12 +108,15 @@ export function TopBar(props: {
   onRefresh: () => void;
 }) {
   const bridge = appBridge();
+  const codex = props.provider === "codex";
+  const codexTone = codexSessionTone(props.codex.session?.state);
+  const codexAlert = codexTone === "danger" || codexTone === "warn";
   return (
     <header className="topbar">
       <span className="brand">UsageAccumulator</span>
 
       <nav className="nav" aria-label="页面">
-        {ROUTES.map((r) => (
+        {routesFor(props.provider).map((r) => (
           <a
             key={r}
             className="nav__link"
@@ -117,8 +130,17 @@ export function TopBar(props: {
 
       <span className="topbar__spacer" />
 
-      {/* Codex 是独立账本，不挂在 Claude 的 profile 下：那一页没有可选的 */}
-      {props.route !== "codex" && (
+      <div className="seg seg--provider" role="group" aria-label="服务">
+        <button type="button" className="seg__btn" aria-pressed={!codex} aria-label="Claude" title="Claude" onClick={() => props.onProvider("claude")}>
+          <ClaudeIcon />
+        </button>
+        <button type="button" className="seg__btn" aria-pressed={codex} aria-label="Codex" title="Codex" onClick={() => props.onProvider("codex")}>
+          <OpenAIIcon />
+        </button>
+      </div>
+
+      {/* Codex 是独立账本，不挂在 Claude 的 profile 下：选 Codex 时没有可选的 profile */}
+      {!codex && (
         <>
           <label className="visually-hidden" htmlFor="profile-select">
             Profile
@@ -155,7 +177,21 @@ export function TopBar(props: {
         onChange={props.onSource}
       />
 
-      {/* 点开是 claude.ai 会话（服务端抓额度用）—— 同步状态出问题时，要做的动作多半就在这里 */}
+      {/* 点开是服务端抓额度用的那份登录（Claude：claude.ai 会话；Codex：服务端专用的 ChatGPT 登录）——
+          同步状态出问题时，要做的动作多半就在这里 */}
+      {codex ? (
+        <button
+          type="button"
+          className={`sync${codexAlert ? " sync--alert" : ""}`}
+          onClick={props.codex.onSession}
+          aria-haspopup="dialog"
+          aria-label={`Codex 同步状态：${codexSessionBadge(props.codex.session?.state)}${props.codex.stale ? "，快照已过期" : ""}`}
+        >
+          <Dot tone={codexTone === "muted" ? (props.codex.stale ? "warn" : "ok") : codexTone === "ok" && props.codex.stale ? "warn" : codexTone} />
+          <span className="sync__label">{codexSessionBadge(props.codex.session?.state)}</span>
+          <span title="额度更新时刻">{props.codex.capturedAt ? fmtClock(props.codex.capturedAt) : "--:--"}</span>
+        </button>
+      ) : (
       <button
         type="button"
         className={`sync${sessionTone(props.quotaSession?.state) ? " sync--alert" : ""}`}
@@ -169,6 +205,7 @@ export function TopBar(props: {
         <span className="sync__label">{sessionBadge(props.quotaSession?.state)}</span>
         <span title="额度更新时刻">{props.capturedAt ? fmtClock(props.capturedAt) : "--:--"}</span>
       </button>
+      )}
 
       <button
         type="button"
