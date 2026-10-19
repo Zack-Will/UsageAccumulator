@@ -7,6 +7,10 @@
  * 节奏和探针一致：约 5 分钟一次、带抖动；会话失效 / 被 Cloudflare 质询时按阶梯退避
  * （15 分钟 → 1 小时 → 6 小时），**不重试到被风控**。
  * 会话本身放在 SessionVault 里，这里每一轮都重新读 —— 换了会话，退避与 org 缓存一起作废。
+ *
+ * 每次采集有整体期限（attemptTimeoutMs）：同一 profile 不并发，后面每一轮都要等手上这次跑完，
+ * 一个永不返回的 await 就会让采集无声地永久停住 —— 2026-10-19 实际停了 14 小时，
+ * 服务照常应答、日志里一条报错都没有。
  */
 import { createHash } from "node:crypto";
 import {
@@ -90,11 +94,15 @@ export interface QuotaSamplerOptions {
   authBackoffMs?: number[];
   /** 轮询粒度：多久看一次谁到点了。远小于 intervalMs，抖动才落得准 */
   pollMs?: number;
+  /** 单次采集的整体期限，超过就放弃本次、标 error、下一轮照常重试 */
+  attemptTimeoutMs?: number;
   now?: () => Date;
   random?: () => number;
 }
 
 const DEFAULT_BACKOFF_MS = [15 * 60_000, 60 * 60_000, 6 * 60 * 60_000];
+/** 一次采集最多两三个 20 秒超时的请求加几条 SQL，90 秒足够宽 */
+const DEFAULT_ATTEMPT_TIMEOUT_MS = 90_000;
 
 function sha256(s: string): string {
   return createHash("sha256").update(s).digest("hex");
@@ -113,6 +121,7 @@ export class QuotaSampler {
   private readonly jitterMs: number;
   private readonly backoffMs: number[];
   private readonly pollMs: number;
+  private readonly attemptTimeoutMs: number;
   private readonly now: () => Date;
   private readonly random: () => number;
 
@@ -121,6 +130,7 @@ export class QuotaSampler {
     this.jitterMs = opts.jitterMs ?? 60_000;
     this.backoffMs = opts.authBackoffMs?.length ? opts.authBackoffMs : DEFAULT_BACKOFF_MS;
     this.pollMs = opts.pollMs ?? 30_000;
+    this.attemptTimeoutMs = opts.attemptTimeoutMs ?? DEFAULT_ATTEMPT_TIMEOUT_MS;
     this.now = opts.now ?? (() => new Date());
     this.random = opts.random ?? Math.random;
   }
@@ -198,9 +208,31 @@ export class QuotaSampler {
       await running;
       if (!force) return;
     }
-    const p = this.attempt(profileId, force).finally(() => this.inflight.delete(profileId));
+    const p = this.withDeadline(profileId, this.attempt(profileId, force)).finally(() => this.inflight.delete(profileId));
     this.inflight.set(profileId, p);
     await p;
+  }
+
+  /**
+   * 到期就不再等这次采集：释放「不并发」的锁，下一轮照常重试。
+   * 被放弃的那次若之后自己跑完了，结果照样入库、照样更新状态 —— 那是真数据，没必要丢。
+   */
+  private withDeadline(profileId: string, work: Promise<void>): Promise<void> {
+    let timer: NodeJS.Timeout | undefined;
+    const deadline = new Promise<void>((resolve) => {
+      timer = setTimeout(() => {
+        const slot = this.slots.get(profileId);
+        if (slot) {
+          slot.state = "error";
+          slot.error = "采集超时";
+          slot.nextAttemptAt = new Date(this.now().getTime() + this.intervalMs);
+        }
+        this.opts.log.error({ profileId, timeoutSecs: Math.round(this.attemptTimeoutMs / 1000) }, "额度采集超时，放弃本次");
+        resolve();
+      }, this.attemptTimeoutMs);
+      timer.unref?.();
+    });
+    return Promise.race([work.finally(() => clearTimeout(timer)), deadline]);
   }
 
   private async attempt(profileId: string, force: boolean): Promise<void> {

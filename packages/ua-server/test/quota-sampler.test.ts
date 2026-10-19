@@ -172,6 +172,40 @@ describe("QuotaSampler", () => {
     expect((await sampler.status("claude-official")).state).toBe("none");
   });
 
+  it("一次采集卡住不会把采样永久停住：到期放弃、标 error、下一轮照常重试", async () => {
+    // 2026-10-19：某个 await 永不返回，同一 profile 不并发的锁一直不放，采集停了 14 小时
+    const stuck = new QuotaSampler({
+      vault,
+      client: {
+        organizations: async () => claude.orgs,
+        snapshot: (k, o, p, n) => (claude.mode === "down" ? new Promise<QuotaSnapshot>(() => {}) : claude.snapshot(k, o, p, n)),
+      },
+      record: async (s) => {
+        recorded.push(s);
+      },
+      profileOrg: async () => "org-1",
+      bindOrg: async () => null,
+      orgBindings: async () => new Map(),
+      log: { info: () => {}, warn: () => {}, error: (o: object, m: string) => logs.push([o, m]) },
+      now: () => clock,
+      random: () => 0.5,
+      attemptTimeoutMs: 20,
+    });
+    await vault.write("claude-official", KEY);
+    claude.mode = "down";
+    await stuck.tickAll();
+    const st = await stuck.status("claude-official");
+    expect(st.state).toBe("error");
+    expect(st.error).toBe("采集超时");
+    expect(logs.map((l) => (l as [object, string])[1])).toContain("额度采集超时，放弃本次");
+
+    claude.mode = "ok";
+    clock = new Date(clock.getTime() + 10 * MIN);
+    await stuck.tickAll();
+    expect(recorded).toHaveLength(1);
+    expect((await stuck.status("claude-official")).state).toBe("ok");
+  });
+
   it("日志与状态里永远没有 sessionKey", async () => {
     await vault.write("claude-official", KEY);
     claude.mode = "session";
