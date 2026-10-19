@@ -15,6 +15,8 @@ import type {
 import {
   codexBucket,
   codexBuckets,
+  codexTopSpans,
+  type Span,
   codexDaySeries,
   codexPace,
   codexWindowTitle,
@@ -38,7 +40,7 @@ import type { Tokens } from "../charts/tokens";
 import { Chart } from "../components/Chart";
 import { Card, Cost, Dot, Mono, Num, Placeholder, Segmented } from "../components/primitives";
 import { BreakdownTable, UsageSummary } from "../components/UsagePanels";
-import { QuotaBar, quotaSpans } from "../components/WindowCards";
+import { QuotaBar } from "../components/WindowCards";
 import { useAsync, type AsyncState } from "../hooks/useAsync";
 
 /** 按天的桶要和浏览器的本地日期对上：请求时把这个时区交给服务端 */
@@ -141,10 +143,22 @@ export function CodexOverview({ api, t, core, from, to, rangeLabel, nonce, nowMs
   const failed = Boolean(core.accounts.error);
   const quota = core.quota;
 
+  // 第一行：额度窗口 · 区间用量 · 重置券；第二行：燃尽 · 用量时间线；第三行：按模型 · 采集器
+  const top = codexTopSpans(quota.data?.snapshot?.windows.length ?? 1);
+
   if (notConnected(core)) return <NotConnected />;
   return (
     <div className="grid">
-      <QuotaRow quota={quota.data} failed={Boolean(quota.error) || failed} nowMs={nowMs} />
+      <QuotaRow quota={quota.data} failed={Boolean(quota.error) || failed} nowMs={nowMs} span={top.window} />
+      <UsageSummary
+        title={`${rangeLabel} 用量`}
+        totals={totals}
+        state={byModel.error || failed ? "error" : "loading"}
+        span={top.summary.span}
+        mdSpan={top.summary.mdSpan}
+        incomplete={totalsData ? coverageNote(totalsData, warnings) : undefined}
+      />
+      <CreditsCard credits={quota.data?.snapshot?.reset_credits} loading={!quota.data} nowMs={nowMs} span={top.credits} />
 
       <BurnCard
         analyses={quota.data?.analysis ?? []}
@@ -154,20 +168,10 @@ export function CodexOverview({ api, t, core, from, to, rangeLabel, nonce, nowMs
         failed={Boolean(quota.error) || failed}
         loading={!quota.data}
       />
-      <CreditsCard credits={quota.data?.snapshot?.reset_credits} loading={!quota.data} nowMs={nowMs} />
-
-      <UsageSummary
-        title={`${rangeLabel} 用量`}
-        totals={totals}
-        state={byModel.error || failed ? "error" : "loading"}
-        span={4}
-        mdSpan={2}
-        incomplete={totalsData ? coverageNote(totalsData, warnings) : undefined}
-      />
       <Card
         title="用量时间线"
-        span={8}
-        mdSpan={4}
+        span={6}
+        mdSpan={3}
         aside={
           <Segmented
             label="时间线口径"
@@ -181,9 +185,9 @@ export function CodexOverview({ api, t, core, from, to, rangeLabel, nonce, nowMs
         }
       >
         {timeline ? (
-          <Chart option={timeline} height={176} ariaLabel={metric === "cost" ? "Codex 按天的折算费用" : "Codex 按天的 token 用量"} />
+          <Chart option={timeline} height={200} ariaLabel={metric === "cost" ? "Codex 按天的折算费用" : "Codex 按天的 token 用量"} />
         ) : (
-          <Placeholder state={byDay.error || failed ? "error" : "loading"} height={176} />
+          <Placeholder state={byDay.error || failed ? "error" : "loading"} height={200} />
         )}
       </Card>
 
@@ -340,13 +344,24 @@ export function CodexDistribution({ api, t, core, from, to, nonce, nowMs }: Core
   );
 }
 
-function QuotaRow({ quota, failed, nowMs }: { quota: CodexQuotaResponse | null; failed: boolean; nowMs: number }) {
+function QuotaRow({
+  quota,
+  failed,
+  nowMs,
+  span,
+}: {
+  quota: CodexQuotaResponse | null;
+  failed: boolean;
+  nowMs: number;
+  /** 每张窗口卡的列宽：与同一行的用量、重置券一起铺满（见 codexTopSpans） */
+  span: Span;
+}) {
   const snapshot = quota?.snapshot ?? null;
   if (!snapshot) {
     // 还在取 / 取失败：骨架。取到了但从没采到过（snapshot = null）：一张卡写「暂无」
     if (quota && !failed) {
       return (
-        <Card title="额度" span={12}>
+        <Card title="额度" span={span.span} mdSpan={span.mdSpan}>
           <div className="btable__empty">
             <Mono tone="muted">暂无快照</Mono>
           </div>
@@ -354,20 +369,16 @@ function QuotaRow({ quota, failed, nowMs }: { quota: CodexQuotaResponse | null; 
       );
     }
     return (
-      <>
-        {[0, 1].map((i) => (
-          <Card key={i} span={6} mdSpan={3}>
-            <Placeholder state={failed ? "error" : "loading"} height={130} />
-          </Card>
-        ))}
-      </>
+      <Card span={span.span} mdSpan={span.mdSpan}>
+        <Placeholder state={failed ? "error" : "loading"} height={180} />
+      </Card>
     );
   }
   const windows = sortCodexWindows(snapshot.windows);
   // 最近一次采到了，但官方没给任何窗口 —— 和「从没采到」是两回事
   if (windows.length === 0) {
     return (
-      <Card title="额度" span={12} aside={<Mono tone="muted">{fmtClock(msOf(snapshot.captured_at))}</Mono>}>
+      <Card title="额度" span={span.span} mdSpan={span.mdSpan} aside={<Mono tone="muted">{fmtClock(msOf(snapshot.captured_at))}</Mono>}>
         <div className="btable__empty">
           <Mono tone="muted">当前没有限额窗口</Mono>
         </div>
@@ -377,7 +388,6 @@ function QuotaRow({ quota, failed, nowMs }: { quota: CodexQuotaResponse | null; 
   const multipleLimits = new Set(windows.map((w) => w.limit_id)).size > 1;
   const reached = new Set(snapshot.limits.filter((l) => l.limit_reached).map((l) => l.limit_id));
   const byWindow = new Map((quota?.analysis ?? []).map((a) => [a.window_id, a]));
-  const spans = quotaSpans(windows.length);
   return (
     <>
       {windows.map((w) => (
@@ -390,8 +400,8 @@ function QuotaRow({ quota, failed, nowMs }: { quota: CodexQuotaResponse | null; 
           stale={quota?.stale ?? false}
           capturedAt={snapshot.captured_at}
           nowMs={nowMs}
-          span={spans.span}
-          mdSpan={spans.mdSpan}
+          span={span.span}
+          mdSpan={span.mdSpan}
         />
       ))}
     </>
@@ -569,8 +579,8 @@ function BurnCard({
   return (
     <Card
       title="燃尽"
-      span={8}
-      mdSpan={4}
+      span={6}
+      mdSpan={3}
       aside={
         ordered.length > 1 && current ? (
           <Segmented
@@ -599,18 +609,20 @@ function CreditsCard({
   credits,
   loading,
   nowMs,
+  span,
 }: {
   /** undefined = 当前快照不是服务端抓的（探针读不到券）—— 不知道，不是 0 张 */
   credits: CodexResetCredits | null | undefined;
   loading: boolean;
   nowMs: number;
+  span: Span;
 }) {
   const expiry = earliestCreditExpiry(credits);
   const available = (credits?.credits ?? []).filter((c) => c.status === "available");
   return (
-    <Card title="重置券" span={4} mdSpan={2}>
+    <Card title="重置券" span={span.span} mdSpan={span.mdSpan}>
       {loading ? (
-        <Placeholder state="loading" height={200} />
+        <Placeholder state="loading" height={180} />
       ) : (
         <div className="quota">
           <div className="quota__head">

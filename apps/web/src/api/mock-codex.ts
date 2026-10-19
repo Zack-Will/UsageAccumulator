@@ -163,7 +163,8 @@ function weekSamples(nowMs: number, reset: number): { ts: number; pct: number; s
   return out;
 }
 
-export function buildCodexQuota(accountId: string, nowMs: number): CodexQuotaResponse {
+/** onlyWeek：只有 7d 一个窗口（真实账号常见的形态） */
+export function buildCodexQuota(accountId: string, nowMs: number, onlyWeek = false): CodexQuotaResponse {
   const capturedAt = nowMs - 3 * 60_000;
   const weekReset = nowMs + 2.6 * DAY;
   const fiveReset = nowMs + 2.2 * HOUR;
@@ -224,7 +225,7 @@ export function buildCodexQuota(accountId: string, nowMs: number): CodexQuotaRes
     stale: false,
     snapshot: {
       captured_at: iso(capturedAt),
-      windows,
+      windows: onlyWeek ? windows.filter((w) => w.window_id === "codex:secondary") : windows,
       limits: [{ limit_id: "codex", plan_type: "pro", credits: null, limit_reached: null }],
       reset_credits: {
         available_count: 2,
@@ -234,7 +235,7 @@ export function buildCodexQuota(accountId: string, nowMs: number): CodexQuotaRes
         ],
       },
     },
-    analysis: [week, five],
+    analysis: onlyWeek ? [week] : [week, five],
   };
 }
 

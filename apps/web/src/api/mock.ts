@@ -779,7 +779,8 @@ export function createMockApi(opts?: { latencyMs?: number }): UaApi {
     },
     // ?scenario=codex-none：服务端还没接入 Codex
     codexAccounts: (signal) => wait(scenario === "codex-none" ? [] : [MOCK_CODEX_ACCOUNT], signal),
-    codexQuota: (accountId, signal) => wait(buildCodexQuota(accountId, Date.now()), signal),
+    // ?scenario=codex-one：只有 7d 一个窗口
+    codexQuota: (accountId, signal) => wait(buildCodexQuota(accountId, Date.now(), scenario === "codex-one"), signal),
     codexUsage: (p, signal) => wait(buildCodexUsage(p), signal),
     codexCollectors: (accountId, signal) => wait(buildCodexCollectors(accountId, Date.now()), signal),
     codexPeriods: (p, signal) => wait(buildCodexPeriods(p.account_id, p.weeks, Date.now()), signal),

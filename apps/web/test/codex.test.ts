@@ -121,3 +121,19 @@ describe("Codex 期与重置券的显示", () => {
     expect(collectorName({ machine_id: "abcdef1234", hostname: null })).toBe("abcdef12");
   });
 });
+
+import { codexTopSpans } from "../src/api/codex";
+
+describe("Codex 总览第一行", () => {
+  it("窗口 + 区间用量 + 重置券永远铺满一行（12 栅格，中屏 6 栅格）", () => {
+    for (const n of [1, 2]) {
+      const t = codexTopSpans(n);
+      expect(t.window.span * n + t.summary.span + t.credits.span).toBe(12);
+      expect((t.window.mdSpan * n + t.summary.mdSpan + t.credits.mdSpan) % 6).toBe(0);
+    }
+    // 三个以上窗口自成一行，用量与券另起一行
+    const many = codexTopSpans(3);
+    expect(many.window.span * 3).toBe(12);
+    expect(many.summary.span + many.credits.span).toBe(12);
+  });
+});

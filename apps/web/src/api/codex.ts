@@ -114,6 +114,22 @@ export function codexDaySeries(
   ];
 }
 
+export interface Span {
+  span: number;
+  mdSpan: number;
+}
+
+/**
+ * 总览第一行：额度窗口 + 区间用量 + 重置券，永远正好铺满 12 栅格（中屏 6 栅格）。
+ * 只有一个窗口（常见：只有 7d）时它占 5、用量 4、券 3；两个窗口时四张各 3；
+ * 三个以上窗口自成一行，用量与券另起一行。
+ */
+export function codexTopSpans(windows: number): { window: Span; summary: Span; credits: Span } {
+  if (windows <= 1) return { window: { span: 5, mdSpan: 3 }, summary: { span: 4, mdSpan: 3 }, credits: { span: 3, mdSpan: 6 } };
+  if (windows === 2) return { window: { span: 3, mdSpan: 3 }, summary: { span: 3, mdSpan: 3 }, credits: { span: 3, mdSpan: 3 } };
+  return { window: { span: 4, mdSpan: 2 }, summary: { span: 8, mdSpan: 4 }, credits: { span: 4, mdSpan: 2 } };
+}
+
 export type CollectorTone = "ok" | "warn" | "danger";
 
 /** 登录失效 / 出错是红，只是过期是黄。被拒收的事件会让采集器自己报 error，这里不用另判 */
