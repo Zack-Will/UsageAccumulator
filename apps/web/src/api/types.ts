@@ -511,6 +511,17 @@ export interface CodexSessionStatus {
   email: string | null;
   plan_type: string | null;
   refreshed_at: Rfc3339 | null;
+  /** 进行中 / 刚失败的网页登录（只有看板身份看得到）；旧服务端没有这个字段 */
+  device?: CodexDeviceLogin | null;
+}
+
+/** 网页登录：在任意浏览器打开 verification_url，登录 ChatGPT，输入 user_code */
+export interface CodexDeviceLogin {
+  state: "waiting" | "failed" | "expired";
+  verification_url: string;
+  user_code: string;
+  expires_at: Rfc3339;
+  error: string | null;
 }
 
 export interface CodexCollectorStatus {
@@ -608,6 +619,9 @@ export interface UaApi {
   /** 服务端先校验再保存；不认就抛 ApiError，message 可以直接给人看 */
   saveCodexSession(credential: string): Promise<CodexSessionStatus>;
   clearCodexSession(): Promise<CodexSessionStatus>;
+  /** 发起网页登录；之后用 codexSession() 轮询 device 的进展 */
+  startCodexDeviceLogin(): Promise<CodexSessionStatus>;
+  cancelCodexDeviceLogin(): Promise<CodexSessionStatus>;
   /** 返回 unsubscribe。连接状态通过 onStatus 上报，供顶栏「同步状态」使用。 */
   stream(
     profileId: string,

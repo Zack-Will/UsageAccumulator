@@ -472,6 +472,47 @@ body {
   font-size: 14px;
 }
 
+/* Codex 网页登录：一个打开登录页的按钮、一枚可点复制的大号验证码 */
+.device-login {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: stretch;
+}
+.device-login__open {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+}
+.device-login__code {
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text);
+  padding: 12px;
+  font-family: var(--font-mono);
+  font-size: 24px;
+  letter-spacing: 0.12em;
+  cursor: copy;
+}
+.dialog__more {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.dialog__more summary {
+  cursor: pointer;
+  color: var(--text-3);
+  font-size: 12px;
+}
+.dialog__more[open] {
+  display: flex;
+}
+.dialog__more > * + * {
+  margin-top: 8px;
+}
+
 /* Codex 登录粘贴的是整份 auth.json：多行、等宽、可纵向拉伸 */
 .dialog textarea.gate-input {
   resize: vertical;

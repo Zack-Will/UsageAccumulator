@@ -60,11 +60,21 @@ export function registerCodexRoutes(app: FastifyInstance<RawServerDefault, Incom
     const auth = (req as FastifyRequest & { auth?: { kind: string } }).auth;
     if (auth?.kind !== "dashboard") throw new CodexHttpError(403, "forbidden", "只有看板身份能更改 Codex 登录");
   }
-  const sessionView = (s: CodexSamplerStatus | null) => s
+  const isDashboard = (req: FastifyRequest) => (req as FastifyRequest & { auth?: { kind: string } }).auth?.kind === "dashboard";
+  /**
+   * 网页登录的验证码只给看板身份看：探针的 machine token 拿到它也没用（换出来的账号会被邮箱核对挡下），
+   * 但没理由让它看见。
+   */
+  const sessionView = (s: CodexSamplerStatus | null, dashboard = false) => s
     ? { state: s.state, last_ok_at: s.lastOkAt?.toISOString() ?? null, last_attempt_at: s.lastAttemptAt?.toISOString() ?? null,
       next_attempt_at: s.nextAttemptAt?.toISOString() ?? null, error: s.error, email: s.email, plan_type: s.planType,
-      refreshed_at: s.refreshedAt?.toISOString() ?? null }
-    : { state: "disabled", last_ok_at: null, last_attempt_at: null, next_attempt_at: null, error: null, email: null, plan_type: null, refreshed_at: null };
+      refreshed_at: s.refreshedAt?.toISOString() ?? null,
+      device: s.device && dashboard
+        ? { state: s.device.state, verification_url: s.device.verificationUrl, user_code: s.device.userCode,
+          expires_at: s.device.expiresAt.toISOString(), error: s.device.error }
+        : null }
+    : { state: "disabled", last_ok_at: null, last_attempt_at: null, next_attempt_at: null, error: null, email: null, plan_type: null,
+      refreshed_at: null, device: null };
   const age = (captured: string | null, at: Date) => captured ? Math.max(0, (at.getTime() - Date.parse(captured)) / 1000) : null;
   const freshness = (captured: string | null, at: Date) => ({
     age_seconds: age(captured, at), stale: captured === null || at.getTime() - Date.parse(captured) > config.quotaStaleMs,
@@ -200,14 +210,33 @@ export function registerCodexRoutes(app: FastifyInstance<RawServerDefault, Incom
       reset_detection: { min_drop_pct: 2, gap_minutes: 30 } };
   });
 
-  app.get("/v1/codex/session", async () => sessionView(sampler ? await sampler.status() : null));
+  app.get("/v1/codex/session", async (req) => sessionView(sampler ? await sampler.status() : null, isDashboard(req)));
+
+  // 网页登录：发起 / 取消。进行中的状态（链接、验证码、是否完成）从 GET /session 的 device 里看
+  app.post("/v1/codex/session/device", async (req) => {
+    requireDashboard(req);
+    if (!sampler) throw new CodexHttpError(404, "not_found", "服务端没有开启 Codex 额度采集");
+    try {
+      return sessionView(await sampler.startDeviceLogin(), true);
+    } catch (err) {
+      if (err instanceof CodexHttpError) throw err;
+      throw new CodexHttpError(502, "upstream", (err as Error).message);
+    }
+  });
+
+  app.delete("/v1/codex/session/device", async (req) => {
+    requireDashboard(req);
+    if (!sampler) throw new CodexHttpError(404, "not_found", "服务端没有开启 Codex 额度采集");
+    sampler.cancelDeviceLogin();
+    return sessionView(await sampler.status(), true);
+  });
 
   app.put("/v1/codex/session", async (req) => {
     requireDashboard(req);
     if (!sampler) throw new CodexHttpError(404, "not_found", "服务端没有开启 Codex 额度采集");
     const body = parse(sessionBody, req.body);
     try {
-      return sessionView(await sampler.save(body.credential));
+      return sessionView(await sampler.save(body.credential), true);
     } catch (err) {
       if (err instanceof CodexHttpError) throw err;
       throw new CodexHttpError(400, "bad_request", (err as Error).message);
@@ -217,7 +246,7 @@ export function registerCodexRoutes(app: FastifyInstance<RawServerDefault, Incom
   app.delete("/v1/codex/session", async (req) => {
     requireDashboard(req);
     if (!sampler) throw new CodexHttpError(404, "not_found", "服务端没有开启 Codex 额度采集");
-    return sessionView(await sampler.clear());
+    return sessionView(await sampler.clear(), true);
   });
 
   app.get("/v1/codex/account-usage", async (req) => {

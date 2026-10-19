@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { CodexSessionState, CodexSessionStatus, UaApi } from "../api";
-import { fmtWhen } from "../charts/base";
+import { fmtUntil, fmtWhen } from "../charts/base";
 import { Dot } from "./primitives";
 import { planLabel } from "./QuotaSession";
 
@@ -64,9 +64,13 @@ export function CodexSessionDialog({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmClear, setConfirmClear] = useState(false);
+  const [copied, setCopied] = useState(false);
   const [shown, setShown] = useState<CodexSessionStatus | null>(status);
+  const [nowMs, setNowMs] = useState(() => Date.now());
   const confirmTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const trimmed = value.trim();
+  const device = shown?.device ?? null;
+  const waiting = device?.state === "waiting";
 
   useEffect(() => setShown(status), [status]);
   useEffect(() => {
@@ -79,6 +83,57 @@ export function CodexSessionDialog({
       if (confirmTimer.current) clearTimeout(confirmTimer.current);
     };
   }, [onClose]);
+
+  // 网页登录进行中：每 3 秒问一次服务端。它在后台轮询 OpenAI，这里只看结果
+  useEffect(() => {
+    if (!waiting) return;
+    const id = setInterval(() => {
+      setNowMs(Date.now());
+      void api
+        .codexSession()
+        .then((next) => {
+          setShown(next);
+          if (!next.device && next.state !== "none") {
+            onChanged();
+            if (next.state === "ok") onClose();
+          }
+        })
+        .catch(() => undefined);
+    }, 3000);
+    return () => clearInterval(id);
+  }, [waiting, api, onChanged, onClose]);
+
+  async function startDevice() {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    setCopied(false);
+    try {
+      setShown(await api.startCodexDeviceLogin());
+      setNowMs(Date.now());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "发起网页登录失败");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function cancelDevice() {
+    try {
+      setShown(await api.cancelCodexDeviceLogin());
+    } catch {
+      /* 取消失败无所谓：验证码 15 分钟后自己过期 */
+    }
+  }
+
+  async function copyCode(code: string) {
+    try {
+      await globalThis.navigator?.clipboard?.writeText(code);
+      setCopied(true);
+    } catch {
+      /* 剪贴板不可用（非 https 等）：码就在眼前，手抄 */
+    }
+  }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -119,6 +174,7 @@ export function CodexSessionDialog({
 
   const editable = shown?.state !== "disabled";
   const who = [shown?.email, planLabel(shown?.plan_type ?? null)].filter(Boolean).join(" · ");
+  const remainMs = device ? Date.parse(device.expires_at) - nowMs : 0;
   return (
     <div
       className="dialog-backdrop"
@@ -135,30 +191,61 @@ export function CodexSessionDialog({
           {codexSessionLine(shown, Date.now())}
         </p>
         {who && <p className="dialog__status">{who}</p>}
-        {editable && (
-          <>
-            <label className="gate-label" htmlFor="cs-cred">
-              服务端专用登录的 auth.json
-            </label>
-            <textarea
-              id="cs-cred"
-              className="gate-input"
-              name="codex-credential"
-              autoComplete="off"
-              spellCheck={false}
-              rows={4}
-              autoFocus
-              value={value}
-              onChange={(e) => {
-                setValue(e.target.value);
-                setError(null);
-              }}
-            />
-            <button className="gate-submit" type="submit" disabled={!trimmed || busy}>
-              {busy ? "验证中…" : "保存"}
-            </button>
-          </>
-        )}
+
+        {editable &&
+          (waiting && device ? (
+            <div className="device-login">
+              <a className="gate-submit device-login__open" href={device.verification_url} target="_blank" rel="noreferrer">
+                打开登录页
+              </a>
+              <button
+                type="button"
+                className="device-login__code"
+                onClick={() => void copyCode(device.user_code)}
+                aria-label={`验证码 ${device.user_code}，点击复制`}
+              >
+                {device.user_code}
+              </button>
+              <p className="dialog__status">
+                <Dot tone="warn" />
+                {copied ? "已复制 · " : ""}等待确认 · {fmtUntil(remainMs)}过期
+              </p>
+              <button type="button" className="gate-alt" onClick={() => void cancelDevice()}>
+                取消
+              </button>
+            </div>
+          ) : (
+            <>
+              <button type="button" className="gate-submit" onClick={() => void startDevice()} disabled={busy}>
+                {busy ? "请求中…" : "网页登录"}
+              </button>
+              {device && device.state !== "waiting" && (
+                <p className="gate-error">{device.state === "expired" ? "验证码已过期" : (device.error ?? "网页登录失败")}</p>
+              )}
+              <details className="dialog__more">
+                <summary>粘贴 auth.json</summary>
+                <label className="gate-label" htmlFor="cs-cred">
+                  服务端专用登录的 auth.json
+                </label>
+                <textarea
+                  id="cs-cred"
+                  className="gate-input"
+                  name="codex-credential"
+                  autoComplete="off"
+                  spellCheck={false}
+                  rows={4}
+                  value={value}
+                  onChange={(e) => {
+                    setValue(e.target.value);
+                    setError(null);
+                  }}
+                />
+                <button className="gate-submit" type="submit" disabled={!trimmed || busy}>
+                  {busy ? "验证中…" : "保存"}
+                </button>
+              </details>
+            </>
+          ))}
         {error && <p className="gate-error">{error}</p>}
         <div className="dialog__actions">
           {editable && shown && shown.state !== "none" ? (

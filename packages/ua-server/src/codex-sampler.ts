@@ -10,7 +10,13 @@
 import { createHash } from "node:crypto";
 import type { CodexIngestBatch } from "@ua/core";
 import {
+  CODEX_DEVICE_TTL_MS,
+  CODEX_DEVICE_VERIFICATION_URL,
   CodexAuthError,
+  exchangeCodexAuthorizationCode,
+  pollCodexDeviceToken,
+  requestCodexDeviceCode,
+  type CodexDeviceCode,
   codexAccessStale,
   codexIdentity,
   fetchCodexResetCredits,
@@ -50,6 +56,21 @@ export interface CodexSamplerStatus {
   planType: string | null;
   /** access token 上次换新的时刻 */
   refreshedAt: Date | null;
+  /** 进行中 / 刚失败的网页登录；没有为 null */
+  device: CodexDeviceLoginStatus | null;
+}
+
+/**
+ * 网页登录（设备码）：看板显示链接与验证码，人在任意浏览器里登录 ChatGPT 并输入验证码，
+ * 服务端在后台轮询，拿到授权码后换 token、落盘，然后立刻抓一次。
+ * waiting：等人去确认；failed：出错（含账号不符）；expired：15 分钟没确认。成功后这一项清空。
+ */
+export interface CodexDeviceLoginStatus {
+  state: "waiting" | "failed" | "expired";
+  verificationUrl: string;
+  userCode: string;
+  expiresAt: Date;
+  error: string | null;
 }
 
 interface Log {
@@ -72,6 +93,16 @@ export interface CodexSamplerOptions {
   pollMs?: number;
   now?: () => Date;
   random?: () => number;
+  /** 网页登录是否自己定时轮询；测试里关掉，直接调 pollDeviceOnce() */
+  devicePoll?: boolean;
+}
+
+interface DeviceLogin {
+  code: CodexDeviceCode;
+  expiresAt: Date;
+  state: CodexDeviceLoginStatus["state"];
+  error: string | null;
+  timer: NodeJS.Timeout | null;
 }
 
 interface Slot {
@@ -89,6 +120,7 @@ const sha256 = (s: string): string => createHash("sha256").update(s).digest("hex
 
 export class CodexSampler {
   private slot: Slot | null = null;
+  private device: DeviceLogin | null = null;
   private inflight: Promise<void> | null = null;
   private readonly intervalMs: number;
   private readonly jitterMs: number;
@@ -137,7 +169,11 @@ export class CodexSampler {
 
   /** 看板保存一份新登录：先校验格式与账号，再落盘，然后立刻抓一次 */
   async save(input: string): Promise<CodexSamplerStatus> {
-    const cred = parseCodexCredentialInput(input);
+    return this.saveCredential(parseCodexCredentialInput(input));
+  }
+
+  /** 粘贴与网页登录共用：先核对账号，再落盘，然后立刻抓一次 */
+  private async saveCredential(cred: CodexCredential): Promise<CodexSamplerStatus> {
     const who = codexIdentity(cred);
     const configured = normalizeCodexEmail(this.opts.configuredEmail());
     if (who.email && configured && who.email !== configured) {
@@ -145,7 +181,63 @@ export class CodexSampler {
     }
     await this.persist(cred);
     this.slot = null;
+    this.cancelDeviceLogin();
     return this.kick();
+  }
+
+  /** 发起网页登录：拿一个验证码，开始后台轮询。已有一个在等就作废它重来 */
+  async startDeviceLogin(): Promise<CodexSamplerStatus> {
+    this.cancelDeviceLogin();
+    const code = await requestCodexDeviceCode(this.opts.http);
+    this.device = { code, expiresAt: new Date(this.now().getTime() + CODEX_DEVICE_TTL_MS), state: "waiting", error: null, timer: null };
+    this.scheduleDevicePoll();
+    return this.status();
+  }
+
+  cancelDeviceLogin(): void {
+    if (this.device?.timer) clearTimeout(this.device.timer);
+    this.device = null;
+  }
+
+  private scheduleDevicePoll(): void {
+    const d = this.device;
+    if (!d || d.state !== "waiting" || this.opts.devicePoll === false) return;
+    d.timer = setTimeout(() => void this.pollDeviceOnce(), d.code.interval * 1000);
+    d.timer.unref?.();
+  }
+
+  /** 轮询一次网页登录；还没确认就排下一次 */
+  async pollDeviceOnce(): Promise<void> {
+    const d = this.device;
+    if (!d || d.state !== "waiting") return;
+    const now = this.now();
+    if (now >= d.expiresAt) {
+      d.state = "expired";
+      return;
+    }
+    try {
+      const grant = await pollCodexDeviceToken(this.opts.http, d.code);
+      if (this.device !== d) return; // 期间被取消或重开了
+      if (!grant) {
+        this.scheduleDevicePoll();
+        return;
+      }
+      const cred = await exchangeCodexAuthorizationCode(this.opts.http, grant, now);
+      await this.saveCredential(cred);
+      this.opts.log.info({}, "Codex 网页登录完成");
+    } catch (err) {
+      if (this.device !== d) return;
+      d.state = "failed";
+      d.error = err instanceof CodexHttpError || err instanceof CodexAuthError ? err.message : `网页登录失败：${(err as Error).message}`;
+      this.opts.log.warn({ err: d.error }, "Codex 网页登录失败");
+    }
+  }
+
+  private deviceStatus(): CodexDeviceLoginStatus | null {
+    const d = this.device;
+    if (!d) return null;
+    if (d.state === "waiting" && this.now() >= d.expiresAt) d.state = "expired";
+    return { state: d.state, verificationUrl: CODEX_DEVICE_VERIFICATION_URL, userCode: d.code.user_code, expiresAt: d.expiresAt, error: d.error };
   }
 
   async clear(): Promise<CodexSamplerStatus> {
@@ -165,7 +257,8 @@ export class CodexSampler {
 
   async status(): Promise<CodexSamplerStatus> {
     const stored = await this.readCredential();
-    const blank = { lastOkAt: null, lastAttemptAt: null, nextAttemptAt: null, error: null, email: null, planType: null, refreshedAt: null };
+    const device = this.deviceStatus();
+    const blank = { lastOkAt: null, lastAttemptAt: null, nextAttemptAt: null, error: null, email: null, planType: null, refreshedAt: null, device };
     if (!stored) return { ...blank, state: "none" };
     const who = codexIdentity(stored.cred);
     const refreshedAt = stored.cred.refreshed_at ? new Date(stored.cred.refreshed_at) : null;
@@ -182,6 +275,7 @@ export class CodexSampler {
       email: who.email,
       planType: who.plan_type,
       refreshedAt,
+      device,
     };
   }
 

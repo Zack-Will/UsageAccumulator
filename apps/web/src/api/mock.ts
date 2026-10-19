@@ -12,6 +12,7 @@
  */
 import type {
   BucketGranularity,
+  CodexSessionStatus,
   BucketSeriesPoint,
   Calibration,
   CalibrationEntry,
@@ -734,6 +735,15 @@ export function createMockApi(opts?: { latencyMs?: number }): UaApi {
   let session = mockSession(
     scenario === "session-auth" ? "auth" : scenario === "session-none" ? "none" : scenario === "session-blocked" ? "blocked" : scenario === "session-org" ? "org" : "ok",
   );
+  let codexDevice: { startedAt: number } | null = null;
+  let codexLoggedIn = false;
+  const withDevice = (s: CodexSessionStatus): CodexSessionStatus => ({
+    ...s,
+    device: codexDevice
+      ? { state: "waiting", verification_url: "https://auth.openai.com/codex/device", user_code: "MOCK-1234",
+          expires_at: new Date(codexDevice.startedAt + 15 * 60_000).toISOString(), error: null }
+      : null,
+  });
   const wait = <T>(v: T, signal?: AbortSignal): Promise<T> =>
     new Promise<T>((resolve, reject) => {
       const id = setTimeout(() => resolve(v), latency);
@@ -774,8 +784,14 @@ export function createMockApi(opts?: { latencyMs?: number }): UaApi {
     codexCollectors: (accountId, signal) => wait(buildCodexCollectors(accountId, Date.now()), signal),
     codexPeriods: (p, signal) => wait(buildCodexPeriods(p.account_id, p.weeks, Date.now()), signal),
     // ?scenario=codex-login：服务端还没存 Codex 登录；codex-auth：登录失效
-    codexSession: (signal) =>
-      wait(mockCodexSession(scenario === "codex-login" ? "none" : scenario === "codex-auth" ? "auth" : "ok", Date.now()), signal),
+    codexSession: (signal) => {
+      if (codexDevice && Date.now() - codexDevice.startedAt > 8_000) {
+        codexDevice = null;
+        codexLoggedIn = true;
+      }
+      const state = codexLoggedIn ? "ok" : scenario === "codex-login" ? "none" : scenario === "codex-auth" ? "auth" : "ok";
+      return wait(withDevice(mockCodexSession(state, Date.now())), signal);
+    },
     saveCodexSession: async (credential) => {
       await wait(null);
       if (!credential.includes("refresh_token") && !/^[A-Za-z0-9._~+/=-]{20,}$/.test(credential.trim())) {
@@ -785,6 +801,18 @@ export function createMockApi(opts?: { latencyMs?: number }): UaApi {
     },
     clearCodexSession: async () => {
       await wait(null);
+      codexDevice = null;
+      return mockCodexSession("none", Date.now());
+    },
+    // 网页登录：发起后 8 秒视为在浏览器里确认了
+    startCodexDeviceLogin: async () => {
+      await wait(null);
+      codexDevice = { startedAt: Date.now() };
+      return withDevice(mockCodexSession("none", Date.now()));
+    },
+    cancelCodexDeviceLogin: async () => {
+      await wait(null);
+      codexDevice = null;
       return mockCodexSession("none", Date.now());
     },
     stream(profileId, handlers) {

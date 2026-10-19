@@ -106,7 +106,14 @@ Run `pnpm --filter @ua/server test` and `pnpm --filter @ua/server typecheck`. Th
 
 ## Server-side quota collection
 
-The server can read Codex quota itself from `chatgpt.com/backend-api/wham/usage` (the endpoint Codex CLI uses), every `UA_QUOTA_INTERVAL_MS` with jitter. It needs a **dedicated** ChatGPT login for the server, saved from the dashboard:
+The server can read Codex quota itself from `chatgpt.com/backend-api/wham/usage` (the endpoint Codex CLI uses), every `UA_QUOTA_INTERVAL_MS` with jitter. It needs a **dedicated** ChatGPT login for the server.
+
+**Web login (recommended).** The dashboard starts the same device-code flow as `codex login --device-auth`, driven by the server: the dashboard shows a link (`auth.openai.com/codex/device`) and a one-time code valid for 15 minutes; you sign in to ChatGPT in any browser and enter the code; the server polls, exchanges the authorization code (form-encoded, PKCE verifier from the device endpoint, Codex CLI's OAuth client id), checks the email against `UA_CODEX_ACCOUNT_EMAIL`, persists the tokens and fetches immediately. This creates a fresh login that belongs to the server only. If the account disallows device-code login, the error is shown in the dialog.
+
+- `POST /session/device` (dashboard identity only) starts it (an existing pending one is cancelled); `DELETE /session/device` cancels it.
+- `GET /session` then carries `device`: `state` (`waiting`, `failed`, `expired`), `verification_url`, `user_code`, `expires_at`, `error` — only for dashboard identities; `device` becomes null once the login completes.
+
+**Paste (fallback).** Create a separate login on any machine and paste its `auth.json`:
 
 ```sh
 export CODEX_HOME="$(mktemp -d)"   # never the everyday ~/.codex

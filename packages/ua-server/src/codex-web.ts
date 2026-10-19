@@ -284,3 +284,83 @@ export function normalizeWhamUsage(
   }
   return { snapshot, plan_type: plan, account_id: str(usage["account_id"]) };
 }
+
+// ── 设备码登录（与 `codex login --device-auth` 同一套流程）─────────────────────
+//
+// 服务端自己发起，得到的是一条全新的、只归服务端的登录链 —— 正是上面要求的「服务端专用登录」，
+// 不必再找一台装了 Codex CLI 的机器另开 CODEX_HOME。
+export const CODEX_AUTH_BASE = "https://auth.openai.com";
+export const CODEX_DEVICE_VERIFICATION_URL = `${CODEX_AUTH_BASE}/codex/device`;
+/** 验证码 15 分钟内有效（Codex CLI 也是等这么久） */
+export const CODEX_DEVICE_TTL_MS = 15 * 60_000;
+
+export interface CodexDeviceCode {
+  device_auth_id: string;
+  user_code: string;
+  /** 轮询间隔（秒） */
+  interval: number;
+}
+
+export async function requestCodexDeviceCode(http: CodexFetch): Promise<CodexDeviceCode> {
+  const res = await http(`${CODEX_AUTH_BASE}/api/accounts/deviceauth/usercode`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({ client_id: CODEX_CLIENT_ID }),
+  });
+  if (isChallenge(res)) throw new CodexAuthError("challenge", res.status);
+  if (res.status === 404) throw new Error("这个账号或服务没有开放设备码登录");
+  if (res.status < 200 || res.status >= 300) throw new Error(`申请验证码失败：HTTP ${res.status}`);
+  const body = object(JSON.parse(res.text));
+  const id = str(body?.["device_auth_id"]);
+  const code = str(body?.["user_code"]) ?? str(body?.["usercode"]);
+  const interval = Number(body?.["interval"] ?? 5);
+  if (!id || !code) throw new Error("验证码响应缺字段");
+  return { device_auth_id: id, user_code: code, interval: Number.isFinite(interval) && interval > 0 ? Math.min(interval, 60) : 5 };
+}
+
+/** 轮询一次：还没在浏览器里确认返回 null；确认了返回授权码 */
+export async function pollCodexDeviceToken(
+  http: CodexFetch,
+  device: CodexDeviceCode,
+): Promise<{ authorization_code: string; code_verifier: string } | null> {
+  const res = await http(`${CODEX_AUTH_BASE}/api/accounts/deviceauth/token`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({ device_auth_id: device.device_auth_id, user_code: device.user_code }),
+  });
+  if (res.status === 403 || res.status === 404) return null;
+  if (isChallenge(res)) throw new CodexAuthError("challenge", res.status);
+  if (res.status < 200 || res.status >= 300) throw new Error(`设备码登录失败：HTTP ${res.status}`);
+  const body = object(JSON.parse(res.text));
+  const code = str(body?.["authorization_code"]);
+  const verifier = str(body?.["code_verifier"]);
+  if (!code || !verifier) throw new Error("设备码登录的响应缺字段");
+  return { authorization_code: code, code_verifier: verifier };
+}
+
+/** 授权码换 token（表单编码，与 Codex CLI 相同） */
+export async function exchangeCodexAuthorizationCode(
+  http: CodexFetch,
+  grant: { authorization_code: string; code_verifier: string },
+  now: Date,
+): Promise<CodexCredential> {
+  const form = new URLSearchParams({
+    grant_type: "authorization_code",
+    client_id: CODEX_CLIENT_ID,
+    code: grant.authorization_code,
+    redirect_uri: `${CODEX_AUTH_BASE}/deviceauth/callback`,
+    code_verifier: grant.code_verifier,
+  });
+  const res = await http(CODEX_TOKEN_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
+    body: form.toString(),
+  });
+  if (isChallenge(res)) throw new CodexAuthError("challenge", res.status);
+  if (res.status < 200 || res.status >= 300) throw new Error(`换取 token 失败：HTTP ${res.status}`);
+  const body = object(JSON.parse(res.text));
+  const refresh = str(body?.["refresh_token"]);
+  const access = str(body?.["access_token"]);
+  if (!refresh || !access) throw new Error("换取 token 的响应里没有 refresh_token / access_token");
+  return { refresh_token: refresh, access_token: access, id_token: str(body?.["id_token"]), refreshed_at: now.toISOString() };
+}

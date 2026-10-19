@@ -67,7 +67,7 @@ export function createLiveApi(opts: { base: string; token?: string | undefined }
   }
 
   async function send<T>(
-    method: "GET" | "PUT" | "DELETE",
+    method: "GET" | "POST" | "PUT" | "DELETE",
     path: string,
     query?: Record<string, string>,
     body?: unknown,
@@ -149,6 +149,8 @@ export function createLiveApi(opts: { base: string; token?: string | undefined }
     codexSession: (signal) => get<CodexSessionStatus>("/v1/codex/session", undefined, signal),
     saveCodexSession: (credential) => send<CodexSessionStatus>("PUT", "/v1/codex/session", undefined, { credential }),
     clearCodexSession: () => send<CodexSessionStatus>("DELETE", "/v1/codex/session"),
+    startCodexDeviceLogin: () => send<CodexSessionStatus>("POST", "/v1/codex/session/device"),
+    cancelCodexDeviceLogin: () => send<CodexSessionStatus>("DELETE", "/v1/codex/session/device"),
     stream(profileId, handlers) {
       handlers.onStatus("connecting");
       const src = new EventSource(joinUrl(base, "/v1/stream", { profile_id: profileId }), {

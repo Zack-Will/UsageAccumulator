@@ -98,6 +98,9 @@ describe("Codex 额度：重置感知的 API", () => {
     const status = (await get("session")).json();
     expect(status).toMatchObject({ state: "none" });
     expect(JSON.stringify(status)).not.toMatch(/rt_|refresh_token|access/);
+    // 网页登录只有看板身份能发起
+    const start = (headers: Record<string, string>) => app.fastify.inject({ method: "POST", url: "/v1/codex/session/device", headers });
+    expect((await start({ authorization: "Bearer token-mac" })).statusCode).toBe(403);
     void CODEX_VAULT_ID;
   });
 });
