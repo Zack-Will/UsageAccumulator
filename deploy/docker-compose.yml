@@ -56,6 +56,8 @@ services:
       UA_PRICING_FILE: /app/deploy/pricing.json
       UA_LOG_LEVEL: ${UA_LOG_LEVEL:-info}
       UA_CODEX_ACCOUNT_EMAIL: ${UA_CODEX_ACCOUNT_EMAIL:-}
+      UA_CODEX_SAMPLING: ${UA_CODEX_SAMPLING:-true}
+      UA_CODEX_SESSION_DIR: /data/codex-session
       # 服务端直接抓 claude.ai 额度；会话在看板上登录后存这里（0600 文件，不进数据库）
       UA_QUOTA_SAMPLING: ${UA_QUOTA_SAMPLING:-true}
       UA_CLAUDE_SESSION_DIR: /data/claude-sessions

@@ -27,6 +27,8 @@ import { decodeEventBatch, enrollWireSchema, quotaSnapshotWireSchema, quotaWireT
 import type { EventRow, Store } from "./store.js";
 import { LoginGuard } from "./login-guard.js";
 import { QuotaSampler, type SamplerStatus } from "./quota-sampler.js";
+import { CODEX_SERVER_MACHINE_ID, CodexSampler } from "./codex-sampler.js";
+import type { CodexFetch } from "./codex-web.js";
 import { isVaultSafeId, type SessionVault } from "./quota-vault.js";
 import {
   DEFAULT_SESSION_MS,
@@ -63,6 +65,14 @@ export interface BuildAppOptions {
   quota?: {
     vault: SessionVault;
     client: Pick<ClaudeWebClient, "organizations" | "snapshot">;
+    intervalMs?: number;
+    jitterMs?: number;
+    authBackoffMs?: number[];
+  };
+  /** 服务端直接抓 Codex 额度。不给就不开，/v1/codex/session 报 disabled */
+  codex?: {
+    vault: SessionVault;
+    http: CodexFetch;
     intervalMs?: number;
     jitterMs?: number;
     authBackoffMs?: number[];
@@ -342,7 +352,22 @@ export function buildApp(opts: BuildAppOptions) {
     await authenticate(req);
   });
 
-  registerCodexRoutes(app, { store, config, now });
+  const codexSampler = opts.codex
+    ? new CodexSampler({
+        vault: opts.codex.vault,
+        http: opts.codex.http,
+        configuredEmail: () => config.codexAccountEmail,
+        record: async (batch) => {
+          await store.codex.ingest(batch, CODEX_SERVER_MACHINE_ID, [], now().toISOString());
+        },
+        log,
+        now,
+        ...(opts.codex.intervalMs !== undefined ? { intervalMs: opts.codex.intervalMs } : {}),
+        ...(opts.codex.jitterMs !== undefined ? { jitterMs: opts.codex.jitterMs } : {}),
+        ...(opts.codex.authBackoffMs !== undefined ? { authBackoffMs: opts.codex.authBackoffMs } : {}),
+      })
+    : null;
+  registerCodexRoutes(app, { store, config, now, sampler: codexSampler });
 
   async function resolveProfileId(raw: string | undefined): Promise<string> {
     if (raw && raw.length > 0) return raw;
@@ -1028,5 +1053,5 @@ export function buildApp(opts: BuildAppOptions) {
     req.raw.on("error", cleanup);
   });
 
-  return { fastify: app, bus, sampler };
+  return { fastify: app, bus, sampler, codexSampler };
 }

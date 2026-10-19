@@ -61,7 +61,13 @@ export interface CodexStore {
   ingest(batch: CodexIngestBatch, machineId: string, costs: CodexCost[], receivedAt: string): Promise<CodexIngestResult>;
   accounts(): Promise<CodexAccountRecord[]>;
   events(accountId: string, from: string, to: string): Promise<CodexEventRow[]>;
-  quota(accountId: string): Promise<CodexSnapshotRecord<CodexQuotaSnapshot> | null>;
+  /** 最新一份完整快照；给了 machineId 就只看那台（服务端自采的是 `ua-server`） */
+  quota(accountId: string, machineId?: string): Promise<CodexSnapshotRecord<CodexQuotaSnapshot> | null>;
+  /**
+   * [from, to) 内的额度窗口历史，按采集时刻升序。多台机器同一时刻各报一份时只留一份
+   * （machine_id 字典序小者，与 newerSnapshot 的平局规则一致）。只带窗口，不带 limits / 重置券。
+   */
+  quotaHistory(accountId: string, from: string, to: string): Promise<Array<{ captured_at: string; windows: CodexQuotaSnapshot["windows"] }>>;
   accountUsage(accountId: string): Promise<CodexSnapshotRecord<CodexAccountUsageSnapshot> | null>;
   collectors(accountId: string): Promise<CodexCollectorRecord[]>;
 }

@@ -56,6 +56,16 @@ const schema = z.object({
   /** 采样间隔与抖动，和探针一致 */
   quotaIntervalMs: z.coerce.number().int().positive().default(300_000),
   quotaJitterMs: z.coerce.number().int().nonnegative().default(60_000),
+  /**
+   * 服务端直接抓 Codex 额度（chatgpt.com /wham/usage）。默认开；没在看板保存登录时什么也不做。
+   * 关掉就只收探针经 app-server 读到的快照。
+   */
+  codexSampling: z
+    .string()
+    .default("true")
+    .transform((v) => !/^(0|false|no|off)$/i.test(v.trim())),
+  /** 服务端专用的那份 ChatGPT 登录（0600 文件，不进数据库） */
+  codexSessionDir: z.string().default(join(homedir(), ".config", "ua-server", "codex-session")),
   /** Explicit account allowlist for the separate Codex ledger; empty disables ingestion. */
   codexAccountEmail: z.string().trim().toLowerCase().default(""),
   logLevel: z.string().default("info"),
@@ -103,6 +113,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     quotaIntervalMs: env["UA_QUOTA_INTERVAL_MS"],
     quotaJitterMs: env["UA_QUOTA_JITTER_MS"],
     codexAccountEmail: env["UA_CODEX_ACCOUNT_EMAIL"],
+    codexSampling: env["UA_CODEX_SAMPLING"],
+    codexSessionDir: env["UA_CODEX_SESSION_DIR"],
     logLevel: env["UA_LOG_LEVEL"] ?? env["LOG_LEVEL"],
     timeZone: env["UA_TIME_ZONE"],
   });

@@ -9,6 +9,8 @@ export class MemoryCodexStore implements CodexStore {
   private readonly accountRows = new Map<string, CodexAccountRecord>();
   private readonly eventRows = new Map<string, CodexEventRow>();
   private readonly quotaRows = new Map<string, CodexSnapshotRecord<CodexQuotaSnapshot>>();
+  /** 全部快照（PG 里本来就全留着；内存版以前只留最新一份） */
+  private readonly quotaHistoryRows = new Map<string, { account_id: string; machine_id: string; snapshot: CodexQuotaSnapshot }>();
   private readonly usageRows = new Map<string, CodexSnapshotRecord<CodexAccountUsageSnapshot>>();
   private readonly collectorRows = new Map<string, CodexCollectorRecord>();
   private readonly conflictRows = new Map<string, { account_id: string; event_id: string; machine_id: string; first_seen_at: string }>();
@@ -58,6 +60,9 @@ export class MemoryCodexStore implements CodexStore {
     if (batch.quota) {
       const record = { machine_id: machineId, snapshot: batch.quota, received_at: receivedAt };
       if (newerSnapshot(record, this.quotaRows.get(account.account_id) ?? null)) this.quotaRows.set(account.account_id, structuredClone(record));
+      const historyKey = JSON.stringify([account.account_id, machineId, batch.quota.captured_at]);
+      if (!this.quotaHistoryRows.has(historyKey)) this.quotaHistoryRows.set(historyKey,
+        structuredClone({ account_id: account.account_id, machine_id: machineId, snapshot: batch.quota }));
     }
     if (batch.account_usage) {
       const record = { machine_id: machineId, snapshot: batch.account_usage, received_at: receivedAt };
@@ -76,8 +81,22 @@ export class MemoryCodexStore implements CodexStore {
       .map((r) => ({ ...r, conflicting_observations: conflicts.get(r.event.event_id) ?? 0 }))
       .sort((a, b) => a.event.ts.localeCompare(b.event.ts) || a.event.event_id.localeCompare(b.event.event_id)));
   }
-  async quota(accountId: string): Promise<CodexSnapshotRecord<CodexQuotaSnapshot> | null> {
-    return structuredClone(this.quotaRows.get(accountId) ?? null);
+  async quota(accountId: string, machineId?: string): Promise<CodexSnapshotRecord<CodexQuotaSnapshot> | null> {
+    if (machineId === undefined) return structuredClone(this.quotaRows.get(accountId) ?? null);
+    const mine = [...this.quotaHistoryRows.values()].filter((r) => r.account_id === accountId && r.machine_id === machineId)
+      .sort((a, b) => b.snapshot.captured_at.localeCompare(a.snapshot.captured_at))[0];
+    return mine ? structuredClone({ machine_id: machineId, snapshot: mine.snapshot, received_at: mine.snapshot.captured_at }) : null;
+  }
+  async quotaHistory(accountId: string, from: string, to: string): Promise<Array<{ captured_at: string; windows: CodexQuotaSnapshot["windows"] }>> {
+    const byTime = new Map<string, { machine_id: string; snapshot: CodexQuotaSnapshot }>();
+    for (const r of this.quotaHistoryRows.values()) {
+      const at = r.snapshot.captured_at;
+      if (r.account_id !== accountId || at < from || at >= to) continue;
+      const cur = byTime.get(at);
+      if (!cur || r.machine_id < cur.machine_id) byTime.set(at, r);
+    }
+    return structuredClone([...byTime.entries()].sort(([a], [b]) => a.localeCompare(b))
+      .map(([captured_at, r]) => ({ captured_at, windows: r.snapshot.windows })));
   }
   async accountUsage(accountId: string): Promise<CodexSnapshotRecord<CodexAccountUsageSnapshot> | null> {
     return structuredClone(this.usageRows.get(accountId) ?? null);

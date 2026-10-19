@@ -103,3 +103,35 @@ Returns `account_id`, nullable `snapshot`, nullable `source_machine_id`, nullabl
 ## Validation
 
 Run `pnpm --filter @ua/server test` and `pnpm --filter @ua/server typecheck`. The optional real database test is `UA_TEST_CODEX_DATABASE_URL=... pnpm --filter @ua/server exec vitest run test/codex-pg-live.test.ts`; it creates and removes a unique schema and does not drop `public`. Do not point the older `migrate-live.test.ts` at a production database: that pre-existing test resets its public schema.
+
+## Server-side quota collection
+
+The server can read Codex quota itself from `chatgpt.com/backend-api/wham/usage` (the endpoint Codex CLI uses), every `UA_QUOTA_INTERVAL_MS` with jitter. It needs a **dedicated** ChatGPT login for the server, saved from the dashboard:
+
+```sh
+export CODEX_HOME="$(mktemp -d)"   # never the everyday ~/.codex
+codex login --device-auth          # or plain `codex login`
+cat "$CODEX_HOME/auth.json"        # paste this into the dashboard, then:
+rm -rf "$CODEX_HOME"               # the server now owns this login
+```
+
+OpenAI refresh tokens are single-use: refreshing returns a new one and invalidates the old. Sharing one login between the server and a Codex CLI logs out whichever refreshes second. The server keeps the access token and rotates only when it is about 7 days old or rejected (Codex's own cadence), persisting the rotated refresh token before using the new access token.
+
+- `GET /session` → `state` (`none`, `pending`, `ok`, `auth`, `blocked`, `account`, `error`, `disabled`), `last_ok_at`, `last_attempt_at`, `next_attempt_at`, `error`, `email`, `plan_type`, `refreshed_at`. No token is ever returned.
+- `PUT /session` with `{ "credential": "<auth.json content or refresh token>" }` (dashboard identity only) validates the email against `UA_CODEX_ACCOUNT_EMAIL`, stores it in a 0600 file under `UA_CODEX_SESSION_DIR`, and fetches immediately.
+- `DELETE /session` (dashboard identity only) removes it.
+
+Server snapshots are ingested as collector `ua-server` and carry `reset_credits` (`available_count`, and when readable, each credit's `reset_type`, `status`, `granted_at`, `expires_at`, `title`). Probes reading through `codex app-server` cannot see reset credits; `GET /quota` therefore prefers the server's snapshot while it is fresh and falls back to the newest probe snapshot otherwise.
+
+## Official resets, periods and segments
+
+OpenAI frequently resets Codex limits early (reset credits, account-wide resets), so `used_percent` can drop before `resets_at`. Quota history is split per `window_id`:
+
+- A **period** ends when its scheduled `resets_at` passes (`end_reason: "scheduled"`), or when `used_percent` drops and `resets_at` moves at the same time — an early reset that opens a new period (`end_reason: "reset"`, next period's `opened_by_reset.kind: "new_period"`).
+- Within a period, a drop with an unchanged `resets_at` is an in-period reset (`resets[].kind: "in_period"`) and starts a new **segment**.
+- A drop counts only if it is at least 2 points: snapshots from collectors with slightly different clocks can step back one point.
+- `cumulative_pct` = the sum of each segment's peak (resets clear the window, so each segment starts from zero). It is what the period actually consumed, including before a reset. `has_gap` marks sampling gaps over 30 minutes, where a reset plus regrowth may be hidden; the value is then a lower bound.
+
+`GET /quota` adds `analysis[]` for the windows in the current snapshot: `rate_pct_per_min`, `projected_pct`, `exhaust_eta` computed **only from the current segment**, and `period` (the current period with its samples).
+
+`GET /periods?weeks=8&window_id=...&timezone=...` returns past and current periods, newest first, without samples, each with `local_usage` (the same aggregate as `/usage` totals) for local Codex events inside the period (`local_usage_from` … `local_usage_to`).

@@ -111,12 +111,24 @@ export class PgCodexStore implements CodexStore {
       } }));
   }
 
-  async quota(accountId: string): Promise<CodexSnapshotRecord<CodexQuotaSnapshot> | null> {
-    const rows = await this.sql<Record<string, unknown>[]>`
-      SELECT machine_id, received_at, snapshot FROM codex_quota_snapshots WHERE account_id = ${accountId}
-      ORDER BY captured_at DESC, machine_id LIMIT 1`;
+  async quota(accountId: string, machineId?: string): Promise<CodexSnapshotRecord<CodexQuotaSnapshot> | null> {
+    const rows = machineId === undefined
+      ? await this.sql<Record<string, unknown>[]>`
+        SELECT machine_id, received_at, snapshot FROM codex_quota_snapshots WHERE account_id = ${accountId}
+        ORDER BY captured_at DESC, machine_id LIMIT 1`
+      : await this.sql<Record<string, unknown>[]>`
+        SELECT machine_id, received_at, snapshot FROM codex_quota_snapshots WHERE account_id = ${accountId} AND machine_id = ${machineId}
+        ORDER BY captured_at DESC LIMIT 1`;
     const r = rows[0];
     return r ? { machine_id: String(r["machine_id"]), received_at: iso(r["received_at"]), snapshot: r["snapshot"] as unknown as CodexQuotaSnapshot } : null;
+  }
+
+  async quotaHistory(accountId: string, from: string, to: string): Promise<Array<{ captured_at: string; windows: CodexQuotaSnapshot["windows"] }>> {
+    const rows = await this.sql<Record<string, unknown>[]>`
+      SELECT DISTINCT ON (captured_at) captured_at, snapshot->'windows' AS windows FROM codex_quota_snapshots
+      WHERE account_id = ${accountId} AND captured_at >= ${from} AND captured_at < ${to}
+      ORDER BY captured_at, machine_id`;
+    return rows.map((r) => ({ captured_at: iso(r["captured_at"]), windows: (r["windows"] ?? []) as CodexQuotaSnapshot["windows"] }));
   }
 
   async accountUsage(accountId: string): Promise<CodexSnapshotRecord<CodexAccountUsageSnapshot> | null> {

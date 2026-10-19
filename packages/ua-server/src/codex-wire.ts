@@ -31,6 +31,12 @@ export const codexIngestSchema = z.object({
       credits: z.object({ has_credits: z.boolean(), unlimited: z.boolean(), balance: z.string().max(100).nullable() }).strict().nullable(),
       limit_reached: nullableText,
     }).strict()).max(100),
+    reset_credits: z.object({
+      available_count: count,
+      credits: z.array(z.object({
+        reset_type: text, status: text, granted_at: codexTimestamp, expires_at: codexTimestamp.nullable(), title: nullableText,
+      }).strict()).max(200).nullable(),
+    }).strict().nullable().optional(),
   }).strict().optional(),
   account_usage: z.object({
     captured_at: codexTimestamp,

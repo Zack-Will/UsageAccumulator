@@ -1,13 +1,17 @@
 import type { FastifyInstance, FastifyRequest, RawServerDefault } from "fastify";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Logger } from "pino";
-import { computeCodexCost, type CodexIngestBatch } from "@ua/core";
+import { computeCodexCost, type CodexIngestBatch, type CodexQuotaSnapshot } from "@ua/core";
+
+type CodexQuotaSnapshotWindows = CodexQuotaSnapshot["windows"];
 import { z } from "zod";
 import type { Config } from "./config.js";
 import type { Store } from "./store.js";
 import { CodexHttpError, normalizeCodexEmail, type CodexCollectorRecord } from "./codex-store.js";
 import { codexIngestSchema, codexTimestamp } from "./codex-wire.js";
 import { aggregateCodexUsage } from "./codex-aggregate.js";
+import { analyzeCodexWindow, codexPeriods, type CodexPeriod } from "./codex-quota-analysis.js";
+import { CODEX_SERVER_MACHINE_ID, type CodexSampler, type CodexSamplerStatus } from "./codex-sampler.js";
 
 const accountQuery = z.object({ account_id: z.string().min(1).max(256).optional() }).strict();
 const usageQuery = (defaultTimeZone: string) => accountQuery.extend({
@@ -25,8 +29,34 @@ function parse<T extends z.ZodTypeAny>(schema: T, value: unknown): z.infer<T> {
   return parsed.data;
 }
 
-export function registerCodexRoutes(app: FastifyInstance<RawServerDefault, IncomingMessage, ServerResponse<IncomingMessage>, Logger>, opts: { store: Store; config: Config; now: () => Date }): void {
+const periodsQuery = accountQuery.extend({
+  window_id: z.string().min(1).max(256).optional(),
+  weeks: z.coerce.number().int().min(1).max(26).default(8),
+  timezone: z.string().min(1).max(100).optional(),
+});
+const sessionBody = z.object({ credential: z.string().min(20).max(65_536) }).strict();
+
+const DAY_MS = 24 * 3600_000;
+
+/** 给看板的一期：不带逐点样本（那只在当前期的分析里给） */
+function periodView(p: CodexPeriod) {
+  const { samples: _samples, ...rest } = p;
+  return rest;
+}
+
+export function registerCodexRoutes(app: FastifyInstance<RawServerDefault, IncomingMessage, ServerResponse<IncomingMessage>, Logger>, opts: { store: Store; config: Config; now: () => Date; sampler?: CodexSampler | null }): void {
   const { store, config, now } = opts;
+  const sampler = opts.sampler ?? null;
+
+  function requireDashboard(req: FastifyRequest): void {
+    const auth = (req as FastifyRequest & { auth?: { kind: string } }).auth;
+    if (auth?.kind !== "dashboard") throw new CodexHttpError(403, "forbidden", "只有看板身份能更改 Codex 登录");
+  }
+  const sessionView = (s: CodexSamplerStatus | null) => s
+    ? { state: s.state, last_ok_at: s.lastOkAt?.toISOString() ?? null, last_attempt_at: s.lastAttemptAt?.toISOString() ?? null,
+      next_attempt_at: s.nextAttemptAt?.toISOString() ?? null, error: s.error, email: s.email, plan_type: s.planType,
+      refreshed_at: s.refreshedAt?.toISOString() ?? null }
+    : { state: "disabled", last_ok_at: null, last_attempt_at: null, next_attempt_at: null, error: null, email: null, plan_type: null, refreshed_at: null };
   const age = (captured: string | null, at: Date) => captured ? Math.max(0, (at.getTime() - Date.parse(captured)) / 1000) : null;
   const freshness = (captured: string | null, at: Date) => ({
     age_seconds: age(captured, at), stale: captured === null || at.getTime() - Date.parse(captured) > config.quotaStaleMs,
@@ -74,11 +104,81 @@ export function registerCodexRoutes(app: FastifyInstance<RawServerDefault, Incom
   app.get("/v1/codex/quota", async (req) => {
     const q = parse(accountQuery, req.query);
     const accountId = await resolveAccount(q.account_id);
-    const [record, collectors] = await Promise.all([store.codex.quota(accountId), store.codex.collectors(accountId)]);
+    const [latest, server, collectors] = await Promise.all([
+      store.codex.quota(accountId), store.codex.quota(accountId, CODEX_SERVER_MACHINE_ID), store.codex.collectors(accountId),
+    ]);
     const at = now();
-    return { account_id: accountId, snapshot: record?.snapshot ?? null, source_machine_id: record?.machine_id ?? null,
+    // 服务端自采的快照新鲜就用它：只有它带重置券；探针那份（读不到券）只在服务端抓不到时兜底
+    const record = server && at.getTime() - Date.parse(server.snapshot.captured_at) <= config.quotaStaleMs ? server : latest;
+    const analysis = record ? await currentAnalysis(accountId, record.snapshot.windows, at) : [];
+    return { account_id: accountId, snapshot: record?.snapshot ?? null, source_machine_id: record?.machine_id ?? null, analysis,
       received_at: record?.received_at ?? null, ...freshness(record?.snapshot.captured_at ?? null, at),
       collectors: collectors.map((r) => collectorView(r, at)), aggregation: "latest_complete_snapshot" };
+  });
+
+  /**
+   * 当前每个窗口所在的一期。回看 = 最长窗口 + 1 天，够看见本期开头和打开它的那次重置。
+   * 预测只用当前段（最近一次重置之后）的样本。
+   */
+  async function currentAnalysis(accountId: string, windows: CodexQuotaSnapshotWindows, at: Date) {
+    if (windows.length === 0) return [];
+    const longest = Math.max(...windows.map((w) => w.duration_minutes ?? 7 * 24 * 60));
+    const from = new Date(at.getTime() - Math.min(15 * DAY_MS, longest * 60_000 + DAY_MS)).toISOString();
+    const periods = codexPeriods(await store.codex.quotaHistory(accountId, from, new Date(at.getTime() + 60_000).toISOString()));
+    return windows.flatMap((w) => {
+      const current = periods.get(w.window_id)?.at(-1);
+      return current ? [analyzeCodexWindow(current, at)] : [];
+    });
+  }
+
+  app.get("/v1/codex/periods", async (req) => {
+    const q = parse(periodsQuery, req.query);
+    const accountId = await resolveAccount(q.account_id);
+    const at = now();
+    const from = new Date(at.getTime() - q.weeks * 7 * DAY_MS - 8 * DAY_MS).toISOString();
+    const to = at.toISOString();
+    const [history, rows] = await Promise.all([
+      store.codex.quotaHistory(accountId, from, new Date(at.getTime() + 60_000).toISOString()),
+      store.codex.events(accountId, from, to),
+    ]);
+    const timezone = q.timezone ?? config.timeZone;
+    try { new Intl.DateTimeFormat("en", { timeZone: timezone }).format(); }
+    catch { throw new CodexHttpError(400, "bad_request", "timezone must be a valid IANA time zone"); }
+    const cutoff = at.getTime() - q.weeks * 7 * DAY_MS;
+    const periods = [...codexPeriods(history).values()].flat()
+      .filter((p) => !q.window_id || p.window_id === q.window_id)
+      .filter((p) => Date.parse(p.ended_at ?? to) >= cutoff)
+      .sort((a, b) => b.first_sample_at.localeCompare(a.first_sample_at))
+      .map((p) => {
+        // 本期的本地用量：期内的事件。期开头没观测到时从第一次观测算起，并如实标出
+        const start = p.starts_at ?? p.first_sample_at;
+        const end = p.ended_at ?? to;
+        const inPeriod = rows.filter((r) => r.event.ts >= start && r.event.ts < end);
+        return { ...periodView(p), local_usage: aggregateCodexUsage(inPeriod, "day", timezone).totals,
+          local_usage_from: start, local_usage_to: end };
+      });
+    return { account_id: accountId, weeks: q.weeks, periods,
+      reset_detection: { min_drop_pct: 2, gap_minutes: 30 } };
+  });
+
+  app.get("/v1/codex/session", async () => sessionView(sampler ? await sampler.status() : null));
+
+  app.put("/v1/codex/session", async (req) => {
+    requireDashboard(req);
+    if (!sampler) throw new CodexHttpError(404, "not_found", "服务端没有开启 Codex 额度采集");
+    const body = parse(sessionBody, req.body);
+    try {
+      return sessionView(await sampler.save(body.credential));
+    } catch (err) {
+      if (err instanceof CodexHttpError) throw err;
+      throw new CodexHttpError(400, "bad_request", (err as Error).message);
+    }
+  });
+
+  app.delete("/v1/codex/session", async (req) => {
+    requireDashboard(req);
+    if (!sampler) throw new CodexHttpError(404, "not_found", "服务端没有开启 Codex 额度采集");
+    return sessionView(await sampler.clear());
   });
 
   app.get("/v1/codex/account-usage", async (req) => {

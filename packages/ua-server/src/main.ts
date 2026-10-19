@@ -10,6 +10,7 @@ import { runMigrations } from "./migrate.js";
 import { PgStore } from "./store-pg.js";
 import { fetchGet } from "./quota-sampler.js";
 import { FileSessionVault } from "./quota-vault.js";
+import { codexFetch } from "./codex-web.js";
 import { computeCurrentWindows } from "./windows-service.js";
 
 const config = loadConfig();
@@ -45,7 +46,18 @@ async function main(): Promise<void> {
         jitterMs: config.quotaJitterMs,
       }
     : undefined;
-  const { fastify, bus, sampler } = buildApp({ store, config, pricing, logger: log, ...(quota ? { quota } : {}) });
+  // Codex 的服务端专用登录同样存文件不进库（见 codex-web.ts 为什么不能和本机 CLI 共用一份）
+  const codex = config.codexSampling
+    ? {
+        vault: new FileSessionVault(resolve(config.codexSessionDir), (msg) => log.warn({}, msg)),
+        http: codexFetch,
+        intervalMs: config.quotaIntervalMs,
+        jitterMs: config.quotaJitterMs,
+      }
+    : undefined;
+  const { fastify, bus, sampler, codexSampler } = buildApp({
+    store, config, pricing, logger: log, ...(quota ? { quota } : {}), ...(codex ? { codex } : {}),
+  });
 
   // usage_hourly 刷新（ARCHITECTURE §6.2）
   const refreshTimer =
@@ -77,6 +89,7 @@ async function main(): Promise<void> {
   log.info({ host: config.host, port: config.port }, "ua-server listening");
 
   const stopSampler = sampler ? sampler.start() : () => {};
+  const stopCodexSampler = codexSampler ? codexSampler.start() : () => {};
   log.info(
     { sampling: Boolean(sampler), dir: sampler ? resolve(config.claudeSessionDir) : undefined },
     sampler ? "额度采样器已启动" : "服务端额度采样已关闭（只收探针上报）",
@@ -86,6 +99,7 @@ async function main(): Promise<void> {
     log.info({ signal }, "shutting down");
     stopCalibration();
     stopSampler();
+    stopCodexSampler();
     if (refreshTimer) clearInterval(refreshTimer);
     clearInterval(streamTimer);
     await fastify.close();

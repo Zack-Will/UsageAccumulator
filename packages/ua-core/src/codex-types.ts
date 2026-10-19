@@ -45,6 +45,23 @@ export interface CodexQuotaSnapshot {
     credits: { has_credits: boolean; unlimited: boolean; balance: string | null } | null;
     limit_reached: string | null;
   }>;
+  /**
+   * 官方发的「重置额度」券（用掉一张就会把窗口提前清零）。只有服务端直接读 /wham/usage 时才有；
+   * 探针经 app-server 读不到它，缺省 = 不知道，不是「没有」。
+   */
+  reset_credits?: CodexResetCredits | null;
+}
+
+export interface CodexResetCredits {
+  available_count: number;
+  /** null = 详情接口没读到，只有数量 */
+  credits: Array<{
+    reset_type: string;
+    status: string;
+    granted_at: string;
+    expires_at: string | null;
+    title: string | null;
+  }> | null;
 }
 
 export interface CodexAccountUsageSnapshot {
