@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import type { UaApi, WindowState } from "../api";
+import type { DistributionBucket, UaApi, WindowState } from "../api";
 import { costSummary } from "../api/derive";
 import { fmtTokens, fmtUntil, fmtWhen, msOf } from "../charts/base";
 import { ringTone } from "../charts/rings";
@@ -90,6 +90,23 @@ export function windowModelFamily(kind: string): string | null {
 function modelInFamily(model: string, family: string): boolean {
   const m = model.trim().toLowerCase().replace(/^claude[-.]/, "");
   return m === family || m.startsWith(`${family}-`) || m.startsWith(`${family}.`);
+}
+
+/**
+ * 按额度当量折算的费用：每个模型桶的 cost_usd × 所属家族的倍率（没列出的家族按 1）。
+ * 没有任何有报价的桶时返回 null，与 costSummary 的「未知」口径一致。
+ */
+export function quotaCostUsd(
+  buckets: readonly DistributionBucket[],
+  weights: Readonly<Record<string, number>> | undefined,
+): number | null {
+  let usd: number | null = null;
+  for (const b of buckets) {
+    if (b.cost_usd === null) continue;
+    const fam = Object.keys(weights ?? {}).find((f) => modelInFamily(b.key, f));
+    usd = (usd ?? 0) + b.cost_usd * (fam ? weights![fam]! : 1);
+  }
+  return usd;
 }
 
 /**
@@ -192,6 +209,9 @@ export function WindowCard({
   }, [spend.data, family, idle]);
 
   const cost = buckets ? costSummary(buckets) : null;
+  // 「满额约」用额度当量：7d 上 Fable 的 1 美元吃两倍额度，混着原价算会偏低
+  const quotaUsd = buckets ? quotaCostUsd(buckets, w.quota_weights) : null;
+  const weighted = quotaUsd !== null && cost?.usd != null && Math.abs(quotaUsd - cost.usd) > 1e-9;
   const events = buckets ? buckets.reduce((a, b) => a + b.events, 0) : 0;
   const tokens = buckets ? buckets.reduce((a, b) => a + b.total_tokens, 0) : 0;
 
@@ -219,7 +239,7 @@ export function WindowCard({
   const attr = w.attribution;
   const localPct = attr ? attr.local_utilization_pct : w.utilization_pct;
   const extrapolated =
-    cost?.usd != null && cost.usd > 0 && localPct > 0 ? cost.usd / (localPct / 100) : null;
+    quotaUsd != null && quotaUsd > 0 && localPct > 0 ? quotaUsd / (localPct / 100) : null;
   /**
    * ★ 本地占比太小时不外推，改用历史参考（服务端 full_cost_reference）。
    * 分母只有几个点时，整数取整（±0.5）加上一两个归属判不清的点，外推误差在 ±20% 以上 ——
@@ -321,7 +341,15 @@ export function WindowCard({
             <span className="quota__k">满额约</span>
             <span
               className={`quota__v quota__v--strong${useRef ? " quota__v--ref" : ""}`}
-              title={useRef ? `最近 ${ref.windows} 个窗口的中位数` : undefined}
+              title={
+                useRef
+                  ? `最近 ${ref.windows} 个窗口的中位数`
+                  : weighted
+                    ? `额度当量：${Object.entries(w.quota_weights ?? {})
+                        .map(([f, k]) => `${f.charAt(0).toUpperCase()}${f.slice(1)} ×${k}`)
+                        .join("、")}`
+                    : undefined
+              }
             >
               {fullWindowCost !== null ? `$${fullWindowCost.toFixed(0)}` : "—"}
             </span>

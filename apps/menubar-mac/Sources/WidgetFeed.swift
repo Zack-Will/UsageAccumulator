@@ -185,7 +185,8 @@ final class WidgetFeed {
                 other_pct: num(attr?["other_pct"]) ?? num(attr?["other_pct_lower_bound"]),
                 full_ref_usd: num(ref?["usd"]),
                 full_ref_windows: num(ref?["windows"]).map { Int($0) },
-                cost: nil
+                cost: nil,
+                quota_weights: (w["quota_weights"] as? [String: Any])?.compactMapValues { num($0) }
             )
         }
         return out
@@ -196,13 +197,6 @@ final class WidgetFeed {
         guard kind.hasPrefix("seven_day_") else { return nil }
         let fam = kind.dropFirst("seven_day_".count).lowercased()
         return fam.isEmpty || fam == "scoped" ? nil : fam
-    }
-
-    /// 与看板 modelInFamily 一致：先剥 `claude-` 前缀，再比家族名
-    static func modelInFamily(_ model: String, _ family: String) -> Bool {
-        var m = model.trimmingCharacters(in: .whitespaces).lowercased()
-        if m.hasPrefix("claude-") || m.hasPrefix("claude.") { m.removeFirst(7) }
-        return m == family || m.hasPrefix("\(family)-") || m.hasPrefix("\(family).")
     }
 
     /// `/v1/distribution?by=model` → 本窗口的金额（按家族过滤）

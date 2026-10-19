@@ -64,6 +64,25 @@ struct WidgetCost: Codable {
     var tokens: Int
     /// 按金额从高到低
     var models: [WidgetModelCost]
+
+    /// 额度当量：各模型费用 × 所属家族的倍率（没列出的按 1）。「满额约」用它，「已用」仍是原价
+    func quotaUsd(_ weights: [String: Double]?) -> Double? {
+        guard let weights, !weights.isEmpty else { return usd }
+        var out: Double?
+        for mc in models {
+            guard let c = mc.usd else { continue }
+            let k = weights.first { modelInFamily(mc.key, $0.key) }?.value ?? 1
+            out = (out ?? 0) + c * k
+        }
+        return out
+    }
+}
+
+/// 与看板 modelInFamily 一致：先剥 `claude-` 前缀，再比家族名
+func modelInFamily(_ model: String, _ family: String) -> Bool {
+    var m = model.trimmingCharacters(in: .whitespaces).lowercased()
+    if m.hasPrefix("claude-") || m.hasPrefix("claude.") { m.removeFirst(7) }
+    return m == family || m.hasPrefix("\(family)-") || m.hasPrefix("\(family).")
 }
 
 /// `/v1/windows/current` 里 summary 没有的那部分（大档小部件和底行金额要用）
@@ -81,6 +100,8 @@ struct WidgetWindowExtra: Codable {
     var full_ref_windows: Int?
     /// nil = 没取到（不是 $0）
     var cost: WidgetCost?
+    /// 额度当量倍率（家族 → 倍率）：7d 上 Fable ×2。旧快照没有这个字段 → nil，全按 1
+    var quota_weights: [String: Double]? = nil
 }
 
 struct WidgetSnapshot: Codable {

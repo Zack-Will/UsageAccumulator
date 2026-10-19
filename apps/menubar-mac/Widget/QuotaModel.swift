@@ -243,7 +243,8 @@ enum QuotaModels {
             }
         }
         let localPct = extra.local_pct ?? w.pct
-        let usd = cost?.usd ?? 0
+        // 额度当量：7d 上 Fable 的 1 美元吃两倍额度，混着原价算会偏低
+        let usd = cost?.quotaUsd(extra.quota_weights) ?? 0
         let extrapolated = usd > 0 && localPct > 0 ? usd / (localPct / 100) : nil
         if let ref = extra.full_ref_usd, localPct < fullCostMinLocalPct {
             m.full = String(format: "$%.0f", ref)

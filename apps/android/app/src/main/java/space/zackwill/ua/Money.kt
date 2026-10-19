@@ -11,6 +11,8 @@ import org.json.JSONObject
  *   · 满额约 = 已用 ÷（本地 Claude Code 吃掉的百分比 / 100）——这个窗口打满值多少钱。
  *     分母必须是 attribution.local_utilization_pct 而不是官方总百分比：官方计的是整个账号，
  *     分子却只有本地事件，混进别处的消耗会把结果系统性压低。
+ *   · 满额约的分子用额度当量：各模型费用 × quota_weights 里的家族倍率（7d 上 Fable ×2，
+ *     没列出的按 1）。「已用」仍是原价。
  *   · 花费为 0 时满额约给「—」：那不是误差大，是根本没有可外推的东西。
  *
  * 金额是按公开价目表折算的等价 API 费用，不是实际扣费。
@@ -38,7 +40,13 @@ object MoneyParser {
         return m == family || m.startsWith("$family-") || m.startsWith("$family.")
     }
 
-    data class WindowInfo(val kind: String, val startsAt: String?, val localPct: Double)
+    data class WindowInfo(
+        val kind: String,
+        val startsAt: String?,
+        val localPct: Double,
+        /** 额度当量倍率（家族 → 倍率）；旧服务端不带 → 空，全按 1 */
+        val quotaWeights: Map<String, Double> = emptyMap(),
+    )
 
     /** `/v1/windows/current` → 每个窗口的起点与本地占比（attribution 缺失时退回官方百分比） */
     fun windows(body: String): List<WindowInfo> {
@@ -54,7 +62,10 @@ object MoneyParser {
             val util = w.optDouble("utilization_pct", Double.NaN)
             val local = w.optJSONObject("attribution")?.optDouble("local_utilization_pct", Double.NaN) ?: Double.NaN
             val starts = w.optString("starts_at", "").ifEmpty { null }?.takeIf { it != "null" }
-            WindowInfo(kind, starts, if (local.isFinite()) local else util)
+            val weights = w.optJSONObject("quota_weights")?.let { o ->
+                o.keys().asSequence().mapNotNull { k -> o.optDouble(k, Double.NaN).takeIf { it.isFinite() }?.let { k to it } }.toMap()
+            } ?: emptyMap()
+            WindowInfo(kind, starts, if (local.isFinite()) local else util, weights)
         }
     }
 
@@ -67,19 +78,24 @@ object MoneyParser {
         } ?: return null
         val fam = family(window.kind)
         var usd: Double? = null
+        var quotaUsd = 0.0
         var unpriced = 0
         for (i in 0 until buckets.length()) {
             val b = buckets.optJSONObject(i) ?: continue
             if (fam != null && !modelInFamily(b.optString("key", ""), fam)) continue
             if (!b.isNull("cost_usd")) {
                 val c = b.optDouble("cost_usd", Double.NaN)
-                if (c.isFinite()) usd = (usd ?: 0.0) + c
+                if (c.isFinite()) {
+                    usd = (usd ?: 0.0) + c
+                    val key = b.optString("key", "")
+                    quotaUsd += c * (window.quotaWeights.entries.firstOrNull { modelInFamily(key, it.key) }?.value ?: 1.0)
+                }
             }
             unpriced += b.optInt("unpriced_events", 0)
         }
         // 过滤后一个桶都不剩 = 这个家族本窗口确实没用过，是 $0 而不是「未知」
         val spend = usd ?: 0.0
-        val full = if (spend > 0 && window.localPct > 0) spend / (window.localPct / 100) else null
+        val full = if (quotaUsd > 0 && window.localPct > 0) quotaUsd / (window.localPct / 100) else null
         return WindowMoney(spend, full, unpriced)
     }
 
