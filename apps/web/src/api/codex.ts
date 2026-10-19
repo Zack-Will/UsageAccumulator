@@ -7,7 +7,16 @@
  * 输入侧总量 + 输出，明细表、汇总卡、缓存命中率可以直接复用，不必另写一套。
  */
 import type { MetricSeries, UsageMetric } from "./derive";
-import type { CodexAggregate, CodexCollector, CodexQuotaWindow, CodexUsageBucket, DistributionBucket } from "./types";
+import type {
+  CodexAggregate,
+  CodexCollector,
+  CodexPeriod,
+  CodexPeriodRecord,
+  CodexQuotaWindow,
+  CodexResetCredits,
+  CodexUsageBucket,
+  DistributionBucket,
+} from "./types";
 
 export function codexBucket(key: string, a: CodexAggregate): DistributionBucket {
   const t = a.tokens;
@@ -113,8 +122,36 @@ export function collectorTone(c: CodexCollector): CollectorTone {
   return c.stale ? "warn" : "ok";
 }
 
+export const isServerCollector = (c: Pick<CodexCollector, "machine_id">): boolean => c.machine_id === "ua-server";
+
+export function collectorName(c: Pick<CodexCollector, "machine_id" | "hostname">): string {
+  if (isServerCollector(c)) return "服务端";
+  return c.hostname ?? c.machine_id.slice(0, 8);
+}
+
+/** 本期被重置过（期内重置，或本期就是被一次提前重置打开的） */
+export const periodWasReset = (p: Pick<CodexPeriod, "resets" | "opened_by_reset">): boolean =>
+  p.resets.length > 0 || p.opened_by_reset !== null;
+
+/** 本期累计的写法：断过档就是下界 */
+export const fmtCumulative = (p: Pick<CodexPeriod, "cumulative_pct" | "has_gap">): string =>
+  `${p.has_gap ? "≥" : ""}${Math.round(p.cumulative_pct)}%`;
+
+/** 7d 期历史只列一天以上的窗口（5h 窗口一天几十期，列出来是噪音） */
+export const longPeriods = (periods: readonly CodexPeriodRecord[]): CodexPeriodRecord[] =>
+  periods.filter((p) => (p.duration_minutes ?? 0) >= 24 * 60);
+
+/** 可用的重置券里最早到期的那张；没有到期时间或详情读不到就是 null */
+export function earliestCreditExpiry(c: CodexResetCredits | null | undefined): number | null {
+  const times = (c?.credits ?? [])
+    .filter((x) => x.status === "available" && x.expires_at)
+    .map((x) => Date.parse(x.expires_at!))
+    .filter(Number.isFinite);
+  return times.length ? Math.min(...times) : null;
+}
+
 export function collectorStateLabel(c: CodexCollector): string {
-  if (c.collector.state === "auth") return "登录失效";
+  if (c.collector.state === "auth") return c.collector.error_code === "codex_server_blocked" ? "被拦截" : "登录失效";
   if (c.collector.state === "error") return c.collector.error_code === "codex_events_rejected" ? "有事件被拒收" : "采集出错";
   return c.stale ? "已过期" : "正常";
 }

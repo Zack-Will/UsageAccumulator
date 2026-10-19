@@ -90,3 +90,34 @@ describe("Codex → 看板形状", () => {
     expect(collectorStateLabel(c("error", false, "codex_events_rejected"))).toBe("有事件被拒收");
   });
 });
+
+import { collectorName, earliestCreditExpiry, fmtCumulative, longPeriods, periodWasReset } from "../src/api/codex";
+import type { CodexPeriodRecord } from "../src/api/types";
+
+describe("Codex 期与重置券的显示", () => {
+  it("本期累计断过档写成下界；被重置过才算 reset 期", () => {
+    expect(fmtCumulative({ cumulative_pct: 97.4, has_gap: false })).toBe("97%");
+    expect(fmtCumulative({ cumulative_pct: 71, has_gap: true })).toBe("≥71%");
+    expect(periodWasReset({ resets: [], opened_by_reset: null })).toBe(false);
+    expect(periodWasReset({ resets: [], opened_by_reset: { after: "", at: "", from_pct: 71, to_pct: 0, kind: "new_period" } })).toBe(true);
+  });
+
+  it("周期历史只列一天以上的窗口", () => {
+    const p = (minutes: number) => ({ duration_minutes: minutes } as CodexPeriodRecord);
+    expect(longPeriods([p(300), p(10080), p(1440)]).map((x) => x.duration_minutes)).toEqual([10080, 1440]);
+  });
+
+  it("重置券：只看可用的、有到期时间的；读不到详情是 null 不是 0", () => {
+    const c = (status: string, expires_at: string | null) => ({ reset_type: "full", status, granted_at: "2026-10-01T00:00:00Z", expires_at, title: null });
+    expect(earliestCreditExpiry({ available_count: 3, credits: [
+      c("available", "2026-11-01T00:00:00Z"), c("used", "2026-10-20T00:00:00Z"), c("available", "2026-10-28T00:00:00Z"),
+    ] })).toBe(Date.parse("2026-10-28T00:00:00Z"));
+    expect(earliestCreditExpiry({ available_count: 2, credits: null })).toBeNull();
+    expect(earliestCreditExpiry(undefined)).toBeNull();
+  });
+
+  it("服务端自采的采集器显示为「服务端」", () => {
+    expect(collectorName({ machine_id: "ua-server", hostname: null })).toBe("服务端");
+    expect(collectorName({ machine_id: "abcdef1234", hostname: null })).toBe("abcdef12");
+  });
+});

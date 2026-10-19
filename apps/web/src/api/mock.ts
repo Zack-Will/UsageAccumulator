@@ -38,7 +38,14 @@ import type {
   WindowsCurrent,
 } from "./types";
 import { ApiError } from "./live";
-import { buildCodexCollectors, buildCodexQuota, buildCodexUsage, MOCK_CODEX_ACCOUNT } from "./mock-codex";
+import {
+  buildCodexCollectors,
+  buildCodexPeriods,
+  buildCodexQuota,
+  buildCodexUsage,
+  MOCK_CODEX_ACCOUNT,
+  mockCodexSession,
+} from "./mock-codex";
 
 const MIN = 60_000;
 const HOUR = 60 * MIN;
@@ -764,6 +771,21 @@ export function createMockApi(opts?: { latencyMs?: number }): UaApi {
     codexQuota: (accountId, signal) => wait(buildCodexQuota(accountId, Date.now()), signal),
     codexUsage: (p, signal) => wait(buildCodexUsage(p), signal),
     codexCollectors: (accountId, signal) => wait(buildCodexCollectors(accountId, Date.now()), signal),
+    codexPeriods: (p, signal) => wait(buildCodexPeriods(p.account_id, p.weeks, Date.now()), signal),
+    // ?scenario=codex-login：服务端还没存 Codex 登录；codex-auth：登录失效
+    codexSession: (signal) =>
+      wait(mockCodexSession(scenario === "codex-login" ? "none" : scenario === "codex-auth" ? "auth" : "ok", Date.now()), signal),
+    saveCodexSession: async (credential) => {
+      await wait(null);
+      if (!credential.includes("refresh_token") && !/^[A-Za-z0-9._~+/=-]{20,}$/.test(credential.trim())) {
+        throw new ApiError(400, "bad_request", "看起来不是 refresh token，也不是 auth.json");
+      }
+      return mockCodexSession("ok", Date.now());
+    },
+    clearCodexSession: async () => {
+      await wait(null);
+      return mockCodexSession("none", Date.now());
+    },
     stream(profileId, handlers) {
       handlers.onStatus("connecting");
       let drift = 0;

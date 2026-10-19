@@ -437,6 +437,15 @@ body {
   font-size: 14px;
 }
 
+/* Codex 登录粘贴的是整份 auth.json：多行、等宽、可纵向拉伸 */
+.dialog textarea.gate-input {
+  resize: vertical;
+  min-height: 84px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
 /* 会话弹窗里的组织选择：沿用输入框的形状，不吃顶栏 .select 的 180px 胶囊 */
 .dialog .select.gate-input {
   max-width: none;

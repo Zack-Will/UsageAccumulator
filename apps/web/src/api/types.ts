@@ -408,10 +408,86 @@ export interface CodexQuotaLimit {
   limit_reached: string | null;
 }
 
+export interface CodexResetCredits {
+  available_count: number;
+  /** null = 只知道数量，详情没读到 */
+  credits: Array<{ reset_type: string; status: string; granted_at: Rfc3339; expires_at: Rfc3339 | null; title: string | null }> | null;
+}
+
 export interface CodexQuotaSnapshot {
   captured_at: Rfc3339;
   windows: CodexQuotaWindow[];
   limits: CodexQuotaLimit[];
+  /** 只有服务端自采的快照带；缺省 = 不知道，不是「没有」 */
+  reset_credits?: CodexResetCredits | null;
+}
+
+/** 官方提前重置：发生在 after 与 at 两次观测之间 */
+export interface CodexResetEvent {
+  after: Rfc3339;
+  at: Rfc3339;
+  from_pct: Pct;
+  to_pct: Pct;
+  /** in_period：同一期内清零；new_period：重置同时推走了 resets_at，开了新的一期 */
+  kind: "in_period" | "new_period";
+}
+
+/** 一个窗口期（docs/CODEX-API.md「Official resets, periods and segments」） */
+export interface CodexPeriod {
+  window_id: string;
+  limit_id: string;
+  slot: "primary" | "secondary";
+  label: string | null;
+  duration_minutes: number | null;
+  starts_at: Rfc3339 | null;
+  scheduled_end: Rfc3339 | null;
+  /** null = 进行中 */
+  ended_at: Rfc3339 | null;
+  end_reason: "scheduled" | "reset" | null;
+  opened_by_reset: CodexResetEvent | null;
+  resets: CodexResetEvent[];
+  first_sample_at: Rfc3339;
+  last_sample_at: Rfc3339;
+  /** 本期实际用掉的：各段峰值之和，含重置前的部分 */
+  cumulative_pct: Pct;
+  final_pct: Pct;
+  /** 采样断档：累计只是下界 */
+  has_gap: boolean;
+}
+
+export interface CodexWindowAnalysis {
+  window_id: string;
+  /** 只用当前段（最近一次重置之后）的样本 */
+  rate_pct_per_min: number;
+  projected_pct: { p25: Pct; mid: Pct; p75: Pct };
+  exhaust_eta: Rfc3339 | null;
+  period: CodexPeriod & { samples: Array<{ ts: Rfc3339; pct: Pct; segment: number }> };
+}
+
+export interface CodexPeriodRecord extends CodexPeriod {
+  local_usage: CodexAggregate;
+  local_usage_from: Rfc3339;
+  local_usage_to: Rfc3339;
+}
+
+export interface CodexPeriods {
+  account_id: string;
+  weeks: number;
+  periods: CodexPeriodRecord[];
+}
+
+/** 服务端专用的那份 ChatGPT 登录。任何接口都不回显 token */
+export type CodexSessionState = "none" | "pending" | "ok" | "auth" | "blocked" | "account" | "error" | "disabled";
+
+export interface CodexSessionStatus {
+  state: CodexSessionState;
+  last_ok_at: Rfc3339 | null;
+  last_attempt_at: Rfc3339 | null;
+  next_attempt_at: Rfc3339 | null;
+  error: string | null;
+  email: string | null;
+  plan_type: string | null;
+  refreshed_at: Rfc3339 | null;
 }
 
 export interface CodexCollectorStatus {
@@ -442,6 +518,8 @@ export interface CodexQuotaResponse {
   snapshot: CodexQuotaSnapshot | null;
   age_seconds: number | null;
   stale: boolean;
+  /** 当前快照里每个窗口所在的一期；旧服务端没有这个字段 */
+  analysis?: CodexWindowAnalysis[];
 }
 
 export type CodexUsageBy = "day" | "model" | "machine" | "project" | "session";
@@ -502,6 +580,11 @@ export interface UaApi {
   codexQuota(accountId: string, signal?: AbortSignal): Promise<CodexQuotaResponse>;
   codexUsage(p: CodexUsageParams, signal?: AbortSignal): Promise<CodexUsage>;
   codexCollectors(accountId: string, signal?: AbortSignal): Promise<CodexCollector[]>;
+  codexPeriods(p: { account_id: string; weeks: number; timezone: string }, signal?: AbortSignal): Promise<CodexPeriods>;
+  codexSession(signal?: AbortSignal): Promise<CodexSessionStatus>;
+  /** 服务端先校验再保存；不认就抛 ApiError，message 可以直接给人看 */
+  saveCodexSession(credential: string): Promise<CodexSessionStatus>;
+  clearCodexSession(): Promise<CodexSessionStatus>;
   /** 返回 unsubscribe。连接状态通过 onStatus 上报，供顶栏「同步状态」使用。 */
   stream(
     profileId: string,
