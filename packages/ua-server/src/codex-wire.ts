@@ -41,6 +41,7 @@ export const codexIngestSchema = z.object({
   collector: z.object({
     captured_at: codexTimestamp, state: z.enum(["ok", "auth", "error"]), error_code: flag.nullable(),
     backfill_from: codexTimestamp, scanned_files: count, parse_warnings: count,
+    warning_scope: z.literal("withheld_records").optional(),
     account_binding: z.literal("verified_login_configured_history"),
   }).strict(),
 }).strict();

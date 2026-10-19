@@ -10,10 +10,10 @@ import { codexIngestSchema, codexTimestamp } from "./codex-wire.js";
 import { aggregateCodexUsage } from "./codex-aggregate.js";
 
 const accountQuery = z.object({ account_id: z.string().min(1).max(256).optional() }).strict();
-const usageQuery = accountQuery.extend({
+const usageQuery = (defaultTimeZone: string) => accountQuery.extend({
   from: codexTimestamp, to: codexTimestamp.optional(),
   by: z.enum(["day", "model", "machine", "project", "session"]).default("day"),
-  timezone: z.string().min(1).max(100).default("Asia/Shanghai"),
+  timezone: z.string().min(1).max(100).default(defaultTimeZone),
 });
 
 function parse<T extends z.ZodTypeAny>(schema: T, value: unknown): z.infer<T> {
@@ -100,7 +100,7 @@ export function registerCodexRoutes(app: FastifyInstance<RawServerDefault, Incom
   });
 
   app.get("/v1/codex/usage", async (req) => {
-    const q = parse(usageQuery, req.query);
+    const q = parse(usageQuery(config.timeZone), req.query);
     const accountId = await resolveAccount(q.account_id);
     const to = q.to ?? now().toISOString();
     if (q.from >= to) throw new CodexHttpError(400, "bad_request", "from must be before to");
@@ -109,8 +109,10 @@ export function registerCodexRoutes(app: FastifyInstance<RawServerDefault, Incom
     const [rows, collectors] = await Promise.all([store.codex.events(accountId, q.from, to), store.codex.collectors(accountId)]);
     const result = aggregateCodexUsage(rows, q.by, q.timezone);
     const warningCount = collectors.reduce((n, c) => n + c.parse_warnings_total, 0);
-    // Scan diagnostics can concern withheld records with no event. They cannot be placed in a
-    // usage timestamp bucket, so conservatively qualify the account-level total, not each bucket.
+    const legacyWarningCount = collectors.reduce((n, c) => n + c.legacy_parse_warnings_total, 0);
+    // Withheld records have no event and often no timestamp: they cannot be placed in a usage
+    // bucket, so conservatively qualify the account-level total, not each bucket. Legacy
+    // diagnostics mixed in notes about emitted events and are disclosed only.
     if (warningCount > 0) {
       result.totals.usage_complete = false;
       result.totals.cost_complete = false;
@@ -120,6 +122,7 @@ export function registerCodexRoutes(app: FastifyInstance<RawServerDefault, Incom
       source: "local_codex_events", machine_attribution: "first_observer",
       additive_with_account_usage: false, coverage_scope: "observed_local_records_not_all_account_activity",
       collector_parse_warnings_total: warningCount, collector_warnings_scope: "all_observed_scans_not_range_limited",
+      collector_legacy_diagnostics_total: legacyWarningCount,
       ...result };
   });
 }

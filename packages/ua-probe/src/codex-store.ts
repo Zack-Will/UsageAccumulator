@@ -18,6 +18,13 @@ export class CodexProbeStore {
       CREATE TABLE IF NOT EXISTS codex_cursors (path TEXT PRIMARY KEY, checkpoint TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS codex_events (event_id TEXT PRIMARY KEY, payload TEXT NOT NULL, shipped INTEGER NOT NULL DEFAULT 0);
       CREATE TABLE IF NOT EXISTS codex_snapshots (id INTEGER PRIMARY KEY AUTOINCREMENT, payload TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS codex_event_rejections (
+        event_id TEXT PRIMARY KEY,
+        -- NULL: withheld locally (reason), never sent; otherwise the server's permanent status.
+        http_status INTEGER CHECK (http_status IS NULL OR http_status IN (400,413,422)),
+        reason TEXT NOT NULL,
+        rejected_at TEXT NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS codex_snapshot_rejections (
         snapshot_id INTEGER PRIMARY KEY,
         http_status INTEGER NOT NULL CHECK (http_status IN (400,413,422)),
@@ -60,8 +67,24 @@ export class CodexProbeStore {
     } catch (error) { this.db.exec("ROLLBACK"); throw error; }
   }
   pendingEvents(limit: number): CodexUsageEvent[] {
-    return this.db.prepare("SELECT payload FROM codex_events WHERE shipped=0 ORDER BY rowid LIMIT ?")
+    return this.db.prepare(`SELECT payload FROM codex_events WHERE shipped=0
+      AND NOT EXISTS (SELECT 1 FROM codex_event_rejections r WHERE r.event_id=codex_events.event_id)
+      ORDER BY rowid LIMIT ?`)
       .all(limit).map((row) => JSON.parse(String(row["payload"])) as CodexUsageEvent);
+  }
+  /**
+   * Take events out of the outbox without deleting them, so one bad event cannot block the
+   * queue behind it. httpStatus null = withheld locally (e.g. now before backfill_from).
+   */
+  rejectEvents(ids: string[], httpStatus: number | null, reason: string): void {
+    if (httpStatus !== null && ![400, 413, 422].includes(httpStatus)) throw new Error("codex_event_status_not_quarantinable");
+    const stmt = this.db.prepare("INSERT OR IGNORE INTO codex_event_rejections VALUES (?,?,?,?)");
+    const at = new Date().toISOString();
+    this.db.exec("BEGIN");
+    try {
+      for (const id of ids) stmt.run(id, httpStatus, reason, at);
+      this.db.exec("COMMIT");
+    } catch (error) { this.db.exec("ROLLBACK"); throw error; }
   }
   ackEvents(ids: string[]): void {
     this.db.exec("BEGIN");
@@ -96,14 +119,18 @@ export class CodexProbeStore {
     this.db.prepare(`DELETE FROM codex_snapshots WHERE id=?
       AND NOT EXISTS (SELECT 1 FROM codex_snapshot_rejections WHERE snapshot_id=codex_snapshots.id)`).run(id);
   }
-  stats(): { events: number; pending_events: number; pending_snapshots: number; rejected_snapshots: number; files: number } {
+  stats(): { events: number; pending_events: number; pending_snapshots: number; rejected_snapshots: number;
+    rejected_events: number; withheld_events: number; files: number } {
     const count = (query: string): number => Number(this.db.prepare(query).get()?.["n"] ?? 0);
     return {
       events: count("SELECT count(*) n FROM codex_events"),
-      pending_events: count("SELECT count(*) n FROM codex_events WHERE shipped=0"),
+      pending_events: count(`SELECT count(*) n FROM codex_events WHERE shipped=0
+        AND NOT EXISTS (SELECT 1 FROM codex_event_rejections r WHERE r.event_id=codex_events.event_id)`),
       pending_snapshots: count(`SELECT count(*) n FROM codex_snapshots
         WHERE NOT EXISTS (SELECT 1 FROM codex_snapshot_rejections WHERE snapshot_id=codex_snapshots.id)`),
       rejected_snapshots: count("SELECT count(*) n FROM codex_snapshot_rejections"),
+      rejected_events: count("SELECT count(*) n FROM codex_event_rejections WHERE http_status IS NOT NULL"),
+      withheld_events: count("SELECT count(*) n FROM codex_event_rejections WHERE http_status IS NULL"),
       files: count("SELECT count(*) n FROM codex_cursors"),
     };
   }

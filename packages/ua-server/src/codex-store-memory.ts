@@ -12,7 +12,7 @@ export class MemoryCodexStore implements CodexStore {
   private readonly usageRows = new Map<string, CodexSnapshotRecord<CodexAccountUsageSnapshot>>();
   private readonly collectorRows = new Map<string, CodexCollectorRecord>();
   private readonly conflictRows = new Map<string, { account_id: string; event_id: string; machine_id: string; first_seen_at: string }>();
-  private readonly warningRows = new Map<string, { account_id: string; machine_id: string; captured_at: string; count: number }>();
+  private readonly warningRows = new Map<string, { account_id: string; machine_id: string; captured_at: string; count: number; scope: string }>();
 
   async ingest(batch: CodexIngestBatch, machineId: string, costs: CodexCost[], receivedAt: string): Promise<CodexIngestResult> {
     const account = { ...batch.account, email: normalizeCodexEmail(batch.account.email) };
@@ -42,7 +42,8 @@ export class MemoryCodexStore implements CodexStore {
     if (batch.collector.parse_warnings > 0) {
       const warningKey = JSON.stringify([account.account_id, machineId, batch.collector.captured_at]);
       if (!this.warningRows.has(warningKey)) this.warningRows.set(warningKey, { account_id: account.account_id,
-        machine_id: machineId, captured_at: batch.collector.captured_at, count: batch.collector.parse_warnings });
+        machine_id: machineId, captured_at: batch.collector.captured_at, count: batch.collector.parse_warnings,
+        scope: batch.collector.warning_scope ?? "legacy_all_diagnostics" });
     }
     const previous = this.collectorRows.get(key);
     const collector = !previous || batch.collector.captured_at >= previous.collector.captured_at
@@ -53,7 +54,7 @@ export class MemoryCodexStore implements CodexStore {
       collector, received_at: receivedAt,
       last_quota_at: maxAt(previous?.last_quota_at, batch.quota?.captured_at),
       last_account_usage_at: maxAt(previous?.last_account_usage_at, batch.account_usage?.captured_at),
-      conflicting_observations: 0, last_conflict_at: null, warning_observations: 0, parse_warnings_total: 0, last_warning_at: null }));
+      conflicting_observations: 0, last_conflict_at: null, warning_observations: 0, parse_warnings_total: 0, legacy_parse_warnings_total: 0, last_warning_at: null }));
     if (batch.quota) {
       const record = { machine_id: machineId, snapshot: batch.quota, received_at: receivedAt };
       if (newerSnapshot(record, this.quotaRows.get(account.account_id) ?? null)) this.quotaRows.set(account.account_id, structuredClone(record));
@@ -88,7 +89,9 @@ export class MemoryCodexStore implements CodexStore {
         const warnings = [...this.warningRows.values()].filter((w) => w.account_id === accountId && w.machine_id === r.machine_id);
         return { ...r, conflicting_observations: conflicts.length,
           last_conflict_at: conflicts.map((c) => c.first_seen_at).sort().at(-1) ?? null,
-          warning_observations: warnings.length, parse_warnings_total: warnings.reduce((n, w) => n + w.count, 0),
+          warning_observations: warnings.length,
+          parse_warnings_total: warnings.reduce((n, w) => n + (w.scope === "withheld_records" ? w.count : 0), 0),
+          legacy_parse_warnings_total: warnings.reduce((n, w) => n + (w.scope === "withheld_records" ? 0 : w.count), 0),
           last_warning_at: warnings.map((w) => w.captured_at).sort().at(-1) ?? null };
       })
       .sort((a, b) => a.machine_id.localeCompare(b.machine_id)));

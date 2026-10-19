@@ -72,6 +72,12 @@ export interface CodexIngestBatch {
     backfill_from: string;
     scanned_files: number;
     parse_warnings: number;
+    /**
+     * What parse_warnings counts. "withheld_records": only records that may carry usage and
+     * were dropped or withheld. Absent (older collectors): every diagnostic, including ones
+     * about events that were emitted, so the count cannot qualify coverage.
+     */
+    warning_scope?: "withheld_records";
     account_binding: "verified_login_configured_history";
   };
 }

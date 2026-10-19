@@ -129,7 +129,8 @@ describe("Codex independent account ledger", () => {
     await ingest(batch({ events: [event({ event_id: "gap-event", quality_flags: ["cumulative_gap"] })] }));
     expect((await get(`usage?${RANGE}`)).json().totals).toMatchObject({ usage_complete: false, pricing_complete: true,
       cost_complete: false, incomplete_events: 1 });
-    const warningBatch = batch({ events: [], collector: { ...batch().collector, captured_at: "2026-10-18T00:40:00.000Z", parse_warnings: 3 } });
+    const warningBatch = batch({ events: [], collector: { ...batch().collector, captured_at: "2026-10-18T00:40:00.000Z",
+      parse_warnings: 3, warning_scope: "withheld_records" } });
     await ingest(warningBatch);
     await ingest(warningBatch); // Snapshot and event uploads can repeat the same scan diagnostics.
     await ingest(batch({ events: [] })); // A clean later scan must not erase the earlier gaps.
@@ -140,6 +141,25 @@ describe("Codex independent account ledger", () => {
     const usage = (await get(`usage?${RANGE}`)).json();
     expect(usage.collector_parse_warnings_total).toBe(3);
     expect(usage.collector_warnings_scope).toBe("all_observed_scans_not_range_limited");
+  });
+
+  it("discloses legacy undeclared diagnostics without letting them qualify coverage", async () => {
+    await ingest(batch({ events: [event()] }));
+    // Older collectors counted notes about emitted events (e.g. a missing turn_id) as warnings.
+    await ingest(batch({ events: [], collector: { ...batch().collector, captured_at: "2026-10-18T00:40:00.000Z", parse_warnings: 7 } }));
+    const usage = (await get(`usage?${RANGE}`)).json();
+    expect(usage.collector_parse_warnings_total).toBe(0);
+    expect(usage.collector_legacy_diagnostics_total).toBe(7);
+    expect(usage.totals).toMatchObject({ usage_complete: true, incomplete_events: 0 });
+    const collector = (await get("collectors")).json().collectors[0];
+    expect(collector).toMatchObject({ parse_warnings_total: 0, legacy_parse_warnings_total: 7, warning_observations: 1 });
+  });
+
+  it("treats a request reported only by its usage record as complete, and buckets empty projects as unknown", async () => {
+    await ingest(batch({ events: [event({ quality_flags: ["compaction_usage_from_record"], project: "" })] }));
+    const usage = (await get(`usage?${RANGE}&by=project`)).json();
+    expect(usage.totals).toMatchObject({ usage_complete: true, incomplete_events: 0 });
+    expect(usage.buckets.map((b: { key: string }) => b.key)).toEqual(["(unknown)"]);
   });
 
   it("rejects body fields outside the metadata contract and invalid temporal/query data", async () => {

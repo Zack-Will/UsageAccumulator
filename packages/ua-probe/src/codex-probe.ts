@@ -1,6 +1,6 @@
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
-import { createCodexParserState, parseCodexLine, type CodexAccount, type CodexIngestBatch, type CodexUsageEvent } from "@ua/core";
+import { CODEX_PARSER_REVISION, createCodexParserState, parseCodexLine, type CodexAccount, type CodexIngestBatch, type CodexUsageEvent } from "@ua/core";
 import type { ProbeConfig } from "./config.js";
 import { CodexClient } from "./codex-client.js";
 import { CodexProbeStore } from "./codex-store.js";
@@ -58,7 +58,8 @@ export class CodexProbe {
         const outcome = await readNewLines(path, reset ? null : prev.cursor, (line) => {
           const parsed = parseCodexLine(line, state);
           state = parsed.state;
-          stats.warnings += parsed.warnings.length;
+          // Only dropped/withheld records qualify coverage; notes about emitted events do not.
+          stats.warnings += parsed.withheld.length;
           const event = parsed.event;
           if (!event || Date.parse(event.ts) < this.from) return;
           if (event.project && this.cfg.hash_project_paths) event.project = hashProjectSlug(event.project, this.cfg.project_hash_secret);
@@ -79,13 +80,17 @@ export class CodexProbe {
 
   private collector(stats: { files: number; warnings: number }, state: "ok" | "auth" | "error" = "ok", error: string | null = null): CodexIngestBatch["collector"] {
     return this.withSnapshotRejection({ captured_at: new Date().toISOString(), state, error_code: error, backfill_from: new Date(this.from).toISOString(),
-      scanned_files: stats.files, parse_warnings: stats.warnings, account_binding: "verified_login_configured_history" });
+      scanned_files: stats.files, parse_warnings: stats.warnings, warning_scope: "withheld_records",
+      account_binding: "verified_login_configured_history" });
   }
   private withSnapshotRejection(collector: CodexIngestBatch["collector"]): CodexIngestBatch["collector"] {
     // An active login failure remains the most actionable state. A recovered/normal sync
     // continues to disclose quarantined history until an operator repairs that evidence.
-    if (collector.state === "auth" || this.store.stats().rejected_snapshots === 0) return collector;
-    return { ...collector, state: "error", error_code: "codex_snapshot_rejected" };
+    if (collector.state === "auth") return collector;
+    const local = this.store.stats();
+    if (local.rejected_snapshots > 0) return { ...collector, state: "error", error_code: "codex_snapshot_rejected" };
+    if (local.rejected_events > 0) return { ...collector, state: "error", error_code: "codex_events_rejected" };
+    return collector;
   }
   private async post(batch: CodexIngestBatch): Promise<void> {
     const response = await this.fetcher(`${this.cfg.server.url.replace(/\/$/, "")}/v1/codex/ingest`, {
@@ -123,11 +128,35 @@ export class CodexProbe {
     while (!this.stopped) {
       const events = this.store.pendingEvents(Math.min(this.cfg.server.batch_size, 1000));
       if (!events.length) break;
-      await this.post({ schema_version: 1, account, events, collector });
-      this.store.ackEvents(events.map((e) => e.event_id));
-      sent += events.length;
+      // Queued under an earlier backfill_from: valid then, outside the declared range now.
+      const outside = events.filter((e) => Date.parse(e.ts) < this.from).map((e) => e.event_id);
+      if (outside.length) { this.store.rejectEvents(outside, null, "before_backfill_from"); continue; }
+      sent += await this.shipEvents(account, collector, events);
     }
     return sent;
+  }
+  /**
+   * A permanent rejection is narrowed to the offending events by bisection; the rest ship.
+   * A lone event is quarantined only if the same batch without it is accepted: otherwise the
+   * envelope (e.g. a server that predates a field) is at fault and nothing is quarantined.
+   */
+  private async shipEvents(account: CodexAccount, collector: CodexIngestBatch["collector"], events: CodexUsageEvent[]): Promise<number> {
+    try {
+      await this.post({ schema_version: 1, account, events, collector });
+      this.store.ackEvents(events.map((e) => e.event_id));
+      return events.length;
+    } catch (error) {
+      if (!(error instanceof CodexIngestHttpError) || ![400, 413, 422].includes(error.status)) throw error;
+      if (events.length > 1) {
+        const mid = events.length >> 1;
+        return await this.shipEvents(account, collector, events.slice(0, mid))
+          + await this.shipEvents(account, collector, events.slice(mid));
+      }
+      await this.post({ schema_version: 1, account, events: [], collector });
+      this.store.rejectEvents([events[0]!.event_id], error.status, "server_rejected");
+      this.log.warn({ code: "codex_event_rejected", http_status: error.status }, "Codex 事件被永久拒绝，已隔离，继续上报其余事件");
+      return 0;
+    }
   }
   async sync(): Promise<{ files: number; events: number; warnings: number; sent: number; rejected_snapshots: number }> {
     this.client = this.makeClient();
@@ -138,7 +167,7 @@ export class CodexProbe {
     try {
       await this.client.start();
       ({ account, quota } = await this.client.readAccount(this.cfg.codex.expected_email));
-      this.store.bind(account, JSON.stringify({ version: 1, roots: this.roots, from: this.from }));
+      this.store.bind(account, JSON.stringify({ version: 1, roots: this.roots, from: this.from, parser: CODEX_PARSER_REVISION }));
       if (this.cfg.codex.account_usage) {
         try { accountUsage = await this.client.readUsage(); }
         catch { usageError = true; this.log.warn({ code: "codex_account_usage_unavailable" }, "Codex 官方汇总不可用，继续额度与本地明细采集"); }

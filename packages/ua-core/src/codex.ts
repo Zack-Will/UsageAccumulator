@@ -11,6 +11,24 @@ interface Counters {
   total_tokens: number;
 }
 
+/**
+ * A per-request usage record waiting for its token_count. Context compaction is billed
+ * by a request that only ever appears here: no token_count reports it, and the next
+ * cumulative snapshot repeats the previous total.
+ */
+interface PendingUsageRecord {
+  response_id: string;
+  turn_id: string | null;
+  ts: string;
+  model: string;
+  model_provider: string | null;
+  reasoning_effort: string | null;
+  service_tier: string | null;
+  project: string | null;
+  usage: Counters;
+  flags: string[];
+}
+
 /** Only allowlisted metadata is retained. Persist this together with the file cursor. */
 export interface CodexParserState {
   version: 1;
@@ -31,7 +49,16 @@ export interface CodexParserState {
   cumulative_unreported: string[];
   pending_flags: string[];
   last_only_ids: string[];
+  /** Absent in checkpoints written before usage records were tracked. */
+  pending_record?: PendingUsageRecord | null;
 }
+
+/**
+ * Bump when collectors should rescan and re-derive events: the scan identity includes it.
+ * Rescans are safe only because an already-derived event keeps its id across revisions.
+ * 2: requests reported only by token_usage_record (context compaction) are emitted.
+ */
+export const CODEX_PARSER_REVISION = 2;
 
 export function createCodexParserState(): CodexParserState {
   return {
@@ -40,6 +67,7 @@ export function createCodexParserState(): CodexParserState {
     reasoning_effort: null, service_tier: null, project: null,
     history_through_ordinal: 0, fork_boundary_unknown: false,
     awaiting_own_context: false, cumulative: null, cumulative_unreported: [], pending_flags: [], last_only_ids: [],
+    pending_record: null,
   };
 }
 
@@ -48,6 +76,11 @@ export interface CodexParseResult {
   event: CodexUsageEvent | null;
   /** Stable codes only: never interpolate transcript text or raw field values. */
   warnings: string[];
+  /**
+   * The subset of warnings meaning a record that may carry usage was dropped or withheld.
+   * Only these qualify coverage; the rest are diagnostics about events that were emitted.
+   */
+  withheld: string[];
 }
 
 const KEYS = ["input_tokens", "cached_input_tokens", "cache_write_input_tokens",
@@ -61,6 +94,10 @@ const iso = (x: unknown): string | null => {
   return Number.isFinite(ms) ? new Date(ms).toISOString() : null;
 };
 const unique = (xs: string[]): string[] => [...new Set(xs)];
+/** Flags describing one emitted event's own fields, not the coverage around it. */
+const EVENT_DESCRIPTORS = new Set(["model_unknown", "turn_id_unavailable", "total_tokens_derived", "total_tokens_mismatch",
+  "input_subsets_exceed_total", "reasoning_exceeds_output", "last_usage_only", "counter_detail_baseline_changed",
+  "missing_required_counter", "invalid_counter", "counter_overflow"]);
 const hash = (parts: unknown[]): string => createHash("sha256").update(JSON.stringify(parts)).digest("hex");
 const equal = (a: Counters, b: Counters): boolean => KEYS.every((k) => a[k] === b[k]);
 
@@ -115,17 +152,36 @@ function counters(raw: unknown, flags: string[]): Counters | null {
 export function parseCodexLine(raw: string, previous: CodexParserState): CodexParseResult {
   const state: CodexParserState = { ...previous, line_ordinal: previous.line_ordinal + 1 };
   const warnings: string[] = [];
-  const result = (event: CodexUsageEvent | null = null): CodexParseResult => ({ state, event, warnings: unique(warnings) });
+  const withheld: string[] = [];
+  const hold = (...codes: string[]): void => { warnings.push(...codes); withheld.push(...codes); };
+  const result = (event: CodexUsageEvent | null = null): CodexParseResult =>
+    ({ state, event, warnings: unique(warnings), withheld: unique(withheld) });
+  /** Emit the pending record as its own request: nothing else will ever report it. */
+  const releaseRecord = (flag: string): CodexParseResult => {
+    const rec = state.pending_record!;
+    state.pending_record = null;
+    const flags = unique([...rec.flags, flag]);
+    return result({
+      event_id: `codex:v1:${hash(["record", state.session_id, rec.response_id])}`,
+      session_id: state.session_id!, turn_id: rec.turn_id, parent_session_id: state.parent_session_id,
+      ts: rec.ts, model: rec.model, model_provider: rec.model_provider,
+      reasoning_effort: rec.reasoning_effort, service_tier: rec.service_tier,
+      project: rec.project, ...rec.usage, quality_flags: flags,
+    });
+  };
   if (!raw.trim()) return result();
   let doc: Record<string, unknown> | null;
-  try { doc = object(JSON.parse(raw)); } catch { warnings.push("invalid_json"); return result(); }
-  if (!doc) { warnings.push("invalid_record"); return result(); }
+  try { doc = object(JSON.parse(raw)); } catch { hold("invalid_json"); return result(); }
+  if (!doc) { hold("invalid_record"); return result(); }
+  if (doc["type"] === "compacted" && state.pending_record && state.line_ordinal > state.history_through_ordinal) {
+    return releaseRecord("compaction_usage_from_record");
+  }
   const payload = object(doc["payload"]);
   if (!payload) return result();
 
   if (doc["type"] === "session_meta" && !state.session_id) {
     const id = str(payload["id"]) ?? str(payload["session_id"]);
-    if (!id) { warnings.push("missing_session_id"); return result(); }
+    if (!id) { hold("missing_session_id"); return result(); }
     state.session_id = id;
     state.parent_session_id = str(payload["parent_thread_id"]) ?? str(payload["forked_from_id"]);
     state.created_at = iso(payload["timestamp"]) ?? iso(doc["timestamp"]);
@@ -149,8 +205,8 @@ export function parseCodexLine(raw: string, previous: CodexParserState): CodexPa
     if (doc["type"] === "event_msg" && payload["type"] === "thread_settings_applied") {
       state.fork_boundary_unknown = false;
       state.pending_flags = unique([...state.pending_flags, "fork_boundary_inferred"]);
-    } else if (doc["type"] === "event_msg" && payload["type"] === "token_count") {
-      warnings.push("fork_history_usage_withheld");
+    } else if ((doc["type"] === "event_msg" && payload["type"] === "token_count") || doc["type"] === "token_usage_record") {
+      hold("fork_history_usage_withheld");
     }
     return result();
   }
@@ -164,13 +220,38 @@ export function parseCodexLine(raw: string, previous: CodexParserState): CodexPa
     state.awaiting_own_context = false;
     return result();
   }
+  if (doc["type"] === "token_usage_record") {
+    // One record per model request, written before the token_count that reports it.
+    // Matched requests keep their token_count identity (stable across parser versions and
+    // observers); only a record no token_count claims becomes an event of its own.
+    if (!state.session_id) { hold("usage_without_session"); return result(); }
+    if (state.awaiting_own_context) { hold("fork_usage_before_own_context"); return result(); }
+    const threadId = str(payload["thread_id"]);
+    if (threadId && threadId !== state.session_id) { warnings.push("usage_record_foreign_thread"); return result(); }
+    const responseId = str(payload["response_id"]);
+    const ts = iso(doc["timestamp"]);
+    const recFlags: string[] = [];
+    const recUsage = counters(payload["usage"], recFlags);
+    if (!responseId || !ts || !recUsage) { warnings.push("usage_record_unusable"); return result(); }
+    const turnId = str(payload["turn_id"]) ?? state.turn_id;
+    const released = state.pending_record ? releaseRecord("usage_record_without_token_count") : null;
+    const recordFlags = [...recFlags];
+    if (!state.model) recordFlags.push("model_unknown");
+    if (!turnId) recordFlags.push("turn_id_unavailable");
+    state.pending_record = {
+      response_id: responseId, turn_id: turnId, ts, model: state.model, model_provider: state.model_provider,
+      reasoning_effort: state.reasoning_effort, service_tier: state.service_tier, project: state.project,
+      usage: recUsage, flags: recordFlags,
+    };
+    return released ?? result();
+  }
   if (doc["type"] !== "event_msg" || payload["type"] !== "token_count") return result();
   const info = object(payload["info"]);
   if (!info) return result(); // Rate-limit-only updates do not contain a usage observation.
-  if (!state.session_id) { warnings.push("usage_without_session"); return result(); }
-  if (state.awaiting_own_context) { warnings.push("fork_usage_before_own_context"); return result(); }
+  if (!state.session_id) { hold("usage_without_session"); return result(); }
+  if (state.awaiting_own_context) { hold("fork_usage_before_own_context"); return result(); }
   const ts = iso(doc["timestamp"]);
-  if (!ts) { warnings.push("invalid_timestamp"); return result(); }
+  if (!ts) { hold("invalid_timestamp"); return result(); }
   const flags = [...state.pending_flags];
   const totalFlags: string[] = [];
   const lastFlags: string[] = [];
@@ -179,6 +260,16 @@ export function parseCodexLine(raw: string, previous: CodexParserState): CodexPa
   warnings.push(...totalFlags, ...lastFlags);
   let usage: Counters;
   let identity: unknown[];
+
+  const record = state.pending_record ?? null;
+  if (record && !(last && equal(last, record.usage))) {
+    // A snapshot repeating the previous total reports nothing new: the pending record
+    // (a compaction request, in observed logs) is the only report of that usage.
+    if (total && state.cumulative && equal(total, state.cumulative)) return releaseRecord("usage_record_without_token_count");
+    state.pending_record = null;
+    hold("usage_record_unmatched");
+    flags.push("usage_record_unmatched", "cumulative_gap");
+  } else state.pending_record = null;
 
   if (total) {
     if (state.cumulative && equal(total, state.cumulative)) return result();
@@ -194,7 +285,7 @@ export function parseCodexLine(raw: string, previous: CodexParserState): CodexPa
     const comparable = (k: string): boolean =>
       !totalFlags.includes(`${k}_unreported`) && !state.cumulative_unreported.includes(`${k}_unreported`);
     if (state.cumulative && KEYS.some((k) => comparable(k) && total[k] < state.cumulative![k])) {
-      warnings.push("counter_decreased");
+      hold("counter_decreased");
       state.pending_flags = unique([...flags, "counter_decreased"]);
       return result();
     }
@@ -213,14 +304,14 @@ export function parseCodexLine(raw: string, previous: CodexParserState): CodexPa
         state.cumulative = total;
         state.cumulative_unreported = totalFlags.filter((f) => f.endsWith("_unreported"));
         state.pending_flags = unique([...flags, "cumulative_gap", "last_usage_unavailable"]);
-        warnings.push("cumulative_gap", "last_usage_unavailable");
+        hold("cumulative_gap", "last_usage_unavailable");
         return result();
       }
       if (KEYS.some((k) => !lastFlags.includes(`${k}_unreported`) && !totalFlags.includes(`${k}_unreported`) && last[k] > total[k])) {
         state.cumulative = total;
         state.cumulative_unreported = totalFlags.filter((f) => f.endsWith("_unreported"));
         state.pending_flags = unique([...flags, "cumulative_gap", "last_exceeds_cumulative"]);
-        warnings.push("cumulative_gap", "last_exceeds_cumulative");
+        hold("cumulative_gap", "last_exceeds_cumulative");
         return result();
       }
       if (!equal(usage, last)) flags.push("last_usage_mismatch", "cumulative_gap");
@@ -234,14 +325,14 @@ export function parseCodexLine(raw: string, previous: CodexParserState): CodexPa
       state.cumulative = total;
       state.cumulative_unreported = totalFlags.filter((f) => f.endsWith("_unreported"));
       state.pending_flags = unique([...flags, "cumulative_gap", "cumulative_rebaseline_after_last_only"]);
-      warnings.push("cumulative_rebaseline_after_last_only");
+      hold("cumulative_rebaseline_after_last_only");
       return result();
     } else if (last) {
       if (KEYS.some((k) => !lastFlags.includes(`${k}_unreported`) && !totalFlags.includes(`${k}_unreported`) && last[k] > total[k])) {
         state.cumulative = total;
         state.cumulative_unreported = totalFlags.filter((f) => f.endsWith("_unreported"));
         state.pending_flags = unique([...flags, "cumulative_gap", "last_exceeds_cumulative"]);
-        warnings.push("last_exceeds_cumulative");
+        hold("last_exceeds_cumulative");
         return result();
       }
       usage = last;
@@ -251,13 +342,13 @@ export function parseCodexLine(raw: string, previous: CodexParserState): CodexPa
       state.cumulative = total;
       state.cumulative_unreported = totalFlags.filter((f) => f.endsWith("_unreported"));
       state.pending_flags = unique([...flags, "cumulative_gap", "initial_cumulative_baseline_only"]);
-      warnings.push("initial_cumulative_baseline_only");
+      hold("initial_cumulative_baseline_only");
       return result();
     }
     state.cumulative = total;
     state.cumulative_unreported = totalFlags.filter((f) => f.endsWith("_unreported"));
   } else {
-    if (!last) { warnings.push("usage_counters_unavailable"); return result(); }
+    if (!last) { hold("usage_counters_unavailable"); return result(); }
     flags.push(...lastFlags, "last_usage_only", ...totalFlags);
     usage = last;
     identity = ["last", state.session_id, state.turn_id, ts, last.input_tokens, last.output_tokens];
@@ -267,14 +358,19 @@ export function parseCodexLine(raw: string, previous: CodexParserState): CodexPa
     // A later cumulative snapshot includes these events; rebaseline before using it.
     state.cumulative = null;
   }
+  // Coverage qualifiers outlive an all-zero observation; per-event descriptors do not.
+  const carry = unique(flags.filter((f) => !EVENT_DESCRIPTORS.has(f) && !f.endsWith("_unreported")));
   if (!state.model) flags.push("model_unknown");
   if (!state.turn_id) flags.push("turn_id_unavailable");
   if (usage.cached_input_tokens + usage.cache_write_input_tokens > usage.input_tokens) flags.push("input_subsets_exceed_total");
   if (usage.reasoning_output_tokens > usage.output_tokens) flags.push("reasoning_exceeds_output");
   if (usage.total_tokens !== usage.input_tokens + usage.output_tokens) flags.push("total_tokens_mismatch");
   warnings.push(...flags);
+  if (KEYS.every((k) => usage[k] === 0)) {
+    state.pending_flags = carry;
+    return result();
+  }
   state.pending_flags = [];
-  if (KEYS.every((k) => usage[k] === 0)) return result();
   return result({
     event_id: `codex:v1:${hash(identity)}`,
     session_id: state.session_id, turn_id: state.turn_id, parent_session_id: state.parent_session_id,

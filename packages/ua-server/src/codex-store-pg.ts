@@ -71,8 +71,9 @@ export class PgCodexStore implements CodexStore {
           ON CONFLICT (account_id, machine_id, captured_at) DO NOTHING`;
       }
       if (batch.collector.parse_warnings > 0) {
-        await sql`INSERT INTO codex_collection_warnings (account_id, machine_id, captured_at, parse_warnings, received_at)
-          VALUES (${accountId}, ${machineId}, ${batch.collector.captured_at}, ${batch.collector.parse_warnings}, ${receivedAt})
+        await sql`INSERT INTO codex_collection_warnings (account_id, machine_id, captured_at, parse_warnings, received_at, warning_scope)
+          VALUES (${accountId}, ${machineId}, ${batch.collector.captured_at}, ${batch.collector.parse_warnings}, ${receivedAt},
+            ${batch.collector.warning_scope ?? "legacy_all_diagnostics"})
           ON CONFLICT DO NOTHING`;
       }
       await sql`INSERT INTO codex_collectors (account_id, machine_id, captured_at, received_at, collector, last_quota_at, last_account_usage_at)
@@ -129,11 +130,15 @@ export class PgCodexStore implements CodexStore {
   async collectors(accountId: string): Promise<CodexCollectorRecord[]> {
     const rows = await this.sql<Record<string, unknown>[]>`
       SELECT collector.*, COALESCE(conflicts.n, 0) AS conflicting_observations, conflicts.last_conflict_at,
-        COALESCE(warnings.n, 0) AS warning_observations, COALESCE(warnings.total, 0) AS parse_warnings_total, warnings.last_warning_at
+        COALESCE(warnings.n, 0) AS warning_observations, COALESCE(warnings.total, 0) AS parse_warnings_total,
+        COALESCE(warnings.legacy, 0) AS legacy_parse_warnings_total, warnings.last_warning_at
       FROM codex_collectors collector
       LEFT JOIN (SELECT machine_id, count(*) AS n, max(first_seen_at) AS last_conflict_at
         FROM codex_event_conflicts WHERE account_id = ${accountId} GROUP BY machine_id) conflicts USING (machine_id)
-      LEFT JOIN (SELECT machine_id, count(*) AS n, sum(parse_warnings) AS total, max(captured_at) AS last_warning_at
+      LEFT JOIN (SELECT machine_id, count(*) AS n,
+          sum(parse_warnings) FILTER (WHERE warning_scope = 'withheld_records') AS total,
+          sum(parse_warnings) FILTER (WHERE warning_scope <> 'withheld_records') AS legacy,
+          max(captured_at) AS last_warning_at
         FROM codex_collection_warnings WHERE account_id = ${accountId} GROUP BY machine_id) warnings USING (machine_id)
       WHERE collector.account_id = ${accountId} ORDER BY collector.machine_id`;
     return rows.map((r) => ({ account_id: accountId, machine_id: String(r["machine_id"]),
@@ -141,6 +146,7 @@ export class PgCodexStore implements CodexStore {
       last_quota_at: nullableIso(r["last_quota_at"]), last_account_usage_at: nullableIso(r["last_account_usage_at"]),
       conflicting_observations: Number(r["conflicting_observations"]), last_conflict_at: nullableIso(r["last_conflict_at"]),
       warning_observations: Number(r["warning_observations"]), parse_warnings_total: Number(r["parse_warnings_total"]),
+      legacy_parse_warnings_total: Number(r["legacy_parse_warnings_total"]),
       last_warning_at: nullableIso(r["last_warning_at"]) }));
   }
 }

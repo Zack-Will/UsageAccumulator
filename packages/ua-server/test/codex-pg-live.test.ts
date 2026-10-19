@@ -80,13 +80,17 @@ describe.skipIf(!url)("Codex PostgreSQL ledger in an isolated schema", () => {
     expect(collectors.find((c) => c.machine_id === "mac")?.last_quota_at).toBe("2026-10-18T00:00:00.000Z");
     expect((await store.codex.accountUsage("account-one"))?.snapshot.lifetime_tokens).toBe(1000000);
     b.collector.parse_warnings = 3;
+    b.collector.warning_scope = "withheld_records";
     await ingest(b);
     await ingest(b);
+    // Undeclared (legacy) diagnostics are disclosed separately and never counted as withheld.
+    await ingest({ ...b, collector: { ...b.collector, captured_at: "2026-10-18T01:00:30.000Z", parse_warnings: 7, warning_scope: undefined } });
     const clean = { ...b, collector: { ...b.collector, captured_at: "2026-10-18T01:01:00.000Z", parse_warnings: 0 } };
     await ingest(clean);
     const mac = (await store.codex.collectors("account-one")).find((c) => c.machine_id === "mac")!;
     expect(mac.collector.parse_warnings).toBe(0);
-    expect(mac.warning_observations).toBe(1);
+    expect(mac.warning_observations).toBe(2);
     expect(mac.parse_warnings_total).toBe(3);
+    expect(mac.legacy_parse_warnings_total).toBe(7);
   });
 });

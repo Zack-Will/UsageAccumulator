@@ -183,7 +183,8 @@ describe("CodexProbe durable collection", () => {
     const http = fakeFetch();
     const probe = probeFor(cfg, client, http);
     await expect(probe.sync()).rejects.toThrow("codex_account_read_failed");
-    expect(probe.store.stats()).toEqual({ events: 0, pending_events: 0, pending_snapshots: 0, rejected_snapshots: 0, files: 0 });
+    expect(probe.store.stats()).toEqual({ events: 0, pending_events: 0, pending_snapshots: 0, rejected_snapshots: 0,
+      rejected_events: 0, withheld_events: 0, files: 0 });
     expect(client.calls.usage).not.toHaveBeenCalled();
     expect(client.calls.close).toHaveBeenCalledOnce();
     expect(http.batches).toEqual([]);
@@ -332,4 +333,73 @@ describe("CodexProbe durable collection", () => {
     expect(blocked.batches).toHaveLength(2); // Current snapshot plus one minimal status; no infinite loop.
     expect(repeated.store.stats().pending_snapshots).toBe(0);
   });
+
+  it("isolates a permanently rejected event and ships the rest instead of blocking the queue", async () => {
+    const { cfg, file } = setup();
+    writeFileSync(file, content(meta(), turn(), count(100, 10), count(300, 30, 200, 20), count(600, 60, 300, 30)));
+    // The server rejects any batch containing the middle request (e.g. an out-of-range timestamp).
+    const bad = (b: CodexIngestBatch) => b.events.some((e) => e.input_tokens === 200);
+    const http = fakeFetch((batch) => bad(batch) ? new Response("bad event", { status: 400 }) : receipt(batch));
+    const probe = probeFor(cfg, fakeClient(), http);
+    expect(await probe.sync()).toMatchObject({ sent: 2 });
+    expect(probe.store.stats()).toMatchObject({ pending_events: 0, rejected_events: 1 });
+    const shipped = http.batches.filter((b) => !bad(b)).flatMap((b) => b.events.map((e) => e.input_tokens));
+    expect(shipped.sort((a, b) => a - b)).toEqual([100, 300]);
+    // The collector reports the degradation instead of looking healthy.
+    expect(http.batches.at(-1)!.collector).toMatchObject({ state: "error", error_code: "codex_events_rejected" });
+  });
+
+  it("does not quarantine events when the envelope itself is rejected", async () => {
+    const { cfg, file } = setup();
+    writeFileSync(file, content(meta(), turn(), count(100, 10)));
+    // E.g. a server that predates a collector field: every batch is a 400, with or without events.
+    const http = fakeFetch((batch) => batch.quota ? receipt(batch) : new Response("bad collector", { status: 400 }));
+    const probe = probeFor(cfg, fakeClient(), http);
+    await expect(probe.sync()).rejects.toMatchObject({ status: 400 });
+    expect(probe.store.stats()).toMatchObject({ pending_events: 1, rejected_events: 0 });
+  });
+
+  it("withholds queued events that a later backfill_from excludes, without reporting an error", async () => {
+    const { cfg, file } = setup();
+    writeFileSync(file, content(meta(), turn(), count(100, 10)));
+    const offline = probeFor(cfg, fakeClient(), fakeFetch(() => { throw new Error("offline"); }));
+    await expect(offline.sync()).rejects.toThrow("offline");
+    closeProbe(offline);
+    cfg.codex = { ...cfg.codex, backfill_from: "2026-10-05T00:00:00+08:00" };
+    const http = fakeFetch();
+    const probe = probeFor(cfg, fakeClient(), http);
+    expect(await probe.sync()).toMatchObject({ sent: 0 });
+    expect(probe.store.stats()).toMatchObject({ pending_events: 0, rejected_events: 0, withheld_events: 1 });
+    expect(http.batches.every((b) => b.events.length === 0)).toBe(true);
+    expect(http.batches.at(-1)!.collector).toMatchObject({ state: "ok", warning_scope: "withheld_records" });
+  });
+
+  it("ships a compaction request reported only by its usage record, and counts no warnings for clean logs", async () => {
+    const { cfg, file } = setup();
+    const record = (response: string, u: ReturnType<typeof counters>) => line("token_usage_record", {
+      thread_id: "session-a", session_id: "session-a", turn_id: "turn-a", response_id: response, usage: u,
+    });
+    writeFileSync(file, content(meta(), turn(),
+      record("r1", counters(100, 10)), count(100, 10),
+      record("r-compact", counters(5000, 300)), line("compacted", { message: "" }), count(100, 10),
+      record("r2", counters(200, 20)), count(300, 30, 200, 20)));
+    const http = fakeFetch();
+    const probe = probeFor(cfg, fakeClient(), http);
+    expect(await probe.sync()).toMatchObject({ events: 3, warnings: 0 });
+    const events = http.batches.flatMap((b) => b.events);
+    expect(events.map((e) => e.input_tokens).sort((a, b) => a - b)).toEqual([100, 200, 5000]);
+    expect(events.find((e) => e.input_tokens === 5000)!.quality_flags).toContain("compaction_usage_from_record");
+  });
+
+  it("rescans after a parser revision without re-sending events it already derived", async () => {
+    const { cfg, file } = setup();
+    writeFileSync(file, content(meta(), turn(), count(100, 10), count(300, 30, 200, 20)));
+    const http = fakeFetch();
+    const probe = probeFor(cfg, fakeClient(), http);
+    expect(await probe.sync()).toMatchObject({ sent: 2 });
+    probe.store.setMeta("scan_identity", JSON.stringify({ version: 1, roots: [], from: 0 })); // a pre-revision checkpoint
+    expect(await probe.sync()).toMatchObject({ files: 1, events: 0, sent: 0 });
+    expect(probe.store.stats()).toMatchObject({ events: 2, pending_events: 0 });
+  });
 });
+

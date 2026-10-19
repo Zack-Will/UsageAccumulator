@@ -86,6 +86,13 @@ async function main(): Promise<number> {
 
 async function cmdCodex(configPath: string, cmd: string): Promise<number> {
   const cfg = loadConfig(configPath);
+  if (cmd === "codex-status") {
+    // Read-only: must work while the service holds the collector lock (WAL allows a reader).
+    const { CodexProbeStore } = await import("./codex-store.js");
+    const store = new CodexProbeStore(expandHome(cfg.codex.state_db));
+    try { process.stdout.write(JSON.stringify(store.stats()) + "\n"); } finally { store.close(); }
+    return 0;
+  }
   const { CodexProbe } = await import("./codex-probe.js");
   const locked = tryAcquire(lockPathFor(expandHome(cfg.codex.state_db)));
   if (!locked.ok) {
@@ -96,9 +103,7 @@ async function cmdCodex(configPath: string, cmd: string): Promise<number> {
   const shutdown = (): void => { void probe?.stop(); };
   try {
     probe = new CodexProbe(cfg);
-    if (cmd === "codex-status") {
-      process.stdout.write(JSON.stringify(probe.store.stats()) + "\n");
-    } else if (cmd === "codex-sync") {
+    if (cmd === "codex-sync") {
       await probe.sync();
     } else {
       process.on("SIGINT", shutdown);

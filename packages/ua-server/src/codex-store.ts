@@ -38,7 +38,10 @@ export interface CodexCollectorRecord {
   last_conflict_at: string | null;
   /** Unique warning-bearing scan observations; repeated upload batches do not inflate this. */
   warning_observations: number;
+  /** Withheld-record warnings: the only ones that qualify usage coverage. */
   parse_warnings_total: number;
+  /** Diagnostics from collectors that did not declare warning_scope; disclosed, never coverage. */
+  legacy_parse_warnings_total: number;
   last_warning_at: string | null;
 }
 

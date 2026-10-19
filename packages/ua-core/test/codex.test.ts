@@ -279,4 +279,73 @@ describe("Codex rollout metadata parser", () => {
     const state = parseCodexLine(meta(), createCodexParserState()).state;
     expect(parseCodexLine(count(usage(100, 20)), state).event?.quality_flags).toContain("model_unknown");
   });
+
+  describe("per-request usage records", () => {
+    const record = (response: string, u: ReturnType<typeof usage>, extra: Record<string, unknown> = {}) =>
+      line("token_usage_record", { thread_id: "session-1", session_id: "root", turn_id: "turn-1", response_id: response, usage: u, ...extra });
+    const feed = (lines: string[], state = ready()) => {
+      const out: ReturnType<typeof parseCodexLine>[] = [];
+      for (const l of lines) { const r = parseCodexLine(l, state); state = r.state; out.push(r); }
+      return { out, events: out.flatMap((r) => r.event ? [r.event] : []), state };
+    };
+
+    it("keeps the token_count identity for a matched request", () => {
+      const plain = feed([count(usage(100, 10))]).events;
+      const withRecord = feed([record("r1", usage(100, 10)), count(usage(100, 10))]).events;
+      expect(withRecord).toEqual(plain);
+    });
+
+    it("emits a compaction request that no token_count reports, without breaking the next request", () => {
+      const { events } = feed([
+        record("r1", usage(100, 10)), count(usage(100, 10)),
+        record("compact", usage(5000, 300)), line("compacted", { message: "" }), count(usage(100, 10)),
+        record("r2", usage(200, 20)), count(usage(300, 30), usage(200, 20)),
+      ]);
+      expect(events.map((e) => e.input_tokens)).toEqual([100, 5000, 200]);
+      expect(events[1]!.quality_flags).toEqual(["compaction_usage_from_record"]);
+      expect(events[2]!.quality_flags).toEqual([]);
+      expect(new Set(events.map((e) => e.event_id)).size).toBe(3);
+    });
+
+    it("releases an unclaimed record when a repeated snapshot or the next record arrives", () => {
+      const dup = feed([record("r1", usage(100, 10)), count(usage(100, 10)), record("lost", usage(50, 5)), count(usage(100, 10))]);
+      expect(dup.events.map((e) => e.input_tokens)).toEqual([100, 50]);
+      const next = feed([record("lost", usage(50, 5)), record("r1", usage(100, 10)), count(usage(100, 10))]);
+      expect(next.events.map((e) => e.input_tokens)).toEqual([50, 100]);
+      expect(next.events[0]!.quality_flags).toContain("usage_record_without_token_count");
+    });
+
+    it("never bills both a record and a disagreeing token_count; marks the gap as withheld", () => {
+      const { events, out } = feed([record("r1", usage(999, 9)), count(usage(100, 10))]);
+      expect(events.map((e) => e.input_tokens)).toEqual([100]);
+      expect(events[0]!.quality_flags).toEqual(expect.arrayContaining(["usage_record_unmatched", "cumulative_gap"]));
+      expect(out[1]!.withheld).toEqual(["usage_record_unmatched"]);
+    });
+
+    it("ignores a record for another thread", () => {
+      const { events, out } = feed([record("x", usage(100, 10), { thread_id: "other" })]);
+      expect(events).toEqual([]);
+      expect(out[0]!.withheld).toEqual([]);
+    });
+  });
+
+  it("counts only dropped or withheld records as withheld, not notes about emitted events", () => {
+    const noTurn = parseCodexLine(line("turn_context", { model: "gpt-test" }), parseCodexLine(meta(), createCodexParserState()).state).state;
+    const emitted = parseCodexLine(count({ input_tokens: 100, output_tokens: 10 }), noTurn);
+    expect(emitted.event).not.toBeNull();
+    expect(emitted.warnings).toEqual(expect.arrayContaining(["turn_id_unavailable", "total_tokens_derived"]));
+    expect(emitted.withheld).toEqual([]);
+    const first = parseCodexLine(count(usage(100, 10)), ready());
+    expect(parseCodexLine(count(usage(100, 10)), first.state).withheld).toEqual([]); // a suppressed repeat loses nothing
+    expect(parseCodexLine("{not json", ready()).withheld).toEqual(["invalid_json"]);
+  });
+
+  it("keeps a gap flag pending across an all-zero observation instead of dropping it", () => {
+    const a = parseCodexLine(count(usage(100, 10)), ready());
+    const zero = parseCodexLine(count(usage(5000, 300), usage(0, 0)), a.state);
+    expect(zero.event).toBeNull();
+    const next = parseCodexLine(count(usage(5100, 310), usage(100, 10)), zero.state);
+    expect(next.event?.quality_flags).toContain("cumulative_gap");
+  });
 });
+

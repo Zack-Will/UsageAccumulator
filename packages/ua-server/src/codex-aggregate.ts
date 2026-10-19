@@ -6,6 +6,8 @@ export type CodexUsageBy = "day" | "model" | "machine" | "project" | "session";
 const COVERAGE_NEUTRAL_FLAGS = new Set([
   "configured_account_history", "total_tokens_derived", "model_unknown", "turn_id_unavailable",
   "reasoning_output_tokens_unreported",
+  // A request reported only by its per-request usage record (context compaction): complete usage.
+  "compaction_usage_from_record", "usage_record_without_token_count",
 ]);
 
 function totals(rows: CodexEventRow[]) {
@@ -63,7 +65,7 @@ export function aggregateCodexUsage(rows: CodexEventRow[], by: CodexUsageBy, tim
       }
       case "model": key = e.model || "(unknown)"; break;
       case "machine": key = row.machine_id; break;
-      case "project": key = e.project ?? "(unknown)"; break;
+      case "project": key = e.project || "(unknown)"; break;
       case "session": key = e.session_id; break;
     }
     const group = groups.get(key) ?? [];
