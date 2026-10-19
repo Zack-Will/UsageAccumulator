@@ -100,7 +100,7 @@ function modelInFamily(model: string, family: string): boolean {
  * 以前这里是一个 132px 高的圆环，只装得下一个数字；换成条之后同样的信息只要 8px，
  * 而且多出了「时间走到哪了」这一维。
  */
-function QuotaBar({
+export function QuotaBar({
   used,
   projected,
   pace,

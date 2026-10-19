@@ -377,6 +377,113 @@ export interface QuotaSessionStatus {
   orgs: QuotaOrg[] | null;
 }
 
+// ── /v1/codex（docs/CODEX-API.md）─────────────────────────────────────────
+/**
+ * Codex 是独立账本：不挂在 Claude 的 profile 下，额度、本地用量、官方汇总三份数据互不相加。
+ */
+export interface CodexAccount {
+  account_id: string;
+  email: string;
+  plan_type: string | null;
+  first_seen_at: Rfc3339;
+  last_seen_at: Rfc3339;
+}
+
+export interface CodexQuotaWindow {
+  window_id: string;
+  limit_id: string;
+  /** primary 不等于 5h，时长看 duration_minutes */
+  slot: "primary" | "secondary";
+  label: string | null;
+  used_percent: Pct;
+  duration_minutes: number | null;
+  resets_at: Rfc3339 | null;
+}
+
+export interface CodexQuotaLimit {
+  limit_id: string;
+  plan_type: string | null;
+  credits: { has_credits: boolean; unlimited: boolean; balance: string | null } | null;
+  /** 非空 = 官方说这个限额已经撞上了 */
+  limit_reached: string | null;
+}
+
+export interface CodexQuotaSnapshot {
+  captured_at: Rfc3339;
+  windows: CodexQuotaWindow[];
+  limits: CodexQuotaLimit[];
+}
+
+export interface CodexCollectorStatus {
+  captured_at: Rfc3339;
+  state: "ok" | "auth" | "error";
+  error_code: string | null;
+  backfill_from: Rfc3339;
+  scanned_files: number;
+  parse_warnings: number;
+}
+
+export interface CodexCollector {
+  account_id: string;
+  machine_id: string;
+  hostname?: string | null;
+  collector: CodexCollectorStatus;
+  received_at: Rfc3339;
+  age_seconds: number | null;
+  stale: boolean;
+  conflicting_observations: number;
+  /** 被扣留、可能带用量的记录；只有它影响完整性 */
+  parse_warnings_total: number;
+}
+
+export interface CodexQuotaResponse {
+  account_id: string;
+  /** null = 从没采到过；windows 为空 = 最近一次采到了、但官方没给任何窗口。两者不同 */
+  snapshot: CodexQuotaSnapshot | null;
+  age_seconds: number | null;
+  stale: boolean;
+}
+
+export type CodexUsageBy = "day" | "model" | "machine" | "project" | "session";
+
+export interface CodexAggregate {
+  events: number;
+  /** cached_input / cache_write_input 是 input 的子集，reasoning_output 是 output 的子集 —— 不得再加进 total */
+  tokens: { input: number; cached_input: number; cache_write_input: number; output: number; reasoning_output: number; total: number };
+  /** 有报价部分的小计；一个都没报价时 null（不是 $0） */
+  cost_usd: number | null;
+  pricing_complete: boolean;
+  usage_complete: boolean;
+  usage_coverage_status: "no_data" | "incomplete" | "no_known_gaps";
+  incomplete_events: number;
+  priced_events: number;
+  unpriced_events: number;
+}
+
+export interface CodexUsageBucket extends CodexAggregate {
+  /** by=day 时是用量所在时区的 YYYY-MM-DD */
+  key: string;
+}
+
+export interface CodexUsage {
+  account_id: string;
+  from: Rfc3339;
+  to: Rfc3339;
+  by: CodexUsageBy;
+  timezone: string;
+  totals: CodexAggregate;
+  buckets: CodexUsageBucket[];
+}
+
+export interface CodexUsageParams {
+  account_id: string;
+  from: Rfc3339;
+  to: Rfc3339;
+  by: CodexUsageBy;
+  /** IANA 时区；看板传浏览器所在时区，按天的桶才和本地日期对得上 */
+  timezone: string;
+}
+
 export interface UaApi {
   readonly kind: "mock" | "live";
   profiles(signal?: AbortSignal): Promise<Profile[]>;
@@ -390,6 +497,11 @@ export interface UaApi {
   /** 服务端先拿它去问 claude.ai，认了才保存；不认就抛 ApiError，message 可以直接给人看。 */
   saveQuotaSession(profileId: string, change: { sessionKey?: string; orgUuid?: string }): Promise<QuotaSessionStatus>;
   clearQuotaSession(profileId: string): Promise<QuotaSessionStatus>;
+  /** 空数组 = 这台服务端还没接入 Codex */
+  codexAccounts(signal?: AbortSignal): Promise<CodexAccount[]>;
+  codexQuota(accountId: string, signal?: AbortSignal): Promise<CodexQuotaResponse>;
+  codexUsage(p: CodexUsageParams, signal?: AbortSignal): Promise<CodexUsage>;
+  codexCollectors(accountId: string, signal?: AbortSignal): Promise<CodexCollector[]>;
   /** 返回 unsubscribe。连接状态通过 onStatus 上报，供顶栏「同步状态」使用。 */
   stream(
     profileId: string,

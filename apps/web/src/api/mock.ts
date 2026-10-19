@@ -38,6 +38,7 @@ import type {
   WindowsCurrent,
 } from "./types";
 import { ApiError } from "./live";
+import { buildCodexCollectors, buildCodexQuota, buildCodexUsage, MOCK_CODEX_ACCOUNT } from "./mock-codex";
 
 const MIN = 60_000;
 const HOUR = 60 * MIN;
@@ -758,6 +759,11 @@ export function createMockApi(opts?: { latencyMs?: number }): UaApi {
       session = mockSession("none");
       return { ...session, profile_id: profileId };
     },
+    // ?scenario=codex-none：服务端还没接入 Codex
+    codexAccounts: (signal) => wait(scenario === "codex-none" ? [] : [MOCK_CODEX_ACCOUNT], signal),
+    codexQuota: (accountId, signal) => wait(buildCodexQuota(accountId, Date.now()), signal),
+    codexUsage: (p, signal) => wait(buildCodexUsage(p), signal),
+    codexCollectors: (accountId, signal) => wait(buildCodexCollectors(accountId, Date.now()), signal),
     stream(profileId, handlers) {
       handlers.onStatus("connecting");
       let drift = 0;
