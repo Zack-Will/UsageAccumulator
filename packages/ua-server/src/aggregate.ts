@@ -592,9 +592,10 @@ export function dispersionFrom(
 ): { k25: number; k75: number } {
   const midInc = linear.mid - pctNow;
   if (!(midInc > 0)) return { k25: 1, k75: 1 };
+  // 带宽必须包住中心估计：样本只有两三个时（刚重置、刚开窗）线性三分位可能都落在中位数同一侧
   return {
-    k25: Math.max(0, (linear.p25 - pctNow) / midInc),
-    k75: Math.max(0, (linear.p75 - pctNow) / midInc),
+    k25: Math.min(1, Math.max(0, (linear.p25 - pctNow) / midInc)),
+    k75: Math.max(1, (linear.p75 - pctNow) / midInc),
   };
 }
 

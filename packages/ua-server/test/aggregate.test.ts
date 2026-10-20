@@ -314,6 +314,7 @@ describe("7d calendar projection (§7.2)", () => {
     expect(dispersionFrom(60, { p25: 70, mid: 80, p75: 100 })).toEqual({ k25: 0.5, k75: 2 });
     // 线性中心估计没有前进时不硬造带宽
     expect(dispersionFrom(60, { p25: 60, mid: 60, p75: 60 })).toEqual({ k25: 1, k75: 1 });
+    expect(dispersionFrom(60, { p25: 62, mid: 80, p75: 75 })).toEqual({ k25: 0.1, k75: 1 });
   });
 });
 
