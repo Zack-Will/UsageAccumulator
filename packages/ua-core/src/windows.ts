@@ -152,6 +152,61 @@ export function projectWindow(args: {
   return { ratePctPerMin: rMid, projected, projectedUnclamped, exhaustEta };
 }
 
+/** 掉回这么多个点才算官方重置：两路采集时钟差几秒，排序后可能出现 1 个点的回退 */
+export const QUOTA_RESET_MIN_DROP_PCT = 2;
+
+export interface QuotaReset {
+  /** 重置发生在这两次观测之间 */
+  after: Date;
+  at: Date;
+  fromPct: number;
+  toPct: number;
+}
+
+export interface QuotaSegmentation {
+  resets: QuotaReset[];
+  /** 与输入（按时间排序后）一一对应的段号，第一次重置之前为 0 */
+  segmentOf: number[];
+  /** 当前段（最后一次重置之后）的样本；没有重置就是全部 */
+  current: QuotaSample[];
+  /** 当前段从哪一刻算起：最后一次重置前的那次观测；没有重置为 null（从窗口开头算） */
+  currentStart: Date | null;
+  /** 本期累计：各段峰值之和。重置都是清零，所以每段从 0 起算，重置前用掉的不会丢 */
+  cumulativePct: number;
+}
+
+/**
+ * 同一个窗口内的官方提前重置（重置卡、统一重置）：百分比在计划的 resets_at 之前掉回去，
+ * resets_at 不变。只看一个窗口内的样本 —— 跨窗口的归零由调用方按 resets_at 切开，不在这里。
+ *
+ * 不切段会出三类错：速率与预测把清零当成负增长或混进重置前的高速率；「本期用了多少」只剩
+ * 重置之后的那一截；燃尽曲线画出一条从高处直落到 0 的线。
+ */
+export function segmentQuotaSamples(samples: readonly QuotaSample[]): QuotaSegmentation {
+  const s = [...samples].filter((x) => Number.isFinite(x.pct)).sort((a, b) => a.ts.getTime() - b.ts.getTime());
+  const resets: QuotaReset[] = [];
+  const segmentOf: number[] = [];
+  const peaks: number[] = [0];
+  for (let i = 0; i < s.length; i++) {
+    const cur = s[i]!;
+    const prev = s[i - 1];
+    if (prev && prev.pct - cur.pct >= QUOTA_RESET_MIN_DROP_PCT) {
+      resets.push({ after: prev.ts, at: cur.ts, fromPct: prev.pct, toPct: cur.pct });
+      peaks.push(0);
+    }
+    segmentOf.push(resets.length);
+    peaks[resets.length] = Math.max(peaks[resets.length]!, cur.pct);
+  }
+  const last = resets[resets.length - 1];
+  return {
+    resets,
+    segmentOf,
+    current: s.filter((_, i) => segmentOf[i] === resets.length),
+    currentStart: last ? last.after : null,
+    cumulativePct: peaks.reduce((a, b) => a + b, 0),
+  };
+}
+
 /** 本地推算窗口终点与官方 resets_at 的偏移（分钟，正数=官方更晚）。 */
 export function windowOffsetMin(localEnd: Date, officialResetsAt: Date): number {
   return (officialResetsAt.getTime() - localEnd.getTime()) / 60000;

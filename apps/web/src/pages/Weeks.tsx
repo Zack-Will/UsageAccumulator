@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import type { UaApi, WindowsCurrent } from "../api";
-import { costSummary } from "../api/derive";
+import { costSummary, cumulativePct } from "../api/derive";
 import { fmtTokens, msOf } from "../charts/base";
 import { weeklyQuotaOption } from "../charts/weekly";
 import type { Tokens } from "../charts/tokens";
@@ -99,10 +99,10 @@ export function Weeks({ api, t, profileId, nonce, windows }: Props) {
   const tokens = usage.data ? usage.data.buckets.reduce((a, b) => a + b.total_tokens, 0) : 0;
   const events = usage.data ? usage.data.buckets.reduce((a, b) => a + b.events, 0) : 0;
 
-  // 这一周结束时（或最后一次采样时）的已用百分比
+  // 这一周累计用掉的百分比：用过重置卡时是各段峰值之和，不是最后一次采样
   const endPct = useMemo(() => {
-    const ss = quota.data?.samples ?? [];
-    return ss.length > 0 ? (ss[ss.length - 1]?.utilization_pct ?? null) : null;
+    const ss = [...(quota.data?.samples ?? [])].sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts));
+    return ss.length > 0 ? cumulativePct(ss.map((s) => s.utilization_pct)) : null;
   }, [quota.data]);
 
   /**

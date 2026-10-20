@@ -62,6 +62,17 @@ export interface BurnPoint {
   ts: Rfc3339;
   pct: Pct;
   source: BurnSource;
+  /** 第几段：官方提前重置（重置卡）后加一，画图时段与段之间断开。旧服务端不给 */
+  segment?: number;
+}
+
+/** 窗口内的官方提前重置：所有窗口同时清零，resets_at 不变 */
+export interface WindowReset {
+  /** 重置发生在这两次观测之间 */
+  after: Rfc3339;
+  at: Rfc3339;
+  from_pct: Pct;
+  to_pct: Pct;
 }
 
 export interface ProjectedPct {
@@ -109,6 +120,9 @@ export interface WindowState {
   exhaust_eta: Rfc3339 | null;
   rate_pct_per_min: number;
   burn_curve: BurnPoint[];
+  /** 本期累计 = 各段峰值之和；没重置过时等于 utilization_pct。旧服务端不给 */
+  cumulative_pct?: Pct;
+  resets?: WindowReset[];
   projected_curve: ProjectedCurvePoint[];
   /** 最近一次额度快照的采集时刻。 */
   captured_at: Rfc3339;

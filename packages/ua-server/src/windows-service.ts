@@ -8,6 +8,7 @@ import {
   nonCodeSeries,
   parseProductBreakdown,
   projectWindow,
+  segmentQuotaSamples,
   type BreakdownSample,
   type UsageEvent,
 } from "@ua/core";
@@ -41,6 +42,17 @@ export interface BurnCurvePoint {
   ts: string;
   pct: number;
   source: "official" | "interpolated";
+  /** 第几段：官方提前重置（重置卡）之后加一。画图时段与段之间断开 */
+  segment: number;
+}
+
+/** 窗口内的官方提前重置：所有窗口同时清零，resets_at 不变 */
+export interface WindowResetDto {
+  /** 重置发生在这两次观测之间 */
+  after: string;
+  at: string;
+  from_pct: number;
+  to_pct: number;
 }
 
 /** CONTRACT §2.1 的响应形状（wire 上是 snake_case）。 */
@@ -53,6 +65,12 @@ export interface CurrentWindowDto {
   exhaust_eta: string | null;
   rate_pct_per_min: number;
   burn_curve: BurnCurvePoint[];
+  /**
+   * 本期累计：各段峰值之和。没有重置时等于 utilization_pct；用过重置卡后，
+   * utilization_pct 只是重置之后的那一截，这个才是本期真正用掉的。
+   */
+  cumulative_pct: number;
+  resets: WindowResetDto[];
   /** 最近一次额度快照的采集时刻，不是本次请求时刻 */
   captured_at: string;
   /** 超过 quotaStaleMs 没收到新快照 */
@@ -327,7 +345,8 @@ export async function fullCostReference(
       }
       // 有缺价事件的窗口不用：它的用量算进了百分比，花费却是 0，参考值会被拉低
       if (unpriced > 0 || spend <= 0) continue;
-      const util = lastSample.pct;
+      // 分母是本期累计：窗口里用过重置卡时，最后一个样本只是重置之后的那一截
+      const util = Math.max(segmentQuotaSamples(samples).cumulativePct, lastSample.pct);
       const attr = attributeQuota(samples, evTs, nonCodeIn ? { nonCode: nonCodeIn, windowStart: start } : {});
       // 采样有洞时差额归因不可信，「本地占比」跟着不可信
       if (attr.hasSamplingGap) continue;
@@ -406,8 +425,11 @@ export async function computeCurrentWindows(
     const windowStart = new Date(windowEnd.getTime() - windowMs);
 
     const samples = await store.quotaSamples(profileId, w.windowKind, windowStart);
+    // 重置卡会把所有窗口清零而 resets_at 不变：按回落切段，预测只用最后一段
+    const seg = segmentQuotaSamples(samples);
+    const cumulative = Math.max(seg.cumulativePct, w.utilizationPct);
     // 线性模型（§7.1）：5h 直接用它；7d 只借它的三分位当相对带宽
-    const linear = projectWindow({ samples, now, windowEnd });
+    const linear = projectWindow({ samples: seg.current, now, windowEnd });
 
     let metrics: WindowMetrics | null = null;
     if (windowMs <= OFFSET_MAX_WINDOW_MS) {
@@ -445,7 +467,8 @@ export async function computeCurrentWindows(
       const calendar = projectCalendarWindow({
         pctNow: w.utilizationPct,
         now,
-        windowStart,
+        // 重置之后的百分比只对应重置之后的那段时间：已过的加权天数从重置那一刻起算
+        windowStart: seg.currentStart ?? windowStart,
         windowEnd,
         weights,
         dispersion: dispersionFrom(w.utilizationPct, linear.projectedUnclamped),
@@ -478,10 +501,11 @@ export async function computeCurrentWindows(
     //   安静时段里 0.05 点的聊天就能把计数推过整数线，差额法会把整整 1 点记到别处。
     //   2026-09-29 线上：差额法 1 点、拆分 0.3 点。拆分覆盖整周且是官方逐产品计量，更可信；
     //   代价是看不见「没装探针的机器上的 Code」—— 目前两台机器都装了探针。
+    // 别处的消耗与本地占比都按本期累计算：分子（本期本地花费）含重置前的部分，分母也得含
     const otherPct =
       scale === 1 && nonCodePct !== null
-        ? Math.max(0, Math.min(w.utilizationPct, nonCodePct))
-        : fuseOtherPct(attr, nonCodeIn ? nonCode.quantumOf(w.windowKind) : null, w.utilizationPct);
+        ? Math.max(0, Math.min(cumulative, nonCodePct))
+        : fuseOtherPct(attr, nonCodeIn ? nonCode.quantumOf(w.windowKind) : null, cumulative);
     const usable = attributionIsUsable(attr) || (scale === 1 && nonCodePct !== null);
 
     const burnCurve = downsample(samples, maxBurnPoints).map((s) => ({
@@ -489,6 +513,7 @@ export async function computeCurrentWindows(
       pct: s.pct,
       // v1 全是官方快照点；插值尚未实现，一旦实现必须标 "interpolated"
       source: "official" as const,
+      segment: seg.resets.filter((r) => r.at.getTime() <= s.ts.getTime()).length,
     }));
 
     windows.push({
@@ -500,6 +525,13 @@ export async function computeCurrentWindows(
       exhaust_eta: exhaustEta ? exhaustEta.toISOString() : null,
       rate_pct_per_min: ratePctPerMin,
       burn_curve: burnCurve,
+      cumulative_pct: cumulative,
+      resets: seg.resets.map((r) => ({
+        after: r.after.toISOString(),
+        at: r.at.toISOString(),
+        from_pct: r.fromPct,
+        to_pct: r.toPct,
+      })),
       captured_at: w.capturedAt.toISOString(),
       stale: now.getTime() - w.capturedAt.getTime() > staleMs,
       metrics: metrics
@@ -523,7 +555,7 @@ export async function computeCurrentWindows(
         usable,
         non_code_pct: nonCodePct,
         other_pct: otherPct,
-        local_utilization_pct: Math.max(0, w.utilizationPct - otherPct),
+        local_utilization_pct: Math.max(0, cumulative - otherPct),
       },
       full_cost_reference: w.windowKind === "five_hour" ? reference : null,
       quota_weights: quotaWeights(w.windowKind),

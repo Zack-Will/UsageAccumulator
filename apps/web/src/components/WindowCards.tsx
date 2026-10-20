@@ -237,7 +237,10 @@ export function WindowCard({
    * 东西（比如本周还没用过 Fable）。算出来的 0 会被读成「周限额是零美元」。
    */
   const attr = w.attribution;
-  const localPct = attr ? attr.local_utilization_pct : w.utilization_pct;
+  // 用过重置卡时，本地花费含重置前的部分，分母也得是本期累计
+  const cumulative = Math.max(w.cumulative_pct ?? w.utilization_pct, w.utilization_pct);
+  const resetCount = idle ? 0 : (w.resets?.length ?? 0);
+  const localPct = attr ? attr.local_utilization_pct : cumulative;
   const extrapolated =
     quotaUsd != null && quotaUsd > 0 && localPct > 0 ? quotaUsd / (localPct / 100) : null;
   /**
@@ -255,7 +258,7 @@ export function WindowCard({
    * 以前写的是 other_pct 本身（占限额）：7d 用了 15%、其中 23% 是 Cowork/聊天时显示「3% 非 Code」，
    * 旁边「本周按产品」卡却写着 Claude Code 77% —— 两个带 % 的数口径不同，读起来就是算错了。
    */
-  const otherShare = w.utilization_pct > 0 ? Math.min(100, (otherPct / w.utilization_pct) * 100) : 0;
+  const otherShare = cumulative > 0 ? Math.min(100, (otherPct / cumulative) * 100) : 0;
 
   const etaTone = remain === null ? "muted" : remain < 45 * 60_000 ? "danger" : "warn";
 
@@ -284,6 +287,12 @@ export function WindowCard({
             size="xl"
             tone={idle ? "muted" : tone === "ok" ? undefined : tone}
           />
+          {resetCount > 0 && (
+            <span className="quota__proj" title={`本期提前重置 ${resetCount} 次`}>
+              <Mono tone="muted">累计</Mono>
+              <Num value={cumulative} digits={0} suffix="%" size="md" />
+            </span>
+          )}
           {/* 空闲窗口没有「重置时」，预计值无从谈起 —— 留空，不写一个假的 0% */}
           {!idle && (
             <span className="quota__proj">

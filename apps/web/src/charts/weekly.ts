@@ -9,6 +9,7 @@ import type { EChartsOption } from "./echarts";
 import { axisCommon, baseOption, NUM_FONT } from "./base";
 import { alpha, type Tokens } from "./tokens";
 import type { QuotaSample } from "../api/types";
+import { QUOTA_RESET_MIN_DROP_PCT } from "../api/derive";
 
 export function weeklyQuotaOption(
   t: Tokens,
@@ -20,6 +21,11 @@ export function weeklyQuotaOption(
     .map((s) => [Date.parse(s.ts), s.utilization_pct] as [number, number])
     .filter(([ms]) => Number.isFinite(ms))
     .sort((a, b) => a[0] - b[0]);
+  // 提前重置（回落 ≥2 点）处断开，不画成一条直落的竖线
+  const data: [number, number | null][] = pts.flatMap(([ms, v], i): [number, number | null][] => {
+    const prev = pts[i - 1];
+    return prev && prev[1] - v >= QUOTA_RESET_MIN_DROP_PCT ? [[ms - 1, null], [ms, v]] : [[ms, v]];
+  });
 
   return {
     ...baseOption(t),
@@ -27,7 +33,7 @@ export function weeklyQuotaOption(
     tooltip: {
       ...baseOption(t).tooltip,
       trigger: "axis",
-      valueFormatter: (v) => `${Number(v).toFixed(1)}%`,
+      valueFormatter: (v) => (v === null || v === undefined ? "—" : `${Number(v).toFixed(1)}%`),
     },
     xAxis: {
       type: "time",
@@ -65,7 +71,8 @@ export function weeklyQuotaOption(
         name: "已用",
         step: "end",
         showSymbol: false,
-        data: pts,
+        data,
+        connectNulls: false,
         lineStyle: { width: 1.6, color: t["cat1"] },
         areaStyle: { color: alpha(t["cat1"], 0.14) },
       },

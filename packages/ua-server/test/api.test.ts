@@ -603,7 +603,7 @@ describe("GET /v1/windows/current", () => {
         // v1 只有官方快照点；插值尚未实现，实现后必须标 "interpolated"
         for (const p of five.burn_curve) {
           expect(p.source).toBe("official");
-          expect(Object.keys(p).sort()).toEqual(["pct", "source", "ts"]);
+          expect(Object.keys(p).sort()).toEqual(["pct", "segment", "source", "ts"]);
         }
       });
   });

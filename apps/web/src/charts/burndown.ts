@@ -19,7 +19,12 @@ function splitBySource(w: WindowState): {
   const interp = (i: number): boolean => pts[i]?.source === "interpolated";
   const hasInterp = pts.some((p) => p.source === "interpolated");
 
-  const official: MaybePair[] = pts.map((p, i) => [Date.parse(p.ts), interp(i) ? null : p.pct]);
+  // 提前重置处断开：在新段第一个点前插一个空值，否则会画出一条从高处直落的竖线
+  const official: MaybePair[] = pts.flatMap((p, i): MaybePair[] => {
+    const pt: MaybePair = [Date.parse(p.ts), interp(i) ? null : p.pct];
+    const broke = i > 0 && (p.segment ?? 0) !== (pts[i - 1]?.segment ?? 0);
+    return broke ? [[pt[0] - 1, null], pt] : [pt];
+  });
   if (!hasInterp) return { official, interpolated: null };
 
   // 虚线段两端各延伸一个 official 点，否则两段之间会断开
@@ -116,6 +121,12 @@ export function burndownOption(
           lineStyle: { color: s.danger, width: 1 },
           label: { position: "insideEndTop", color: s.danger, rotate: 0 },
         },
+        ...(w.resets ?? []).map((r) => ({
+          name: "重置",
+          xAxis: Date.parse(r.at),
+          lineStyle: { color: s.ok, type: "dashed" as const, width: 1 },
+          label: { position: "insideEndTop" as const, color: s.ok, rotate: 0 },
+        })),
         {
           name: "现在",
           xAxis: nowMs,

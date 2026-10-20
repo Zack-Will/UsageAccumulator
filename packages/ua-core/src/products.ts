@@ -93,7 +93,12 @@ export interface NonCodePoint {
   ts: Date;
   pct: number;
   groupStart: Date | null;
+  /** 同一周内第几段：官方提前重置（resets_at 不变、百分比清零）后从 0 重新累计 */
+  segment?: number;
 }
+
+/** 7d 周百分比掉回这么多才算重置（与 @ua/core windows 的口径一致） */
+const RESET_MIN_DROP_PCT = 2;
 
 /** Pool-Adjacent-Violators：最小二乘意义下最接近 y 的非降序列 */
 export function isotonic(y: number[]): number[] {
@@ -128,10 +133,12 @@ export function nonCodeSeries(samples: BreakdownSample[]): NonCodePoint[] {
   const out: NonCodePoint[] = [];
   let group: { s: BreakdownSample; share: number }[] = [];
   let groupKey: number | null = null;
+  let segment = 0;
   const flush = () => {
     if (group.length === 0) return;
+    // 单调拟合只在一段之内做：跨重置做会把那次清零抹平
     const fit = isotonic(group.map((g) => (g.s.weeklyPct * g.share) / 100));
-    group.forEach((g, i) => out.push({ ts: g.s.ts, pct: fit[i]!, groupStart: g.s.breakdown.windowStartedAt }));
+    group.forEach((g, i) => out.push({ ts: g.s.ts, pct: fit[i]!, groupStart: g.s.breakdown.windowStartedAt, segment }));
     group = [];
   };
   for (const p of pts) {
@@ -141,7 +148,12 @@ export function nonCodeSeries(samples: BreakdownSample[]): NonCodePoint[] {
     const newWeek =
       last !== undefined &&
       (key !== null && groupKey !== null ? key !== groupKey : p.s.weeklyPct < last.s.weeklyPct);
-    if (newWeek) flush();
+    // 同一周内周百分比掉回去：官方提前重置，周起点不变，非 Code 累计量同样清零重来
+    const reset = last !== undefined && !newWeek && last.s.weeklyPct - p.s.weeklyPct >= RESET_MIN_DROP_PCT;
+    if (newWeek || reset) {
+      flush();
+      segment = newWeek ? 0 : segment + 1;
+    }
     group.push(p);
     if (key !== null) groupKey = key;
   }
@@ -174,8 +186,10 @@ export function increaseIndex(series: NonCodePoint[]): (from: Date, to: Date) =>
       const q = series[i - 1]!;
       const a = weekOf(q);
       const b = weekOf(p);
-      // 换周：新周的累计量从 0 起算，整个值都是增量（不能只看有没有下跌 —— 断档跨周时可能不跌）
-      const newWeek = a !== null && b !== null ? a !== b : p.pct < q.pct;
+      // 换周：新周的累计量从 0 起算，整个值都是增量（不能只看有没有下跌 —— 断档跨周时可能不跌）。
+      // 同一周内换段（官方提前重置）同理：重置后的值整个都是新增
+      const newWeek =
+        (a !== null && b !== null ? a !== b : p.pct < q.pct) || (p.segment ?? 0) !== (q.segment ?? 0);
       acc += newWeek ? p.pct : p.pct - q.pct;
     }
     cum.push(acc);

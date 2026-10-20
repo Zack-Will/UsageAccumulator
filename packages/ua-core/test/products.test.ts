@@ -104,6 +104,21 @@ describe("increaseBetween", () => {
   });
 });
 
+describe("重置卡（同一周内回落）", () => {
+  it("重置前后分段拟合，跨段的增量是新段的值而不是负数", () => {
+    // 本周 40%（chat 10%×40=4）→ 重置卡清零 → 10%（chat 20%×10=2）
+    const s = nonCodeSeries([sample(0, 30, 90), sample(10, 40, 90), sample(20, 10, 80), sample(30, 12, 80)]);
+    expect(s.map((p) => p.segment)).toEqual([0, 0, 1, 1]);
+    expect(increaseIndex(s)(min(10), min(20))).toBeCloseTo(2);
+    expect(increaseIndex(s)(min(0), min(30))).toBeCloseTo(1 + 2.4);
+  });
+
+  it("回落不到 2 个点是取整抖动，不算重置", () => {
+    const s = nonCodeSeries([sample(0, 30, 90), sample(10, 29, 90)]);
+    expect(s.map((p) => p.segment)).toEqual([0, 0]);
+  });
+});
+
 describe("limitRatio", () => {
   const pairs = (xs: Array<[number, number, number]>) => ({
     short: xs.map(([m, a]) => ({ ts: min(m), pct: a })) as QuotaSample[],

@@ -4,6 +4,7 @@ import {
   bucketTicks,
   byCostThenTokens,
   cacheHitPct,
+  cumulativePct,
   modelDisplayName,
   treemapAreas,
   usageTotals,
@@ -267,5 +268,13 @@ describe("treemapAreas / 树图保底面积", () => {
 describe("escapeHtml", () => {
   it("会话标题里的尖括号、引号不会被当成 HTML", () => {
     expect(escapeHtml(`修 <div> 对齐 & "引号" 'x'`)).toBe("修 &#60;div&#62; 对齐 &#38; &#34;引号&#34; &#39;x&#39;");
+  });
+});
+
+describe("cumulativePct", () => {
+  it("重置卡清零后累计是各段峰值之和；不到 2 点的回落只是取整抖动", () => {
+    expect(cumulativePct([10, 60, 0, 5, 25])).toBe(85);
+    expect(cumulativePct([10, 13, 12, 14])).toBe(14);
+    expect(cumulativePct([])).toBe(0);
   });
 });

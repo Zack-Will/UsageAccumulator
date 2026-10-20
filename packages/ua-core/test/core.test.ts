@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { calibrate, type CalibObservation } from "../src/calibration.js";
 import { dedupKey, semanticId, usageRank } from "../src/dedup.js";
 import { parseLine } from "../src/jsonl.js";
-import { FIVE_HOURS_MS, multiMachineOverlap, projectWindow, segmentBlocks, sessionCutRate } from "../src/windows.js";
+import { FIVE_HOURS_MS, multiMachineOverlap, projectWindow, segmentBlocks, segmentQuotaSamples, sessionCutRate } from "../src/windows.js";
 import type { UsageEvent } from "../src/types.js";
 
 const CTX = { machineId: "m1", profileId: "p1", attributionLevel: "timeline" as const };
@@ -135,6 +135,28 @@ describe("segmentBlocks", () => {
   });
 
   it("空输入返回空", () => expect(segmentBlocks([])).toEqual([]));
+});
+
+describe("segmentQuotaSamples", () => {
+  const at = (m: number) => new Date(Date.UTC(2026, 9, 20, 0, m));
+  const qs = (xs: Array<[number, number]>) => xs.map(([m, pct]) => ({ ts: at(m), pct }));
+
+  it("回落 ≥2 个点切段：本期累计是各段峰值之和，当前段从重置后开始", () => {
+    const seg = segmentQuotaSamples(qs([[0, 10], [10, 60], [20, 0], [30, 5], [40, 25]]));
+    expect(seg.resets).toEqual([{ after: at(10), at: at(20), fromPct: 60, toPct: 0 }]);
+    expect(seg.segmentOf).toEqual([0, 0, 1, 1, 1]);
+    expect(seg.current.map((s) => s.pct)).toEqual([0, 5, 25]);
+    expect(seg.currentStart).toEqual(at(10));
+    expect(seg.cumulativePct).toBe(85);
+  });
+
+  it("没有重置时就是原样：累计 = 峰值，当前段 = 全部", () => {
+    const seg = segmentQuotaSamples(qs([[20, 12], [0, 3], [10, 13]]));
+    expect(seg.resets).toEqual([]);
+    expect(seg.current.map((s) => s.pct)).toEqual([3, 13, 12]);
+    expect(seg.currentStart).toBeNull();
+    expect(seg.cumulativePct).toBe(13);
+  });
 });
 
 describe("projectWindow", () => {

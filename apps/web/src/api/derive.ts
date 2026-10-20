@@ -16,6 +16,28 @@ const MIN = 60_000;
  * 因为 machine_id 是稳定 id，而 label 是展示文案 —— 主机改个名，按 label 取色就会满图换颜色。
  * 这里的用处只有一个：bucket.label 缺省时，拿 /v1/machines 补一个比 UUID 好看的名字。
  */
+/** 回落这么多个点才算一次官方提前重置；与服务端 QUOTA_RESET_MIN_DROP_PCT 一致 */
+export const QUOTA_RESET_MIN_DROP_PCT = 2;
+
+/**
+ * 按时间排好的百分比序列 → 本期累计（各段峰值之和）。
+ * 重置卡把额度清零而 resets_at 不变，最后一个样本只是重置之后的那一截。
+ */
+export function cumulativePct(pcts: readonly number[]): number {
+  let done = 0;
+  let peak = 0;
+  let prev: number | null = null;
+  for (const p of pcts) {
+    if (prev !== null && prev - p >= QUOTA_RESET_MIN_DROP_PCT) {
+      done += peak;
+      peak = 0;
+    }
+    peak = Math.max(peak, p);
+    prev = p;
+  }
+  return done + peak;
+}
+
 export interface MachineIndex {
   /** machine_id → 展示名；名册里没有就原样返回 */
   label(machineId: string): string;
