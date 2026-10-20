@@ -5,16 +5,36 @@ import { makeEvent } from "./helpers.js";
 
 const H = 3600_000;
 
-async function snap(store: MemoryStore, at: Date, pct: number, resetsAt: Date) {
+async function snap(store: MemoryStore, at: Date, pct: number, resetsAt: Date, windowKind = "five_hour") {
   await store.insertQuotaSnapshot({
     profileId: "claude-official",
     capturedAt: at,
-    windows: [{ windowKind: "five_hour", utilizationPct: pct, resetsAt }],
+    windows: [{ windowKind, utilizationPct: pct, resetsAt }],
     raw: {},
   });
 }
 
 describe("重置卡：期内清零、resets_at 不变", () => {
+  it("5h 用卡是提前开新窗口：名义起点里旧窗口的样本剔除，起点推到它们之后，不算期内重置", async () => {
+    // 2026-10-20 实况：09:50 到期的窗口 91% 时用卡，新窗口 resets_at 13:10，名义起点 08:10 早于用卡
+    const store = new MemoryStore();
+    const oldEnd = new Date("2026-10-20T09:50:00Z");
+    const newEnd = new Date("2026-10-20T13:09:59.871Z");
+    await snap(store, new Date("2026-10-20T08:08:53Z"), 89, oldEnd);
+    await snap(store, new Date("2026-10-20T08:11:38Z"), 91, oldEnd);
+    await snap(store, new Date("2026-10-20T08:17:11Z"), 3, newEnd);
+    await store.insertEvents([
+      { event: makeEvent({ messageId: "before", ts: new Date("2026-10-20T08:11:00Z") }), costUsd: 9 },
+      { event: makeEvent({ messageId: "after", ts: new Date("2026-10-20T08:15:00Z") }), costUsd: 1 },
+    ]);
+    const now = new Date("2026-10-20T08:18:00Z");
+    const w = (await computeCurrentWindows(store, "claude-official", { now })).windows[0]!;
+    expect(w.starts_at).toBe("2026-10-20T08:11:38.000Z");
+    expect(w.resets).toEqual([]);
+    expect(w.cumulative_pct).toBe(3);
+    expect(w.burn_curve.map((p) => p.pct)).toEqual([3]);
+  });
+
   it("当前窗口：预测只用重置之后的样本，累计与重置都给出，燃尽点按段编号", async () => {
     const store = new MemoryStore();
     const now = new Date("2026-10-20T10:00:00Z");

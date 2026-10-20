@@ -141,7 +141,7 @@ export class MemoryStore implements Store {
       if (until && snapshot.capturedAt >= until) continue;
       for (const w of snapshot.windows) {
         if (w.windowKind !== windowKind) continue;
-        out.push({ ts: snapshot.capturedAt, pct: w.utilizationPct });
+        out.push({ ts: snapshot.capturedAt, pct: w.utilizationPct, resetsAt: w.resetsAt ?? null });
       }
     }
     return out.sort((a, b) => a.ts.getTime() - b.ts.getTime());

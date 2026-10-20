@@ -8,6 +8,7 @@ import {
   nonCodeSeries,
   parseProductBreakdown,
   projectWindow,
+  samplesOfWindow,
   segmentQuotaSamples,
   type BreakdownSample,
   type UsageEvent,
@@ -326,8 +327,14 @@ export async function fullCostReference(
 
     const picks: { usd: number; partial: number }[] = [];
     for (const end of resets) {
-      const start = new Date(end.getTime() - FIVE_HOURS_MS);
-      const samples = allSamples.filter((x) => x.ts >= start && x.ts < end);
+      // 用过重置卡的窗口：名义起点之后还有旧窗口的样本，起点要推到它们之后
+      const own = samplesOfWindow(
+        allSamples.filter((x) => x.ts >= new Date(end.getTime() - FIVE_HOURS_MS) && x.ts < end),
+        end,
+        new Date(end.getTime() - FIVE_HOURS_MS),
+      );
+      const start = own.start;
+      const samples = own.samples;
       if (samples.length === 0) continue;
       const lastSample = samples[samples.length - 1]!;
       if (end.getTime() - lastSample.ts.getTime() > REFERENCE_MAX_TAIL_GAP_MS) continue;
@@ -422,9 +429,14 @@ export async function computeCurrentWindows(
   for (const w of latest) {
     const windowMs = inferWindowMs(w.windowKind);
     const windowEnd = w.resetsAt ?? new Date(now.getTime() + windowMs);
-    const windowStart = new Date(windowEnd.getTime() - windowMs);
-
-    const samples = await store.quotaSamples(profileId, w.windowKind, windowStart);
+    // 5h 用了重置卡会提前开新窗口：名义起点里混着旧窗口的样本，实际起点要往后推
+    const own = samplesOfWindow(
+      await store.quotaSamples(profileId, w.windowKind, new Date(windowEnd.getTime() - windowMs)),
+      w.resetsAt,
+      new Date(windowEnd.getTime() - windowMs),
+    );
+    const windowStart = own.start;
+    const samples = own.samples;
     // 重置卡会把所有窗口清零而 resets_at 不变：按回落切段，预测只用最后一段
     const seg = segmentQuotaSamples(samples);
     const cumulative = Math.max(seg.cumulativePct, w.utilizationPct);

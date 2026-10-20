@@ -48,6 +48,36 @@ export function segmentBlocks(events: UsageEvent[], windowMs = FIVE_HOURS_MS): B
 export interface QuotaSample {
   ts: Date;
   pct: number;
+  /** 这次快照里官方给的重置时刻；只有判断「是不是同一个窗口」时才用到 */
+  resetsAt?: Date | null;
+}
+
+/** 同一个窗口的 resets_at 每次相差不到一秒；quotaWindowResets 按 10 分钟取整，容差放到 10 分钟 */
+export const SAME_WINDOW_TOLERANCE_MS = 10 * 60_000;
+
+/**
+ * 从「按名义起点（resets_at − 窗口长度）取出的样本」里挑出真正属于这个窗口的。
+ *
+ * 重置卡对 5h 是「提前结束旧窗口、下一条消息开新窗口」：新窗口的 resets_at 往后挪，
+ * 名义起点却早于用卡时刻，会把旧窗口末尾的高百分比样本也框进来，被误当成期内重置。
+ * resets_at 对不上的样本属于别的窗口，剔除；窗口的实际起点推到最后一个外来样本，
+ * 保守地把那几分钟算进新窗口（不知道卡具体是哪一刻用的）。
+ * 没有 resets_at 的样本（空闲窗口、旧数据）照收。
+ */
+export function samplesOfWindow<T extends QuotaSample>(
+  samples: readonly T[],
+  resetsAt: Date | null,
+  nominalStart: Date,
+): { samples: T[]; start: Date } {
+  if (!resetsAt) return { samples: [...samples], start: nominalStart };
+  const own: T[] = [];
+  let start = nominalStart;
+  for (const s of samples) {
+    if (s.resetsAt && Math.abs(s.resetsAt.getTime() - resetsAt.getTime()) > SAME_WINDOW_TOLERANCE_MS) {
+      if (s.ts > start) start = s.ts;
+    } else own.push(s);
+  }
+  return { samples: own.filter((s) => s.ts >= start), start };
 }
 
 export interface Projection {

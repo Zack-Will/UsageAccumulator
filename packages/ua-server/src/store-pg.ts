@@ -287,12 +287,16 @@ export class PgStore implements Store {
      */
     const upperClause = until ? this.sql`AND captured_at < ${until}` : this.sql``;
     const rows = await this.sql<Record<string, unknown>[]>`
-      SELECT captured_at, utilization_pct
+      SELECT captured_at, utilization_pct, resets_at
       FROM quota_snapshots
       WHERE profile_id = ${profileId} AND window_kind = ${windowKind}
         AND captured_at >= ${since} ${upperClause}
       ORDER BY captured_at`;
-    return rows.map((r) => ({ ts: r["captured_at"] as Date, pct: n(r["utilization_pct"]) }));
+    return rows.map((r) => ({
+      ts: r["captured_at"] as Date,
+      pct: n(r["utilization_pct"]),
+      resetsAt: (r["resets_at"] as Date | null) ?? null,
+    }));
   }
 
   /**
