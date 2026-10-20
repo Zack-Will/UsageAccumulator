@@ -478,9 +478,10 @@ export async function computeCurrentWindows(
       const weights = weekdayWeightsFromEvents(history.map((r) => r.event), { timeZone });
       const calendar = projectCalendarWindow({
         pctNow: w.utilizationPct,
+        // 速率按整期估：本期累计 ÷ 整期已过的加权天数，再从清零后的当前值往后外推
+        consumedPct: cumulative,
         now,
-        // 重置之后的百分比只对应重置之后的那段时间：已过的加权天数从重置那一刻起算
-        windowStart: seg.currentStart ?? windowStart,
+        windowStart,
         windowEnd,
         weights,
         dispersion: dispersionFrom(w.utilizationPct, linear.projectedUnclamped),

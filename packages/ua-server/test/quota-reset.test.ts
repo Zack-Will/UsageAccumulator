@@ -77,4 +77,21 @@ describe("重置卡：期内清零、resets_at 不变", () => {
     expect(ref).not.toBeNull();
     expect(ref!.usd).toBeCloseTo(100, 6);
   });
+
+  it("7d 用卡后速率仍按整期估：清零后刚用了 1 点不会外推成用满", async () => {
+    const store = new MemoryStore();
+    const end = new Date("2026-10-21T18:00:00Z");
+    const now = new Date("2026-10-20T08:37:00Z");
+    // 5.6 天匀速用到 80%，清零后 20 分钟用了 1%
+    const start = end.getTime() - 7 * 24 * H;
+    for (let h = 6; h <= 134; h += 8) await snap(store, new Date(start + h * H), Math.round((80 * h) / 134), end, "seven_day");
+    await snap(store, new Date("2026-10-20T08:11:00Z"), 80, end, "seven_day");
+    await snap(store, new Date("2026-10-20T08:17:00Z"), 0, end, "seven_day");
+    await snap(store, new Date("2026-10-20T08:37:00Z"), 1, end, "seven_day");
+    const w = (await computeCurrentWindows(store, "claude-official", { now })).windows[0]!;
+    expect(w.cumulative_pct).toBe(81);
+    // 整期速率 ≈ 81% / 134.6h，剩 33.4h ≈ +20%（本地没有事件，星期几权重退化成全 1）
+    expect(w.projected_pct.mid).toBeGreaterThan(15);
+    expect(w.projected_pct.mid).toBeLessThan(25);
+  });
 });

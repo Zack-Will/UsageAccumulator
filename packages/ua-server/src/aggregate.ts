@@ -525,6 +525,12 @@ export interface CalendarProjection {
  */
 export function projectCalendarWindow(args: {
   pctNow: number;
+  /**
+   * windowStart → now 实际消耗掉的百分比，用来估速率；缺省等于 pctNow。
+   * 用过重置卡时 pctNow 只是清零后那一截，速率却该看整期 —— 卡不改变人的用量节奏，
+   * 只拿清零后的二十分钟去外推一天半，结果全看那二十分钟碰巧多忙。
+   */
+  consumedPct?: number;
   now: Date;
   windowStart: Date;
   windowEnd: Date;
@@ -534,6 +540,7 @@ export function projectCalendarWindow(args: {
   timeZone?: string;
 }): CalendarProjection {
   const { pctNow, now, windowStart, windowEnd, weights, dispersion } = args;
+  const consumed = args.consumedPct ?? pctNow;
   const timeZone = args.timeZone ?? "UTC";
   const elapsedWeight = calendarWeight(windowStart, now, weights, timeZone);
   const remainingWeight = calendarWeight(now, windowEnd, weights, timeZone);
@@ -549,7 +556,7 @@ export function projectCalendarWindow(args: {
     };
   }
 
-  const ratePerWeight = pctNow / elapsedWeight;
+  const ratePerWeight = consumed / elapsedWeight;
   const inc = ratePerWeight * remainingWeight;
   const projectedUnclamped = {
     p25: pctNow + dispersion.k25 * inc,
