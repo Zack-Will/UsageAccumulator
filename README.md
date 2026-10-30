@@ -175,7 +175,7 @@ alias ua-probe="$PWD/node_modules/.bin/tsx $PWD/packages/ua-probe/src/cli.ts"
 </details>
 
 不要用 `npx` 跑 `install`：常驻服务会记下探针所在路径，npx 缓存一清服务就起不来。
-升级：重跑上面那条 `npm i -g`（链接始终指向最新版），再重启服务（macOS `launchctl kickstart -k gui/$(id -u)/com.ua.probe`，Linux `systemctl --user restart ua-probe`）。
+升级：`ua-probe update`。npm 安装会重跑上面那条 `npm i -g`；单文件从 `<server.url>/dl/ua-probe.mjs` 下载、校验 sha256 后原地替换（Codex 采集器用的是另一份配置，加 `--config ~/.config/ua-probe/codex.toml`）；随后重启所有引用这个入口的 launchd/systemd 服务。`--check` 只看有没有新版，`--no-restart` 不重启。跑仓库源码的机器由 git 决定版本，`update` 只提示重启命令。
 
 **配对并导入历史**：
 

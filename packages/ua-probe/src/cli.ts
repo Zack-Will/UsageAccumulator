@@ -11,6 +11,9 @@ import { createLogger } from "./logger.js";
 import { DEFAULT_CONFIG_PATH, expandHome } from "./paths.js";
 import { Probe } from "./probe.js";
 import { Shipper } from "./shipper.js";
+import {
+  RELEASE_TGZ_URL, detectInstall, findServices, npmInstallGlobal, realPath, restartCommand, restartServices, updateBundle,
+} from "./update.js";
 
 const USAGE = `ua-probe —— UsageAccumulator 本地探针
 
@@ -21,6 +24,12 @@ const USAGE = `ua-probe —— UsageAccumulator 本地探针
   ua-probe codex-run          独立 Codex 常驻采集（配置 [codex]）
   ua-probe codex-sync         Codex 历史回填 + 当前额度单次同步
   ua-probe codex-status       Codex 本地队列状态
+  ua-probe update [选项]      升级探针并重启引用它的服务
+
+update 选项
+  --check                 只检查有没有新版，不替换、不重启
+  --from <url>            新版来源；单文件默认 <server.url>/dl/ua-probe.mjs，npm 安装默认 GitHub Release
+  --no-restart            替换后不重启服务
 
 install 选项
   --server <url>          服务端地址（必填）
@@ -61,6 +70,9 @@ async function main(): Promise<number> {
       force: { type: "boolean", default: false },
       config: { type: "string" },
       json: { type: "boolean", default: false },
+      check: { type: "boolean", default: false },
+      from: { type: "string" },
+      "no-restart": { type: "boolean", default: false },
     },
   });
   const configPath = values.config ? expandHome(values.config) : DEFAULT_CONFIG_PATH;
@@ -78,10 +90,78 @@ async function main(): Promise<number> {
     case "codex-sync":
     case "codex-status":
       return await cmdCodex(configPath, cmd);
+    case "update":
+      return await cmdUpdate(values, configPath);
     default:
       process.stderr.write(`未知子命令：${cmd}\n\n${USAGE}`);
       return 2;
   }
+}
+
+async function cmdUpdate(
+  v: { check?: boolean | undefined; from?: string | undefined; "no-restart"?: boolean | undefined },
+  configPath: string,
+): Promise<number> {
+  const cli = defaultCliPath();
+  const real = realPath(cli);
+  const kind = detectInstall(real);
+  // 服务里记的可能是 npm 的 bin 链接，也可能是真实文件，两个都认
+  const services = findServices([cli, real]);
+  const restartHint = (): void => {
+    for (const s of services) process.stdout.write(`  ${restartCommand(s).join(" ")}\n`);
+  };
+
+  if (kind === "source") {
+    process.stdout.write(`正在跑仓库源码（${real}），版本由工作区决定：先 git pull（或从开发机同步）再重启服务。\n`);
+    if (services.length) restartHint();
+    return 0;
+  }
+
+  if (kind === "npm") {
+    const spec = v.from ?? RELEASE_TGZ_URL;
+    if (v.check) {
+      process.stdout.write(`npm 全局安装（${real}）无法预先比对版本；升级会执行：npm i -g ${spec}\n`);
+      return 0;
+    }
+    process.stdout.write(`npm i -g ${spec}\n`);
+    await npmInstallGlobal(spec);
+  } else {
+    let url = v.from;
+    if (!url) {
+      if (!existsSync(configPath)) {
+        process.stderr.write(`找不到配置 ${configPath}，无法确定服务端地址；用 --config 指定或用 --from <url>\n`);
+        return 2;
+      }
+      url = `${loadConfig(configPath).server.url.replace(/\/+$/, "")}/dl/ua-probe.mjs`;
+    }
+    const r = await updateBundle(real, url, { check: v.check === true });
+    const short = (sha: string): string => sha.slice(0, 12);
+    if (r.status === "up_to_date") {
+      process.stdout.write(`已是最新（${short(r.localSha)}）：${real}\n`);
+      return 0;
+    }
+    if (r.status === "available") {
+      process.stdout.write(`有新版：${short(r.localSha)} → ${short(r.remoteSha)}（来源 ${url}）\n`);
+      return 0;
+    }
+    process.stdout.write(`已替换 ${real}：${short(r.localSha)} → ${short(r.remoteSha)}\n`);
+  }
+
+  if (services.length === 0) {
+    process.stdout.write("没有找到引用这个探针的 launchd/systemd 服务；手动跑的进程需要自己重启。\n");
+    return 0;
+  }
+  if (v["no-restart"]) {
+    process.stdout.write("未重启（--no-restart），稍后执行：\n");
+    restartHint();
+    return 0;
+  }
+  let failed = 0;
+  for (const { service, error } of await restartServices(services)) {
+    if (error) { failed++; process.stderr.write(`重启 ${service.name} 失败：${error}\n`); }
+    else process.stdout.write(`已重启 ${service.name}\n`);
+  }
+  return failed ? 1 : 0;
 }
 
 async function cmdCodex(configPath: string, cmd: string): Promise<number> {

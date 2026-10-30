@@ -25,7 +25,6 @@ ua-probe status
 
 请用全局安装，不要用 `npx` 跑 `install`：常驻服务会记下探针的路径，npx 缓存一清服务就起不来。
 
-升级：`npm i -g @zack-will/ua-probe@latest`，然后重启服务
-（macOS `launchctl kickstart -k gui/$(id -u)/com.ua.probe`，Linux `systemctl --user restart ua-probe`）。
+升级：`ua-probe update`（重跑 `npm i -g` 并重启引用探针的 launchd/systemd 服务；`--check` 只检查）。
 
 完整的配置说明、多订阅归属与各端配对见[项目 README](https://github.com/Zack-Will/UsageAccumulator#readme)。
