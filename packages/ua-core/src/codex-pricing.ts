@@ -19,13 +19,20 @@ const PRICES: Record<string, readonly [number, number, number, number]> = {
   "gpt-5.6-sol": [4, 0.4, 5, 20],
   "gpt-5.3-codex": [1.75, 0.175, NaN, 14],
 };
+/** ChatGPT work mode runs the same model under a "-wm" slug (e.g. gpt-6-astra-wm). */
+const WORK_MODE_SUFFIX = "-wm";
+export const isCodexWorkModeModel = (model: string): boolean =>
+  model.endsWith(WORK_MODE_SUFFIX) && model.length > WORK_MODE_SUFFIX.length;
+const baseModel = (model: string): string =>
+  isCodexWorkModeModel(model) ? model.slice(0, -WORK_MODE_SUFFIX.length) : model;
 
 export function computeCodexCost(e: CodexUsageEvent): CodexCostEstimate {
   const result: CodexCostEstimate = {
     usd: null, basis: "api_equivalent_current_rates", price_version: CODEX_PRICE_VERSION, missing_reason: null,
   };
   const missing = (reason: string): CodexCostEstimate => ({ ...result, missing_reason: reason });
-  const p = PRICES[e.model];
+  const model = baseModel(e.model);
+  const p = PRICES[model];
   if (!p) return missing("unknown_model");
   if (e.quality_flags.some((flag) => flag === "cached_input_tokens_unreported" || flag === "cache_write_input_tokens_unreported")) {
     return missing("input_breakdown_unavailable");
@@ -39,7 +46,7 @@ export function computeCodexCost(e: CodexUsageEvent): CodexCostEstimate {
   if (e.cache_write_input_tokens > 0 && !Number.isFinite(p[2])) return missing("unknown_cache_write_price");
   // Above 272K input the full request uses 2x input/cache and 1.5x output for these models.
   // Older specialized Codex pricing has no such published rule in this snapshot.
-  const long = e.input_tokens > 272_000 && e.model !== "gpt-5.3-codex";
+  const long = e.input_tokens > 272_000 && model !== "gpt-5.3-codex";
   const inputFactor = long ? 2 : 1;
   const outputFactor = long ? 1.5 : 1;
   const uncached = e.input_tokens - e.cached_input_tokens - e.cache_write_input_tokens;

@@ -136,6 +136,20 @@ describe("Codex rollout metadata parser", () => {
     expect(next.event).toMatchObject({ model: "gpt-next", reasoning_effort: null, service_tier: "priority", input_tokens: 150 });
   });
 
+  it("takes the fast-mode tier from thread_settings_applied and follows mid-session switches", () => {
+    const settings = (tier: string) => line("event_msg", { type: "thread_settings_applied",
+      thread_settings: { model: "gpt-test", service_tier: tier, reasoning_effort: "high" } });
+    let state = parseCodexLine(settings("priority"), ready()).state;
+    const fast = parseCodexLine(count(usage(100, 20)), state);
+    expect(fast.event?.service_tier).toBe("priority");
+    // The next turn_context has no tier: it must not erase the thread setting.
+    state = parseCodexLine(turn("turn-2"), fast.state).state;
+    expect(state.service_tier).toBe("priority");
+    state = parseCodexLine(settings("default"), state).state;
+    const standard = parseCodexLine(count(usage(250, 50), usage(150, 30)), state);
+    expect(standard.event).toMatchObject({ turn_id: "turn-2", service_tier: "default" });
+  });
+
   it("locks a fork to the first session header and skips restamped inherited metadata/usage", () => {
     let state = parseCodexLine(meta({ id: "child", forked_from_id: "parent", parent_thread_id: "parent", subagent_history_start_ordinal: 4 }), createCodexParserState()).state;
     state = parseCodexLine(meta({ id: "parent", cwd: "/parent" }), state).state;

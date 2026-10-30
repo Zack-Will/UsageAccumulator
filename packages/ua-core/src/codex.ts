@@ -201,6 +201,12 @@ export function parseCodexLine(raw: string, previous: CodexParserState): CodexPa
     if (id && id !== state.session_id) warnings.push("inherited_session_meta_ignored");
     return result();
   }
+  if (doc["type"] === "event_msg" && payload["type"] === "thread_settings_applied") {
+    // Observed rollouts carry the tier only here ("priority" = fast mode), once per turn
+    // after turn_context and before that turn's requests; it can change mid-session.
+    const settings = object(payload["thread_settings"]);
+    if (settings && "service_tier" in settings) state.service_tier = str(settings["service_tier"]);
+  }
   if (state.fork_boundary_unknown) {
     if (doc["type"] === "event_msg" && payload["type"] === "thread_settings_applied") {
       state.fork_boundary_unknown = false;
@@ -214,7 +220,8 @@ export function parseCodexLine(raw: string, previous: CodexParserState): CodexPa
     state.turn_id = str(payload["turn_id"]);
     state.model = str(payload["model"]) ?? "";
     state.reasoning_effort = str(payload["effort"]) ?? str(payload["reasoning_effort"]);
-    state.service_tier = str(payload["service_tier"]);
+    // Current clients omit the tier here; keep the thread setting rather than clearing it.
+    if ("service_tier" in payload) state.service_tier = str(payload["service_tier"]);
     state.project = str(payload["cwd"]) ?? state.project;
     state.model_provider = str(payload["model_provider"]) ?? state.model_provider;
     state.awaiting_own_context = false;

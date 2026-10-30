@@ -19,6 +19,11 @@ describe("Codex current Standard API equivalent", () => {
     expect(computeCodexCost(event({ input_tokens: 0, cached_input_tokens: 0, cache_write_input_tokens: 0, output_tokens: 0, reasoning_output_tokens: 0, total_tokens: 0 })).usd).toBe(0);
     expect(computeCodexCost(event({ model: "gpt-future" }))).toMatchObject({ usd: null, missing_reason: "unknown_model" });
   });
+  it("prices work-mode slugs at their base model's rates", () => {
+    expect(computeCodexCost(event({ model: "gpt-6-astra-wm" })).usd).toBe(1.1);
+    expect(computeCodexCost(event({ model: "gpt-future-wm" })).missing_reason).toBe("unknown_model");
+    expect(computeCodexCost(event({ model: "-wm" })).missing_reason).toBe("unknown_model");
+  });
   it("rejects impossible subsets and unknown cache-write pricing", () => {
     expect(computeCodexCost(event({ input_tokens: 1 })).usd).toBeNull();
     expect(computeCodexCost(event({ model: "gpt-5.3-codex" })).missing_reason).toBe("unknown_cache_write_price");
