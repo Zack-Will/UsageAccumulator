@@ -120,7 +120,9 @@ export function codexPeriods(history: readonly CodexQuotaHistoryPoint[]): Map<st
         const event = (kind: CodexResetEvent["kind"]): CodexResetEvent => ({
           after: last.at, at: point.captured_at, from_pct: last.w.used_percent, to_pct: w.used_percent, kind,
         });
-        if (Number.isFinite(aReset) && t >= aReset - RESET_TOLERANCE_MS) {
+        // resets_at 没变的采样还是旧期的：快到点时的最后一次采样、到点后迟到的采样都不开新期
+        const sameDeadline = Number.isFinite(aReset) && Number.isFinite(bReset) && !moved;
+        if (Number.isFinite(aReset) && t >= aReset - RESET_TOLERANCE_MS && !sameDeadline) {
           current.ended_at = last.w.resets_at;
           current.end_reason = "scheduled";
           current = openPeriod(w, point.captured_at, null);

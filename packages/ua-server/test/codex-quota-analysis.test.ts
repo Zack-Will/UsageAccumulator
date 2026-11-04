@@ -48,6 +48,23 @@ describe("Codex 额度：期与段", () => {
     expect(periods[1]).toMatchObject({ opened_by_reset: null, cumulative_pct: 3 });
   });
 
+  it("到期前两分钟内的采样还带着旧 resets_at：仍属本期，不多切出一期", () => {
+    const next = END + END;
+    const h = series([[END - 10, 33, END], [END - 1, 33, END], [END + 2, 0, next]]);
+    const periods = codexPeriods(h).get("codex:secondary")!;
+    expect(periods).toHaveLength(2);
+    expect(periods[0]).toMatchObject({ end_reason: "scheduled", ended_at: at(END), cumulative_pct: 33 });
+    expect(periods[1]).toMatchObject({ opened_by_reset: null, cumulative_pct: 0, scheduled_end: at(next) });
+  });
+
+  it("到点后迟到的采样还带着旧 resets_at：同样不多切一期", () => {
+    const next = END + END;
+    const h = series([[END - 10, 33, END], [END + 1, 33, END], [END + 3, 0, next]]);
+    const periods = codexPeriods(h).get("codex:secondary")!;
+    expect(periods).toHaveLength(2);
+    expect(periods[0]).toMatchObject({ end_reason: "scheduled", ended_at: at(END), cumulative_pct: 33 });
+  });
+
   it("两个来源时钟差几秒造成的 1 个点回退：不算重置，也不重复计入", () => {
     const h = series([[0, 50, END], [5, 51, END], [5.2, 50, END], [10, 52, END]]);
     const [p] = codexPeriods(h).get("codex:secondary")!;
