@@ -30,6 +30,12 @@
         "added_at": "2026-10-18",
         "from": "Anthropic 官方口径（claude-api skill 模型表，缓存 2026-10-06）：$2 / $10 per MTok、cache read $0.20；写入按标准 1.25x（5m）/ 2x（1h）= $2.5 / $4",
         "note": "与 claude-sonnet-5 同价。claude-haiku-5-5 未加：官方按 prompt 是否超过 100K 分两档（$0.10/$0.50 与 $0.50/$2.50），本表固定五项单价表达不了，宁可缺价显示未知"
+      },
+      {
+        "model": "claude-fable-5-2, claude-mythos-5-2",
+        "added_at": "2026-11-10",
+        "from": "Anthropic 官方口径（claude-api skill 模型表，缓存 2026-11-03）：$8 / $40 per MTok、cache read $0.20（0.025x，与 Fable 5.1 同倍率）、5m 写入 $10、1h 写入 $16",
+        "note": "Mythos 5.2 与 Fable 5.2 同价同面，一并加入。线上 11-10 首次出现 claude-fable-5-2，入库时缺价，需回填 cost_usd"
       }
     ]
   },
@@ -39,7 +45,8 @@
     "官方原文：Cache hits and refreshes on Claude Fable 5.1 and Claude Mythos 5.1 are priced at",
     "0.025x the base input price. All other models use the standard 0.1x multiplier.",
     "本表中实测出现过的 7 个模型（opus-5 / fable-5-1 / fable-5 / opus-4-8 / opus-4-6 / sonnet-5 / haiku-4-5）",
-    "的全部 5 个价格字段均已与官方表格逐条比对一致。"
+    "的全部 5 个价格字段均已与官方表格逐条比对一致。",
+    "claude-fable-5-2 / claude-mythos-5-2 的缓存读同样是 0.025x（$0.20），官方口径，不是数据错误。"
   ],
   "models": {
     "claude-3-7-sonnet-20250219": {
@@ -91,6 +98,13 @@
       "cacheWrite5mPerMTok": 12.5,
       "cacheWrite1hPerMTok": 20.0
     },
+    "claude-fable-5-2": {
+      "inputPerMTok": 8.0,
+      "outputPerMTok": 40.0,
+      "cacheReadPerMTok": 0.2,
+      "cacheWrite5mPerMTok": 10.0,
+      "cacheWrite1hPerMTok": 16.0
+    },
     "claude-haiku-4-5": {
       "inputPerMTok": 1.0,
       "outputPerMTok": 5.0,
@@ -118,6 +132,13 @@
       "cacheReadPerMTok": 0.25,
       "cacheWrite5mPerMTok": 12.5,
       "cacheWrite1hPerMTok": 20.0
+    },
+    "claude-mythos-5-2": {
+      "inputPerMTok": 8.0,
+      "outputPerMTok": 40.0,
+      "cacheReadPerMTok": 0.2,
+      "cacheWrite5mPerMTok": 10.0,
+      "cacheWrite1hPerMTok": 16.0
     },
     "claude-mythos-preview": {
       "inputPerMTok": 10.0,
