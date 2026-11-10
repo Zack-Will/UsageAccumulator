@@ -1,7 +1,8 @@
 import type { FastifyInstance, FastifyRequest, RawServerDefault } from "fastify";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Logger } from "pino";
-import { computeCodexCost, type CodexIngestBatch, type CodexQuotaSnapshot } from "@ua/core";
+import type { CodexIngestBatch, CodexQuotaSnapshot } from "@ua/core";
+import type { PriceBook } from "./pricing.js";
 
 type CodexQuotaSnapshotWindows = CodexQuotaSnapshot["windows"];
 import { z } from "zod";
@@ -52,7 +53,7 @@ function periodView(p: CodexPeriod) {
   return rest;
 }
 
-export function registerCodexRoutes(app: FastifyInstance<RawServerDefault, IncomingMessage, ServerResponse<IncomingMessage>, Logger>, opts: { store: Store; config: Config; now: () => Date; sampler?: CodexSampler | null }): void {
+export function registerCodexRoutes(app: FastifyInstance<RawServerDefault, IncomingMessage, ServerResponse<IncomingMessage>, Logger>, opts: { store: Store; config: Config; now: () => Date; sampler?: CodexSampler | null; pricing: PriceBook }): void {
   const { store, config, now } = opts;
   const sampler = opts.sampler ?? null;
 
@@ -112,7 +113,7 @@ export function registerCodexRoutes(app: FastifyInstance<RawServerDefault, Incom
     }
     const ids = batch.quota?.windows.map((w) => w.window_id) ?? [];
     if (new Set(ids).size !== ids.length) throw new CodexHttpError(400, "bad_request", "Quota window_id values must be unique within a complete snapshot");
-    const result = await store.codex.ingest(batch, auth.id, batch.events.map(computeCodexCost), at.toISOString());
+    const result = await store.codex.ingest(batch, auth.id, batch.events.map((e) => opts.pricing.codexCost(e)), at.toISOString());
     req.log.info({ accepted: result.accepted, deduped: result.deduped, conflicts: result.conflicting_duplicates }, "ingest Codex metadata");
     return reply.send({ ok: true, account_id: batch.account.account_id, machine_id: auth.id, ...result });
   });

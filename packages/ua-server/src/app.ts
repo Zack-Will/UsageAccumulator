@@ -6,11 +6,12 @@ import fastifyStatic from "@fastify/static";
 import { z } from "zod";
 import type { Logger } from "pino";
 import type { ClaudeOrg, ClaudeWebClient, PricingTable, QuotaSnapshot } from "@ua/core";
-import { EMPTY_PRICING, planFromTier, QuotaAuthError } from "@ua/core";
+import { EMPTY_PRICING, hasCodexPrice, lookupPrice, planFromTier, QuotaAuthError } from "@ua/core";
 import type { Config } from "./config.js";
 import { createLogger } from "./logger.js";
 import { EventBus, formatSse } from "./bus.js";
-import { eventCostUsd } from "./pricing.js";
+import { countsTowardQuota, PriceBook } from "./pricing.js";
+import { withLivePricing } from "./live-pricing.js";
 import { registerCodexRoutes } from "./codex-api.js";
 import { CodexHttpError } from "./codex-store.js";
 import {
@@ -53,7 +54,8 @@ const NDJSON_CONTENT_TYPES = [
 export interface BuildAppOptions {
   store: Store;
   config: Config;
-  pricing?: PricingTable;
+  /** 价格本（可热加载）；测试可直接给一张表 */
+  pricing?: PricingTable | PriceBook;
   logger?: Logger;
   bus?: EventBus;
   /** 测试注入可控时钟 */
@@ -214,8 +216,10 @@ export function mergeForkedSessions(
 }
 
 export function buildApp(opts: BuildAppOptions) {
-  const { store, config } = opts;
-  const pricing = opts.pricing ?? EMPTY_PRICING;
+  const { config } = opts;
+  const pricing = opts.pricing instanceof PriceBook ? opts.pricing : PriceBook.fixed(opts.pricing ?? EMPTY_PRICING);
+  // 读出来的成本一律按当前价格现算（live-pricing.ts），改价立即生效，不依赖库里存的值
+  const store = withLivePricing(opts.store, pricing);
   const log = opts.logger ?? createLogger(config.logLevel);
   const bus = opts.bus ?? new EventBus();
   const now = opts.now ?? (() => new Date());
@@ -369,7 +373,7 @@ export function buildApp(opts: BuildAppOptions) {
         ...(opts.codex.authBackoffMs !== undefined ? { authBackoffMs: opts.codex.authBackoffMs } : {}),
       })
     : null;
-  registerCodexRoutes(app, { store, config, now, sampler: codexSampler });
+  registerCodexRoutes(app, { store, config, now, sampler: codexSampler, pricing });
 
   async function resolveProfileId(raw: string | undefined): Promise<string> {
     if (raw && raw.length > 0) return raw;
@@ -526,7 +530,8 @@ export function buildApp(opts: BuildAppOptions) {
     const rows: EventRow[] = decoded.events.map((event) => ({
       event,
       // 缺价返回 null（不是 0）；`<synthetic>` 也强制 null，合成事件不计费
-      costUsd: eventCostUsd(event, pricing),
+      costUsd: pricing.claudeCost(event),
+      priceVersion: pricing.version,
     }));
 
     await store.ensureProfiles([...new Set(rows.map((r) => r.event.profileId))]);
@@ -640,7 +645,7 @@ export function buildApp(opts: BuildAppOptions) {
   function requireDashboard(req: FastifyRequest): void {
     const auth = (req as FastifyRequest & { auth?: { kind: string } }).auth;
     if (auth?.kind !== "dashboard") {
-      throw new HttpError(403, "forbidden", "只有看板身份能更改 claude.ai 会话");
+      throw new HttpError(403, "forbidden", "只有看板身份能做这个操作");
     }
   }
 
@@ -984,6 +989,51 @@ export function buildApp(opts: BuildAppOptions) {
     });
   });
 
+  // ── GET /v1/pricing：当前生效的价格、各层文件状态、最近有用量却缺价的模型
+  const UNPRICED_LOOKBACK_MS = 30 * 24 * 60 * 60_000;
+  function pricingDto() {
+    const st = pricing.status();
+    return {
+      version: st.version,
+      loaded_at: st.loadedAt?.toISOString() ?? null,
+      rejected: st.rejected ? { at: st.rejected.at.toISOString(), errors: st.rejected.errors } : null,
+      layers: st.layers.map((l) => ({
+        kind: l.kind, path: l.path, present: l.present, declared_version: l.declaredVersion, models: l.models, errors: l.errors,
+      })),
+      models: st.models.map((m) => ({
+        model: m.model,
+        rates: m.rates,
+        tiers: m.tiers.map((t) => ({ prompt_over: t.promptOver, rates: t.rates, multiply: t.multiply })),
+        aliases: m.aliases,
+        source: m.source,
+        verified_at: m.verifiedAt,
+        origin: m.origin,
+      })),
+    };
+  }
+  app.get("/v1/pricing", async (req, reply) => {
+    requireDashboard(req);
+    const since = new Date(now().getTime() - UNPRICED_LOOKBACK_MS);
+    const table = pricing.current;
+    const [claude, codex] = await Promise.all([store.modelsSeen(since), store.codex.modelsSeen(since.toISOString())]);
+    const unpriced = [
+      ...claude
+        .filter((m) => countsTowardQuota(m.model) && !lookupPrice(table, m.model))
+        .map((m) => ({ provider: "claude", model: m.model, events: m.events, last_seen: m.lastTs.toISOString() })),
+      ...codex
+        .filter((m) => !hasCodexPrice(m.model, table))
+        .map((m) => ({ provider: "codex", model: m.model, events: m.events, last_seen: m.last_ts })),
+    ];
+    return reply.send({ ...pricingDto(), unpriced, unpriced_since: since.toISOString() });
+  });
+
+  // ── POST /v1/pricing/reload：改完文件立刻生效（平时文件改动会被自动发现，这是兜底）
+  app.post("/v1/pricing/reload", async (req, reply) => {
+    requireDashboard(req);
+    const applied = pricing.reload();
+    return reply.send({ applied, ...pricingDto() });
+  });
+
   // ── GET /v1/calibration
   app.get("/v1/calibration", async (req, reply) => {
     const q = parseQuery(rangeSchema, req.query);
@@ -1057,5 +1107,5 @@ export function buildApp(opts: BuildAppOptions) {
     req.raw.on("error", cleanup);
   });
 
-  return { fastify: app, bus, sampler, codexSampler };
+  return { fastify: app, bus, sampler, codexSampler, store, pricing };
 }

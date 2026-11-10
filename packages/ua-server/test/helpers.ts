@@ -1,5 +1,11 @@
 import { semanticId, type UsageEvent } from "@ua/core";
+import { fileURLToPath } from "node:url";
 import { loadConfig, type Config } from "../src/config.js";
+import { loadPricingTable } from "../src/pricing.js";
+
+/** 仓库里随代码发布的正式价格表（deploy/pricing.json） */
+export const BUNDLED_PRICING_PATH = fileURLToPath(new URL("../../../deploy/pricing.json", import.meta.url));
+export const BUNDLED_PRICING = loadPricingTable(BUNDLED_PRICING_PATH).table;
 
 export function testConfig(over: Partial<Config> = {}): Config {
   return {

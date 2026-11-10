@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { CodexIngestBatch, CodexUsageEvent } from "@ua/core";
 import { buildApp, type UaApp } from "../src/app.js";
 import { MemoryStore } from "../src/store-memory.js";
-import { AUTH, testConfig } from "./helpers.js";
+import { AUTH, BUNDLED_PRICING, testConfig } from "./helpers.js";
 
 const NOW = new Date("2026-10-18T01:00:00.000Z");
 const START = "2026-09-30T16:00:00.000Z";
@@ -32,7 +32,7 @@ beforeEach(async () => {
   for (const id of ["mac", "home"]) await store.createMachine({ id, provisionalMachineId: null,
     hostname: id, os: id === "mac" ? "darwin" : "linux",
     tokenSha256: createHash("sha256").update(`token-${id}`).digest("hex") });
-  app = buildApp({ store, config: testConfig({ codexAccountEmail: EMAIL }), now: () => NOW });
+  app = buildApp({ store, config: testConfig({ codexAccountEmail: EMAIL }), now: () => NOW, pricing: BUNDLED_PRICING });
   await app.fastify.ready();
 });
 afterEach(async () => { await app.fastify.close(); });

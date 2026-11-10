@@ -5,7 +5,7 @@ import { buildApp, type UaApp } from "../src/app.js";
 import { CODEX_VAULT_ID } from "../src/codex-sampler.js";
 import type { SessionVault } from "../src/quota-vault.js";
 import { MemoryStore } from "../src/store-memory.js";
-import { AUTH, testConfig } from "./helpers.js";
+import { AUTH, BUNDLED_PRICING, testConfig } from "./helpers.js";
 
 const EMAIL = "reader@example.com";
 const T0 = Date.parse("2026-10-13T00:00:00Z");
@@ -39,7 +39,7 @@ beforeEach(async () => {
   store = new MemoryStore();
   await store.createMachine({ id: "mac", provisionalMachineId: null, hostname: "mac", os: "darwin",
     tokenSha256: createHash("sha256").update("token-mac").digest("hex") });
-  app = buildApp({ store, config: testConfig({ codexAccountEmail: EMAIL }), now: () => new Date(nowMs),
+  app = buildApp({ store, config: testConfig({ codexAccountEmail: EMAIL }), now: () => new Date(nowMs), pricing: BUNDLED_PRICING,
     codex: { vault, http: async () => ({ status: 500, contentType: "text/plain", text: "" }) } });
   await app.fastify.ready();
 });

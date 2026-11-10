@@ -6,6 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { computeCodexCost, type CodexIngestBatch, type CodexUsageEvent } from "@ua/core";
 import { runMigrations } from "../src/migrate.js";
 import { PgStore } from "../src/store-pg.js";
+import { BUNDLED_PRICING } from "./helpers.js";
 
 const url = process.env["UA_TEST_CODEX_DATABASE_URL"];
 const dir = fileURLToPath(new URL("../../../deploy/migrations", import.meta.url));
@@ -36,7 +37,7 @@ describe.skipIf(!url)("Codex PostgreSQL ledger in an isolated schema", () => {
     await admin.unsafe(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
     await admin.end({ timeout: 5 });
   });
-  const ingest = (b: CodexIngestBatch, machine = "mac") => store.codex.ingest(b, machine, b.events.map(computeCodexCost), receivedAt);
+  const ingest = (b: CodexIngestBatch, machine = "mac") => store.codex.ingest(b, machine, b.events.map((e) => computeCodexCost(e, BUNDLED_PRICING, "test")), receivedAt);
 
   it("migrates idempotently and handles concurrent duplicates without double counting", async () => {
     expect(await runMigrations(sql, dir, { info: () => {} })).toEqual([]);

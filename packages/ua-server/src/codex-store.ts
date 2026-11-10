@@ -70,6 +70,15 @@ export interface CodexStore {
   quotaHistory(accountId: string, from: string, to: string): Promise<Array<{ captured_at: string; windows: CodexQuotaSnapshot["windows"] }>>;
   accountUsage(accountId: string): Promise<CodexSnapshotRecord<CodexAccountUsageSnapshot> | null>;
   collectors(accountId: string): Promise<CodexCollectorRecord[]>;
+  /**
+   * Events whose stored cost was computed from a different price catalog version, at most `limit`.
+   * Reads price at read time anyway; this only keeps the stored cost column in step with the catalog.
+   */
+  staleCostEvents(version: string, limit: number): Promise<Array<{ account_id: string; event: CodexUsageEvent }>>;
+  /** Rewrites only the cost columns. Event content stays immutable. */
+  updateEventCosts(rows: Array<{ account_id: string; event_id: string; cost: CodexCost }>): Promise<void>;
+  /** Models seen since `since` (ISO), across accounts. */
+  modelsSeen(since: string): Promise<Array<{ model: string; events: number; last_ts: string }>>;
 }
 
 export function normalizeCodexEmail(email: string): string { return email.trim().toLowerCase(); }

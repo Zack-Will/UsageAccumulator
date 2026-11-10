@@ -21,7 +21,7 @@
   可选把项目路径 HMAC 后再上报。
 - **官方额度**：服务端 7×24 直接向 claude.ai 抓 5h / 7d 等窗口的已用百分比与重置时刻，不依赖某台笔记本开着。
 - **预测与耗尽时刻**：按当前速率给出窗口结束时的预计用量、会不会打满、几点打满。
-- **折算费用**：按 `deploy/pricing.json` 的官方单价（5m / 1h 缓存分开计价）算等价 API 费用，
+- **折算费用**：按 `deploy/pricing.json` 的官方单价（5m / 1h 缓存分开计价，可热更新）算等价 API 费用，
   并反推「这个窗口打满大约值多少钱」。缺价的模型显示为未知，不按 0 算。
 - **用量分布**：按机器、模型、项目、小时、归属方式拆分；窗口甘特图、燃尽曲线、周用量、标定结果。
 - **多 profile**：官方订阅（按 claude.ai 组织区分，如个人 Max 与 team 分开记）与自定义 `base_url` 的 API 网关可以并存，
@@ -93,7 +93,8 @@ openssl rand -hex 32   # → UA_ENROLL_TOKEN
 | `DATABASE_URL` | — | 必填（Compose 会自动拼） |
 | `PORT` / `UA_HOST` | `8080` / `0.0.0.0` | 监听地址 |
 | `UA_WEB_DIR` | 空 | 看板构建产物目录；空 = 只提供 API |
-| `UA_PRICING_FILE` | `deploy/pricing.json` | 定价表 |
+| `UA_PRICING_FILE` | `deploy/pricing.json` | 定价表（基础层，随代码发布） |
+| `UA_PRICING_OVERRIDE_FILE` | `~/.config/ua-server/pricing.json` | 定价覆盖层，可选；同名模型整条覆盖基础层，改动即时生效 |
 | `UA_QUOTA_SAMPLING` | `true` | 服务端直接抓 claude.ai 额度 |
 | `UA_QUOTA_MIN_INTERVAL_MS` / `UA_QUOTA_INTERVAL_MS` | 10 秒 / 5 分钟 | 额度采样间隔的下限 / 上限：百分比一变或探针报来新事件就回到下限，之后每次没变化翻倍直到上限 |
 | `UA_CLAUDE_SESSION_DIR` | `~/.config/ua-server/claude-sessions` | claude.ai 会话存放目录（0600 文件，不进数据库） |
@@ -326,7 +327,7 @@ pnpm conformance                 # 契约一致性检查
 
 `packages/ua-server/test/migrate-live.test.ts` 默认跳过，设置 `UA_TEST_DATABASE_URL` 后对真实 Postgres 跑迁移测试。
 
-改了定价只需编辑 `deploy/pricing.json` 并重启服务端；改了表结构就在 `deploy/migrations/` 新增一个幂等的迁移文件（一律 `IF NOT EXISTS`）。
+改价不用改代码、发版或重启：正式价格改 `deploy/pricing.json`（随代码发布），临时改价或新模型先顶上就写覆盖层 `~/.config/ua-server/pricing.json`（同名模型整条覆盖）。两个文件的改动服务端都会自动发现并即时生效，也可以 `kill -HUP` 或调 `POST /v1/pricing/reload`；文件有错就整份不生效、继续用上一份。成本在读取时按当前价格算，历史数据不用回填。`GET /v1/pricing` 能看到当前价格、被拒原因与最近有用量却缺价的模型。改了表结构就在 `deploy/migrations/` 新增一个幂等的迁移文件（一律 `IF NOT EXISTS`）。
 
 ## 发布
 

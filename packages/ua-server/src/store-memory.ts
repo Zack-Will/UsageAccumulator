@@ -1,9 +1,10 @@
-import { dedupKey, usageRank, type Profile, type QuotaSample, type QuotaSnapshot } from "@ua/core";
+import { dedupKey, usageRank, type Profile, type QuotaSample, type QuotaSnapshot, type UsageEvent } from "@ua/core";
 import type {
   CalibrationRecord,
   EventRow,
   LatestQuotaWindow,
   MachineRecord,
+  ModelSeen,
   QuotaBreakdownRow,
   Store,
 } from "./store.js";
@@ -98,6 +99,7 @@ export class MemoryStore implements Store {
           outputFinal: e.outputFinal,
         },
         costUsd: row.costUsd,
+        priceVersion: row.priceVersion ?? null,
       });
       updated++;
     }
@@ -198,6 +200,34 @@ export class MemoryStore implements Store {
     return [...this.events.values()]
       .filter((r) => r.event.profileId === profileId && r.event.ts >= from && r.event.ts < to)
       .sort((a, b) => a.event.ts.getTime() - b.event.ts.getTime());
+  }
+
+  async staleCostEvents(version: string, limit: number): Promise<UsageEvent[]> {
+    return [...this.events.values()]
+      .filter((r) => (r.priceVersion ?? null) !== version)
+      .slice(0, limit)
+      .map((r) => r.event);
+  }
+
+  async updateEventCosts(version: string, rows: { event: UsageEvent; costUsd: number | null }[]): Promise<void> {
+    for (const { event, costUsd } of rows) {
+      const key = dedupKey(event);
+      const cur = this.events.get(key);
+      if (cur) this.events.set(key, { ...cur, costUsd, priceVersion: version });
+    }
+  }
+
+  async modelsSeen(since: Date): Promise<ModelSeen[]> {
+    const by = new Map<string, ModelSeen>();
+    for (const { event } of this.events.values()) {
+      if (event.ts < since) continue;
+      const cur = by.get(event.model);
+      if (cur) {
+        cur.events++;
+        if (event.ts > cur.lastTs) cur.lastTs = event.ts;
+      } else by.set(event.model, { model: event.model, events: 1, lastTs: event.ts });
+    }
+    return [...by.values()].sort((a, b) => b.events - a.events);
   }
 
   async quotaEventTimestamps(profileId: string, from: Date, to: Date): Promise<Date[]> {

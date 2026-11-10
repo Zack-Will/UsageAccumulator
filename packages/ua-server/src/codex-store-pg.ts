@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type postgres from "postgres";
-import type { CodexAccountUsageSnapshot, CodexIngestBatch, CodexQuotaSnapshot } from "@ua/core";
+import type { CodexAccountUsageSnapshot, CodexIngestBatch, CodexQuotaSnapshot, CodexUsageEvent } from "@ua/core";
 import {
   CodexHttpError, canonicalCodexEvent, normalizeCodexEmail,
   type CodexAccountRecord, type CodexCollectorRecord, type CodexCost, type CodexEventRow,
@@ -109,6 +109,32 @@ export class PgCodexStore implements CodexStore {
         usd: r["cost_usd"] == null ? null : Number(r["cost_usd"]), basis: "api_equivalent_current_rates",
         price_version: String(r["price_version"]), missing_reason: r["missing_reason"] == null ? null : String(r["missing_reason"]),
       } }));
+  }
+
+  async staleCostEvents(version: string, limit: number): Promise<Array<{ account_id: string; event: CodexUsageEvent }>> {
+    const rows = await this.sql<Record<string, unknown>[]>`
+      SELECT account_id, event FROM codex_events WHERE price_version <> ${version} LIMIT ${limit}`;
+    return rows.map((r) => ({ account_id: String(r["account_id"]), event: r["event"] as CodexUsageEvent }));
+  }
+
+  async updateEventCosts(rows: Array<{ account_id: string; event_id: string; cost: CodexCost }>): Promise<void> {
+    if (rows.length === 0) return;
+    const col = <T>(f: (r: (typeof rows)[number]) => T) => rows.map(f) as never;
+    await this.sql`
+      UPDATE codex_events AS e
+      SET cost_usd = v.cost::numeric, price_version = v.price_version, missing_reason = v.missing_reason
+      FROM unnest(${col((r) => r.account_id)}::text[], ${col((r) => r.event_id)}::text[],
+                  ${col((r) => (r.cost.usd === null ? null : String(r.cost.usd)))}::text[],
+                  ${col((r) => r.cost.price_version)}::text[], ${col((r) => r.cost.missing_reason)}::text[])
+        AS v(account_id, event_id, cost, price_version, missing_reason)
+      WHERE e.account_id = v.account_id AND e.event_id = v.event_id`;
+  }
+
+  async modelsSeen(since: string): Promise<Array<{ model: string; events: number; last_ts: string }>> {
+    const rows = await this.sql<Record<string, unknown>[]>`
+      SELECT event->>'model' AS model, count(*) AS events, max(ts) AS last_ts
+      FROM codex_events WHERE ts >= ${since} GROUP BY 1 ORDER BY count(*) DESC`;
+    return rows.map((r) => ({ model: String(r["model"]), events: Number(r["events"]), last_ts: iso(r["last_ts"]) }));
   }
 
   async quota(accountId: string, machineId?: string): Promise<CodexSnapshotRecord<CodexQuotaSnapshot> | null> {

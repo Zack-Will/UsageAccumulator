@@ -2,11 +2,21 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { buildApp, type UaApp } from "../src/app.js";
 import { isScratchWorkspace } from "../src/aggregate.js";
 import { MemoryStore } from "../src/store-memory.js";
+import { parsePricingFile } from "../src/pricing.js";
 import { AUTH, makeEvent, testConfig } from "./helpers.js";
 
 const NOW = new Date("2026-09-23T08:00:00.000Z");
 const SCRATCH =
   "-Users-me-Library-Application-Support-Claude-scratch-workspaces-org-user-scratch-2026-09-22-105cae";
+
+/**
+ * 成本在读取时按价格表现算，不认存进去的 costUsd。这里只让 output 计价（1 美元 / 百万 token），
+ * 于是「这条事件花了 X 美元」就写成 outputTokens = X × 100 万。
+ */
+const M = 1_000_000;
+const OUTPUT_ONLY = parsePricingFile({
+  "claude-opus-5": { input: 0, output: 1, cache_read: 0, cache_write_5m: 0, cache_write_1h: 0 },
+}).table;
 
 let store: MemoryStore;
 let app: UaApp;
@@ -15,7 +25,7 @@ let machineId: string;
 
 beforeEach(async () => {
   store = new MemoryStore();
-  app = buildApp({ store, config: testConfig(), now: () => NOW });
+  app = buildApp({ store, config: testConfig(), now: () => NOW, pricing: OUTPUT_ONLY });
   await app.fastify.ready();
   const res = await app.fastify.inject({
     method: "POST",
@@ -33,11 +43,11 @@ afterEach(async () => {
 async function seed(): Promise<void> {
   await store.insertEvents([
     // 临时工作区里的一个会话
-    { event: makeEvent({ machineId, sessionId: "s-scratch", projectSlug: SCRATCH, ts: new Date("2026-09-23T07:00:00Z") }), costUsd: 1.5 },
-    { event: makeEvent({ machineId, sessionId: "s-scratch", projectSlug: SCRATCH, ts: new Date("2026-09-23T07:10:00Z") }), costUsd: 2 },
+    { event: makeEvent({ machineId, sessionId: "s-scratch", projectSlug: SCRATCH, ts: new Date("2026-09-23T07:00:00Z") , outputTokens: 1.5 * M }), costUsd: 1.5 },
+    { event: makeEvent({ machineId, sessionId: "s-scratch", projectSlug: SCRATCH, ts: new Date("2026-09-23T07:10:00Z") , outputTokens: 2 * M }), costUsd: 2 },
     // 普通项目里的两个会话，一个有标题一个没有
-    { event: makeEvent({ machineId, sessionId: "s-cleave", projectSlug: "-Users-me-Repos-Cleave", ts: new Date("2026-09-23T06:00:00Z") }), costUsd: 3 },
-    { event: makeEvent({ machineId, sessionId: "s-untitled", projectSlug: "-Users-me-Repos-Cleave", ts: new Date("2026-09-23T06:30:00Z") }), costUsd: 0.5 },
+    { event: makeEvent({ machineId, sessionId: "s-cleave", projectSlug: "-Users-me-Repos-Cleave", ts: new Date("2026-09-23T06:00:00Z") , outputTokens: 3 * M }), costUsd: 3 },
+    { event: makeEvent({ machineId, sessionId: "s-untitled", projectSlug: "-Users-me-Repos-Cleave", ts: new Date("2026-09-23T06:30:00Z") , outputTokens: 0.5 * M }), costUsd: 0.5 },
   ]);
 }
 
@@ -112,9 +122,9 @@ describe("GET /v1/distribution?by=session：桌面端恢复会话产生的分叉
 
   it("同标题 + 同项目 + 同机器：合到最早的 id 上，事件与费用相加", async () => {
     await store.insertEvents([
-      { event: makeEvent({ machineId, sessionId: "fork-b", projectSlug: LARK, ts: at(20) }), costUsd: 2 },
-      { event: makeEvent({ machineId, sessionId: "fork-a", projectSlug: LARK, ts: at(10) }), costUsd: 1 },
-      { event: makeEvent({ machineId, sessionId: "fork-c", projectSlug: LARK, ts: at(30) }), costUsd: 4 },
+      { event: makeEvent({ machineId, sessionId: "fork-b", projectSlug: LARK, ts: at(20) , outputTokens: 2 * M }), costUsd: 2 },
+      { event: makeEvent({ machineId, sessionId: "fork-a", projectSlug: LARK, ts: at(10) , outputTokens: 1 * M }), costUsd: 1 },
+      { event: makeEvent({ machineId, sessionId: "fork-c", projectSlug: LARK, ts: at(30) , outputTokens: 4 * M }), costUsd: 4 },
     ]);
     await postTitles(["fork-a", "fork-b", "fork-c"].map((id) => ({ session_id: id, title: "手绘架构图转飞书画板" })));
     const rows = (await dist("session")).filter((b) => b.label === "手绘架构图转飞书画板");
@@ -124,10 +134,10 @@ describe("GET /v1/distribution?by=session：桌面端恢复会话产生的分叉
 
   it("同名但不在同一个项目的不合并；没有标题的不合并", async () => {
     await store.insertEvents([
-      { event: makeEvent({ machineId, sessionId: "x1", projectSlug: LARK, ts: at(1) }), costUsd: 1 },
-      { event: makeEvent({ machineId, sessionId: "x2", projectSlug: "-Users-me-Repos-Other", ts: at(2) }), costUsd: 1 },
-      { event: makeEvent({ machineId, sessionId: "u1", projectSlug: LARK, ts: at(3) }), costUsd: 1 },
-      { event: makeEvent({ machineId, sessionId: "u2", projectSlug: LARK, ts: at(4) }), costUsd: 1 },
+      { event: makeEvent({ machineId, sessionId: "x1", projectSlug: LARK, ts: at(1) , outputTokens: 1 * M }), costUsd: 1 },
+      { event: makeEvent({ machineId, sessionId: "x2", projectSlug: "-Users-me-Repos-Other", ts: at(2) , outputTokens: 1 * M }), costUsd: 1 },
+      { event: makeEvent({ machineId, sessionId: "u1", projectSlug: LARK, ts: at(3) , outputTokens: 1 * M }), costUsd: 1 },
+      { event: makeEvent({ machineId, sessionId: "u2", projectSlug: LARK, ts: at(4) , outputTokens: 1 * M }), costUsd: 1 },
     ]);
     await postTitles([
       { session_id: "x1", title: "同名" },

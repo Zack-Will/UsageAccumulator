@@ -25,8 +25,13 @@ const schema = z.object({
   sessionTtlMs: z.coerce.number().int().positive().default(30 * 24 * 60 * 60_000),
   /** 探针 enroll 用的一次性口令，换取长期 machine token */
   enrollToken: z.string().default(""),
-  /** 定价表快照路径。代码里不写死任何价格。 */
+  /** 随代码发布的定价表（基础层）。代码里不写死任何价格。 */
   pricingFile: z.string().default("deploy/pricing.json"),
+  /**
+   * 可选的覆盖层：同名模型整条覆盖基础层。临时改价、新模型先顶上，写这里即可，
+   * 不用改代码、发版或重启 —— 文件改动会被自动发现。不存在不算错。
+   */
+  pricingOverrideFile: z.string().default(join(homedir(), ".config", "ua-server", "pricing.json")),
   dashboardUrl: z.string().default(""),
   /** 超过这个时长没收到额度快照就把 summary 标 stale（CONTRACT §2.2） */
   quotaStaleMs: z.coerce.number().int().positive().default(15 * 60_000),
@@ -104,6 +109,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     sessionTtlMs: env["UA_SESSION_TTL_MS"],
     enrollToken: env["UA_ENROLL_TOKEN"],
     pricingFile: env["UA_PRICING_FILE"],
+    pricingOverrideFile: env["UA_PRICING_OVERRIDE_FILE"],
     dashboardUrl: env["UA_DASHBOARD_URL"],
     quotaStaleMs: env["UA_QUOTA_STALE_MS"],
     calibrationIntervalMs: env["UA_CALIBRATION_INTERVAL_MS"],

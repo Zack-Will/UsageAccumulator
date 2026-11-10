@@ -274,7 +274,7 @@ CREATE TABLE usage_events (
   entrypoint            TEXT,
   service_tier          TEXT,
   is_sidechain          BOOLEAN NOT NULL DEFAULT false,
-  cost_usd              NUMERIC(12,6),      -- 入库时按 model_pricing 算好
+  cost_usd              NUMERIC(12,6),      -- 缓存：接口读取时按当前价格现算，这一列按 price_version 在后台跟上（CONTRACT §2.5）
   PRIMARY KEY (message_id, request_id)      -- ★ 全局去重
 );
 CREATE INDEX ON usage_events (profile_id, ts DESC);
@@ -602,7 +602,7 @@ M1 的验收标准是刻意设计的：**用 ccusage 的输出做 golden test**�
 
 ## 13. 待确认
 
-0. **定价表已核实**（2026-09-21）：`deploy/pricing.json` 从 LiteLLM 程序化生成（28 个模型），并已与 Anthropic 官方定价页逐条比对——实测出现过的 7 个模型 × 5 个价格字段全部一致。其中 `claude-fable-5-1` 的缓存读单价是输入价的 **0.025x**（其余模型是 0.1x），**这是官方特例而非数据错误**，代码里不要"顺手改正"。
+0. **定价表已核实**（2026-09-21）：`deploy/pricing.json` 从 LiteLLM 程序化生成（28 个模型），并已与 Anthropic 官方定价页逐条比对——实测出现过的 7 个模型 × 5 个价格字段全部一致。其中 `claude-fable-5-1` 的缓存读单价是输入价的 **0.025x**（其余模型是 0.1x），**这是官方特例而非数据错误**，代码里不要"顺手改正"。2026-11-10 起价格目录可热更新（基础层 + 覆盖层，Claude 与 Codex 共用，CONTRACT §2.5），成本改为读取时计算，改价不再需要回填。
 
 1. ~~官方额度接口~~ **已确认**：`claude.ai/api/organizations/{org_id}/usage` + sessionKey，返回百分比 + reset_at。仍建议写码前手工 curl 验证一次当前字段名。
 2. ~~限额是百分比还是绝对值~~ **已确认为百分比**，已设计第 7.0 节的标定方案反解绝对值。

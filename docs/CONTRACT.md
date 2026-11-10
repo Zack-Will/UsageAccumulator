@@ -170,6 +170,8 @@ Idempotency-Key: <批次内容的 sha256 前 32 位>
 | `GET` | `/v1/quota/session?profile_id=` | 服务端抓额度用的 claude.ai 会话**状态**（见 2.4）。任何已鉴权身份可读 |
 | `PUT` | `/v1/quota/session` | body: `{"profile_id","session_key"}`，**仅看板身份**。先验后存 → 状态（见 2.4） |
 | `DELETE` | `/v1/quota/session?profile_id=` | 删除会话，**仅看板身份** → 状态 |
+| `GET` | `/v1/pricing` | **仅看板身份**。当前生效的价格目录（见 2.5）：`{"version","loaded_at","rejected","layers":[…],"models":[…],"unpriced":[{"provider":"claude"\|"codex","model","events","last_seen"}],"unpriced_since"}` |
+| `POST` | `/v1/pricing/reload` | **仅看板身份**。立即重新读定价文件 → `{"applied":bool, …同上（不含 unpriced）}`；文件有错时 `applied:false`，旧价格继续生效 |
 | `GET` | `/healthz` | → `200 "ok"` |
 
 ### 2.1 `GET /v1/windows/current`
@@ -387,6 +389,23 @@ team 组织与个人订阅组织，两边额度毫不相干（2026-09-27 实测�
 
 **存放**：`UA_CLAUDE_SESSION_DIR` 下一个 profile 一个文件（目录 0700、文件 0600），**不进数据库**。
 服务端每一轮都重新读文件，所以在机器上直接覆盖它也立刻生效，退避随之清零。
+
+### 2.5 定价目录（`/v1/pricing`）
+
+价格是**数据**，不是代码：两层 JSON 文件，`UA_PRICING_FILE`（基础层，`deploy/pricing.json`，随代码发布）与
+`UA_PRICING_OVERRIDE_FILE`（覆盖层，默认 `~/.config/ua-server/pricing.json`，可选），同名模型以覆盖层整条为准。
+Claude 与 Codex 共用一份目录。文件改动被自动发现即时生效（也可 SIGHUP / `POST /v1/pricing/reload`）；
+**有任何错误整份不生效**，旧价格继续用，原因放在 `rejected.errors`。只有启动时没有旧表可退，才接受其中合法的条目。
+
+成本在**读取时**按当前目录计算，所有返回成本的接口都是这个口径：改价立即作用于历史数据，新模型补价后旧记录马上有价。
+口径是「按当前 API 单价折算」，不是历史实际计费。`usage_events.cost_usd` / `codex_events.cost_usd` 只是缓存，
+服务端按 `price_version`（目录内容的指纹，`cat-<12 位 hex>`，只改说明不变）在后台跟上。
+
+`models[]` 每项：`{"model","rates":{input,output,cache_read,cache_write,cache_write_5m,cache_write_1h},"tiers":[{"prompt_over","rates","multiply"}],"aliases","source","verified_at","origin":"bundled"|"override"}`。
+`rates` 只出现有价的字段；有 token 的那一项没有单价时成本为 null，绝不当 0。`tiers` 在提示 token 数**超过** `prompt_over` 时作用于整个请求
+（Claude 的提示 = 未缓存输入 + 缓存读 + 缓存写；Codex 的提示 = `input_tokens`）。
+
+`unpriced` 列出最近 30 天有用量、但目录里没有价格的模型。不计 Claude 额度的模型（`<synthetic>`、套壳路由到的非 Anthropic 模型）不列。
 
 ---
 

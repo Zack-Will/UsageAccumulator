@@ -6,6 +6,7 @@ import type {
   EventRow,
   LatestQuotaWindow,
   MachineRecord,
+  ModelSeen,
   QuotaBreakdownRow,
   Store,
 } from "./store.js";
@@ -38,6 +39,8 @@ const EVENT_COLUMNS = [
   "backfill",
   "cost_usd",
 ] as const;
+
+const INSERT_COLUMNS = [...EVENT_COLUMNS, "price_version"] as const;
 
 function n(v: unknown): number {
   // BIGINT 在驱动里可能是字符串，统一收成 number
@@ -169,7 +172,7 @@ export class PgStore implements Store {
    */
   async insertEvents(rows: EventRow[]): Promise<{ inserted: number; updated: number }> {
     if (rows.length === 0) return { inserted: 0, updated: 0 };
-    const payload = rows.map(({ event: e, costUsd }) => ({
+    const payload = rows.map(({ event: e, costUsd, priceVersion }) => ({
       message_id: e.messageId,
       request_id: e.requestId,
       semantic_id: e.semanticId,
@@ -194,6 +197,7 @@ export class PgStore implements Store {
       output_final: e.outputFinal,
       backfill: e.backfill,
       cost_usd: costUsd,
+      price_version: priceVersion ?? null,
     }));
     const keyed = payload.filter((p) => p.request_id !== "");
     const semantic = payload.filter((p) => p.request_id === "");
@@ -202,7 +206,7 @@ export class PgStore implements Store {
     if (keyed.length > 0) {
       // xmax = 0 ⇔ 这一行是新插入的；否则是 DO UPDATE 改的。被 WHERE 挡下的冲突不返回。
       const res = await this.sql<{ inserted: boolean }[]>`
-        INSERT INTO usage_events ${this.sql(keyed, ...EVENT_COLUMNS)}
+        INSERT INTO usage_events ${this.sql(keyed, ...INSERT_COLUMNS)}
         ON CONFLICT (message_id, request_id) DO UPDATE SET
           input_tokens          = EXCLUDED.input_tokens,
           output_tokens         = EXCLUDED.output_tokens,
@@ -211,7 +215,8 @@ export class PgStore implements Store {
           cache_write_5m_tokens = EXCLUDED.cache_write_5m_tokens,
           cache_write_1h_tokens = EXCLUDED.cache_write_1h_tokens,
           output_final          = EXCLUDED.output_final,
-          cost_usd              = EXCLUDED.cost_usd
+          cost_usd              = EXCLUDED.cost_usd,
+          price_version         = EXCLUDED.price_version
         WHERE EXCLUDED.output_tokens * 3 + (CASE EXCLUDED.output_final WHEN TRUE THEN 2 WHEN FALSE THEN 1 ELSE 0 END)
             > usage_events.output_tokens * 3 + (CASE usage_events.output_final WHEN TRUE THEN 2 WHEN FALSE THEN 1 ELSE 0 END)
         RETURNING (xmax = 0) AS inserted`;
@@ -222,12 +227,42 @@ export class PgStore implements Store {
     }
     if (semantic.length > 0) {
       const res = await this.sql<{ ok: number }[]>`
-        INSERT INTO usage_events ${this.sql(semantic, ...EVENT_COLUMNS)}
+        INSERT INTO usage_events ${this.sql(semantic, ...INSERT_COLUMNS)}
         ON CONFLICT DO NOTHING
         RETURNING 1 AS ok`;
       inserted += res.length;
     }
     return { inserted, updated };
+  }
+
+  async staleCostEvents(version: string, limit: number): Promise<UsageEvent[]> {
+    const rows = await this.sql<Record<string, unknown>[]>`
+      SELECT * FROM usage_events
+      WHERE price_version IS DISTINCT FROM ${version}
+      LIMIT ${limit}`;
+    return rows.map((r) => rowToEventRow(r).event);
+  }
+
+  async updateEventCosts(version: string, rows: { event: UsageEvent; costUsd: number | null }[]): Promise<void> {
+    if (rows.length === 0) return;
+    const ids = rows.map((r) => r.event.messageId);
+    const reqs = rows.map((r) => r.event.requestId);
+    // NUMERIC 列用字符串传，null 原样保留（缺价不是 0）。不在 JS 里先 toFixed：
+    // 浮点的 …5 往往略小于 5，会被舍掉，和入库时交给 Postgres 四舍五入的结果差在第 6 位
+    const costs = rows.map((r) => (r.costUsd === null ? null : String(r.costUsd)));
+    await this.sql`
+      UPDATE usage_events AS u
+      SET cost_usd = v.cost::numeric, price_version = ${version}
+      FROM unnest(${ids}::text[], ${reqs}::text[], ${costs as never}::text[]) AS v(message_id, request_id, cost)
+      WHERE u.message_id = v.message_id AND u.request_id = v.request_id`;
+  }
+
+  async modelsSeen(since: Date): Promise<ModelSeen[]> {
+    const rows = await this.sql<{ model: string; events: string | number; last_ts: Date }[]>`
+      SELECT model, count(*) AS events, max(ts) AS last_ts
+      FROM usage_events WHERE ts >= ${since}
+      GROUP BY model ORDER BY count(*) DESC`;
+    return rows.map((r) => ({ model: r.model, events: Number(r.events), lastTs: r.last_ts }));
   }
 
   async insertQuotaSnapshot(s: QuotaSnapshot, machineId: string | null = null): Promise<void> {

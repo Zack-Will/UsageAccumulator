@@ -5,7 +5,8 @@ import { buildApp } from "./app.js";
 import { startCalibrationJob } from "./calibration-job.js";
 import { loadConfig } from "./config.js";
 import { createLogger } from "./logger.js";
-import { loadPricingTable } from "./pricing.js";
+import { PriceBook } from "./pricing.js";
+import { startRepricing } from "./live-pricing.js";
 import { runMigrations } from "./migrate.js";
 import { PgStore } from "./store-pg.js";
 import { fetchGet } from "./quota-sampler.js";
@@ -22,12 +23,20 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const { table: pricing, errors: pricingErrors } = loadPricingTable(resolve(config.pricingFile));
-  if (pricingErrors.length > 0) {
-    // 缺定价不是致命错误：成本字段会是 null，其余指标照常。比猜一个价格安全得多。
-    log.warn({ errors: pricingErrors }, "pricing table incomplete; cost fields will be null");
-  }
-  log.info({ models: Object.keys(pricing).length }, "pricing table loaded");
+  // 缺定价不是致命错误：成本字段会是 null，其余指标照常。比猜一个价格安全得多。
+  const pricing = new PriceBook(
+    [
+      { kind: "bundled", path: resolve(config.pricingFile), optional: false },
+      { kind: "override", path: resolve(config.pricingOverrideFile), optional: true },
+    ],
+    log,
+  );
+  pricing.reload();
+  const stopPricingWatch = pricing.watch();
+  process.on("SIGHUP", () => {
+    log.info({}, "收到 SIGHUP，重新加载定价表");
+    pricing.reload();
+  });
 
   const sql = postgres(config.databaseUrl, { max: 10, idle_timeout: 30, onnotice: () => {} });
   await runMigrations(
@@ -36,7 +45,7 @@ async function main(): Promise<void> {
     log,
   );
 
-  const store = new PgStore(sql as postgres.Sql<Record<string, never>>);
+  const rawStore = new PgStore(sql as postgres.Sql<Record<string, never>>);
   // claude.ai 会话存文件不进库（见 quota-vault.ts）；服务端自己抓额度：额度在动时 10 秒一次，没变化逐次翻倍放慢到 5 分钟
   const quota = config.quotaSampling
     ? {
@@ -56,9 +65,13 @@ async function main(): Promise<void> {
         jitterMs: config.quotaJitterMs,
       }
     : undefined;
-  const { fastify, bus, sampler, codexSampler } = buildApp({
-    store, config, pricing, logger: log, ...(quota ? { quota } : {}), ...(codex ? { codex } : {}),
+  // 返回的 store 已包上「读取时按当前价格算成本」，后面的定时任务都用它
+  const { fastify, bus, sampler, codexSampler, store } = buildApp({
+    store: rawStore, config, pricing, logger: log, ...(quota ? { quota } : {}), ...(codex ? { codex } : {}),
   });
+  // 库里的 cost_usd 列在后台跟上价格变化（启动时补一次，之后每次改价再补）
+  const repricing = startRepricing(store, pricing, log);
+  void repricing.trigger();
 
   // usage_hourly 刷新（ARCHITECTURE §6.2）
   const refreshTimer =
@@ -101,6 +114,8 @@ async function main(): Promise<void> {
     stopCalibration();
     stopSampler();
     stopCodexSampler();
+    stopPricingWatch();
+    repricing.stop();
     if (refreshTimer) clearInterval(refreshTimer);
     clearInterval(streamTimer);
     await fastify.close();

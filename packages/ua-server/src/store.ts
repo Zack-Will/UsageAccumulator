@@ -13,6 +13,15 @@ export interface EventRow {
   event: UsageEvent;
   /** null = 该模型没有报价，不是 0 */
   costUsd: number | null;
+  /** costUsd 是按哪一版价格算的（PriceBook.version）。只在写入时有意义 */
+  priceVersion?: string | null;
+}
+
+/** 某个模型最近出现的情况，用来找出「有用量却没有价格」的模型 */
+export interface ModelSeen {
+  model: string;
+  events: number;
+  lastTs: Date;
 }
 
 export interface LatestQuotaWindow {
@@ -90,6 +99,16 @@ export interface Store {
   quotaWindowResets(profileId: string, windowKind: string, since: Date, until: Date): Promise<Date[]>;
 
   eventsInRange(profileId: string, from: Date, to: Date): Promise<EventRow[]>;
+
+  /**
+   * 价格版本不是 version 的事件（包括从没算过的），最多 limit 条。
+   * 读取路径不依赖存储的 cost_usd（读时现算），这只是让库里那一列跟上价格变化。
+   */
+  staleCostEvents(version: string, limit: number): Promise<UsageEvent[]>;
+  /** 写回成本与价格版本，按 (message_id, request_id) 定位 */
+  updateEventCosts(version: string, rows: { event: UsageEvent; costUsd: number | null }[]): Promise<void>;
+  /** since 以来出现过的模型（所有 profile） */
+  modelsSeen(since: Date): Promise<ModelSeen[]>;
 
   /**
    * 只取计额度事件的时间戳。

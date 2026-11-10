@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { computeCodexCost } from "../src/codex-pricing.js";
+import { readFileSync } from "node:fs";
+import { computeCodexCost as compute } from "../src/codex-pricing.js";
+import { buildPricingTable, parsePriceEntries } from "../src/pricing.js";
 import type { CodexUsageEvent } from "../src/codex-types.js";
 
 const event = (over: Partial<CodexUsageEvent> = {}): CodexUsageEvent => ({
@@ -8,7 +10,18 @@ const event = (over: Partial<CodexUsageEvent> = {}): CodexUsageEvent => ({
   input_tokens: 100_000, cached_input_tokens: 50_000, cache_write_input_tokens: 20_000,
   output_tokens: 10_000, reasoning_output_tokens: 5_000, total_tokens: 110_000, quality_flags: [], ...over,
 });
+// 用仓库里正式的价格表：这些数字原本写死在代码里，搬进数据文件后必须算出一模一样的结果
+const parsed = parsePriceEntries(JSON.parse(readFileSync(new URL("../../../deploy/pricing.json", import.meta.url), "utf8")));
+const TABLE = buildPricingTable([parsed.entries]);
+const computeCodexCost = (e: CodexUsageEvent) => compute(e, TABLE, "v-test");
+
 describe("Codex current Standard API equivalent", () => {
+  it("loads the bundled catalog without errors", () => {
+    expect(parsed.errors).toEqual([]);
+  });
+  it("stamps the catalog version it priced with", () => {
+    expect(computeCodexCost(event()).price_version).toBe("v-test");
+  });
   it("partitions input and does not charge reasoning twice", () => {
     expect(computeCodexCost(event()).usd).toBe(1.1); // .3 net + .05 cached + .25 writes + .5 output
   });

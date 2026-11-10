@@ -1,4 +1,4 @@
-import type { CodexAccountUsageSnapshot, CodexIngestBatch, CodexQuotaSnapshot } from "@ua/core";
+import type { CodexAccountUsageSnapshot, CodexIngestBatch, CodexQuotaSnapshot, CodexUsageEvent } from "@ua/core";
 import {
   assertAccountBinding, canonicalCodexEvent, newerSnapshot, normalizeCodexEmail,
   type CodexAccountRecord, type CodexCollectorRecord, type CodexCost, type CodexEventRow,
@@ -80,6 +80,27 @@ export class MemoryCodexStore implements CodexStore {
     return structuredClone([...this.eventRows.values()].filter((r) => r.account_id === accountId && r.event.ts >= from && r.event.ts < to)
       .map((r) => ({ ...r, conflicting_observations: conflicts.get(r.event.event_id) ?? 0 }))
       .sort((a, b) => a.event.ts.localeCompare(b.event.ts) || a.event.event_id.localeCompare(b.event.event_id)));
+  }
+  async staleCostEvents(version: string, limit: number): Promise<Array<{ account_id: string; event: CodexUsageEvent }>> {
+    return structuredClone([...this.eventRows.values()].filter((r) => r.cost.price_version !== version).slice(0, limit)
+      .map((r) => ({ account_id: r.account_id, event: r.event })));
+  }
+  async updateEventCosts(rows: Array<{ account_id: string; event_id: string; cost: CodexCost }>): Promise<void> {
+    for (const { account_id, event_id, cost } of rows) {
+      for (const [key, r] of this.eventRows) {
+        if (r.account_id === account_id && r.event.event_id === event_id) this.eventRows.set(key, { ...r, cost: { ...cost } });
+      }
+    }
+  }
+  async modelsSeen(since: string): Promise<Array<{ model: string; events: number; last_ts: string }>> {
+    const by = new Map<string, { model: string; events: number; last_ts: string }>();
+    for (const r of this.eventRows.values()) {
+      if (r.event.ts < since) continue;
+      const cur = by.get(r.event.model);
+      if (cur) { cur.events++; if (r.event.ts > cur.last_ts) cur.last_ts = r.event.ts; }
+      else by.set(r.event.model, { model: r.event.model, events: 1, last_ts: r.event.ts });
+    }
+    return [...by.values()].sort((a, b) => b.events - a.events);
   }
   async quota(accountId: string, machineId?: string): Promise<CodexSnapshotRecord<CodexQuotaSnapshot> | null> {
     if (machineId === undefined) return structuredClone(this.quotaRows.get(accountId) ?? null);
