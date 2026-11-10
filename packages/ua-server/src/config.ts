@@ -57,6 +57,11 @@ const schema = z.object({
   quotaIntervalMs: z.coerce.number().int().positive().default(300_000),
   quotaJitterMs: z.coerce.number().int().nonnegative().default(60_000),
   /**
+   * Claude 额度的最短采样间隔：额度一变（或探针报来新事件）就回到它，之后没变化就翻倍，
+   * 直到 quotaIntervalMs。Codex 不走这套
+   */
+  quotaMinIntervalMs: z.coerce.number().int().positive().default(10_000),
+  /**
    * 服务端直接抓 Codex 额度（chatgpt.com /wham/usage）。默认开；没在看板保存登录时什么也不做。
    * 关掉就只收探针经 app-server 读到的快照。
    */
@@ -112,6 +117,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     claudeBaseUrl: env["UA_CLAUDE_BASE_URL"],
     quotaIntervalMs: env["UA_QUOTA_INTERVAL_MS"],
     quotaJitterMs: env["UA_QUOTA_JITTER_MS"],
+    quotaMinIntervalMs: env["UA_QUOTA_MIN_INTERVAL_MS"],
     codexAccountEmail: env["UA_CODEX_ACCOUNT_EMAIL"],
     codexSampling: env["UA_CODEX_SAMPLING"],
     codexSessionDir: env["UA_CODEX_SESSION_DIR"],

@@ -67,6 +67,7 @@ export interface BuildAppOptions {
     client: Pick<ClaudeWebClient, "organizations" | "snapshot">;
     intervalMs?: number;
     jitterMs?: number;
+    minIntervalMs?: number;
     authBackoffMs?: number[];
   };
   /** 服务端直接抓 Codex 额度。不给就不开，/v1/codex/session 报 disabled */
@@ -301,6 +302,7 @@ export function buildApp(opts: BuildAppOptions) {
         now,
         ...(opts.quota.intervalMs !== undefined ? { intervalMs: opts.quota.intervalMs } : {}),
         ...(opts.quota.jitterMs !== undefined ? { jitterMs: opts.quota.jitterMs } : {}),
+        ...(opts.quota.minIntervalMs !== undefined ? { minIntervalMs: opts.quota.minIntervalMs } : {}),
         ...(opts.quota.authBackoffMs !== undefined ? { authBackoffMs: opts.quota.authBackoffMs } : {}),
       })
     : null;
@@ -547,6 +549,8 @@ export function buildApp(opts: BuildAppOptions) {
         }
       }
       for (const [profileId, agg] of byProfile) {
+        // 有新用量进来 = 正在用，额度采样回到最短间隔（补传的旧事件由采样器自己忽略）
+        sampler?.noteActivity(profileId, new Date(agg.lastTs));
         bus.publish({
           name: "event_batch",
           profileId,

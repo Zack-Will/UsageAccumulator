@@ -37,13 +37,14 @@ async function main(): Promise<void> {
   );
 
   const store = new PgStore(sql as postgres.Sql<Record<string, never>>);
-  // claude.ai 会话存文件不进库（见 quota-vault.ts）；服务端每 5 分钟自己抓一次额度
+  // claude.ai 会话存文件不进库（见 quota-vault.ts）；服务端自己抓额度：额度在动时 10 秒一次，没变化逐次翻倍放慢到 5 分钟
   const quota = config.quotaSampling
     ? {
         vault: new FileSessionVault(resolve(config.claudeSessionDir), (msg) => log.warn({}, msg)),
         client: new ClaudeWebClient(fetchGet, config.claudeBaseUrl),
         intervalMs: config.quotaIntervalMs,
         jitterMs: config.quotaJitterMs,
+        minIntervalMs: config.quotaMinIntervalMs,
       }
     : undefined;
   // Codex 的服务端专用登录同样存文件不进库（见 codex-web.ts 为什么不能和本机 CLI 共用一份）

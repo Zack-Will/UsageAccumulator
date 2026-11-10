@@ -9,7 +9,7 @@
 │ ua-probe     │ ─────────────▶ │ ua-server          │ ◀─────────── │ Web 看板      │
 │ 读 ~/.claude │  machine token │  + Postgres        │              │ Mac 菜单栏    │
 └──────────────┘                │  + 托管看板静态文件 │              │ 安卓 App/小部件│
-       × N 台                   │  + 每 5 分钟抓额度  │──▶ claude.ai └───────────────┘
+       × N 台                   │  + 10s~5min 抓额度  │──▶ claude.ai └───────────────┘
                                 └────────────────────┘
 ```
 
@@ -95,6 +95,7 @@ openssl rand -hex 32   # → UA_ENROLL_TOKEN
 | `UA_WEB_DIR` | 空 | 看板构建产物目录；空 = 只提供 API |
 | `UA_PRICING_FILE` | `deploy/pricing.json` | 定价表 |
 | `UA_QUOTA_SAMPLING` | `true` | 服务端直接抓 claude.ai 额度 |
+| `UA_QUOTA_MIN_INTERVAL_MS` / `UA_QUOTA_INTERVAL_MS` | 10 秒 / 5 分钟 | 额度采样间隔的下限 / 上限：百分比一变或探针报来新事件就回到下限，之后每次没变化翻倍直到上限 |
 | `UA_CLAUDE_SESSION_DIR` | `~/.config/ua-server/claude-sessions` | claude.ai 会话存放目录（0600 文件，不进数据库） |
 | `UA_SESSION_TTL_MS` | 30 天 | 看板会话有效期 |
 | `UA_DASHBOARD_URL` | 空 | 菜单栏「打开看板」跳转地址 |
@@ -231,7 +232,7 @@ ua-probe status
       服务端会先拿它去问 claude.ai，认了才落盘，并立刻抓一次。
    3. 如果这个账号下有多个组织（比如个人订阅 + team），对话框会让你**选组织**：每个 profile 绑定一个组织。
       想同时看两份订阅，就在两个 profile 下各存一次同样的 `sessionKey`、各选各的组织。
-3. 之后服务端每 5 分钟抓一次。顶栏状态含义：
+3. 之后服务端自动抓：额度在动时 10 秒一次，没变化就逐次翻倍放慢，最慢 5 分钟一次。顶栏状态含义：
 
 | 顶栏显示 | 含义 | 处理 |
 |---|---|---|

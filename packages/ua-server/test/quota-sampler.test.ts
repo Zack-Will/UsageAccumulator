@@ -24,6 +24,8 @@ class FakeClaude {
   orgs: ClaudeOrg[] = [{ uuid: "org-1", name: "Solo", rateLimitTier: "default_claude_max_5x", capabilities: ["chat", "claude_max"] }];
   /** usage 对这些组织回 403（账号已不在该组织里） */
   gone = new Set<string>();
+  /** 5h 窗口的百分比，测试里改它来模拟额度在动 */
+  pct = 42;
   async organizations(sessionKey: string): Promise<ClaudeOrg[]> {
     this.calls.push(`org:${sessionKey}`);
     if (this.mode !== "ok") this.fail();
@@ -33,7 +35,7 @@ class FakeClaude {
     this.calls.push(`usage:${sessionKey}:${orgId}`);
     if (this.mode !== "ok") this.fail();
     if (this.gone.has(orgId)) throw new QuotaAuthError("GET x 返回 403，sessionKey 可能已失效", 403, "session");
-    return { profileId, capturedAt: now, windows: [{ windowKind: "five_hour", utilizationPct: 42, resetsAt: null }], raw: {} };
+    return { profileId, capturedAt: now, windows: [{ windowKind: "five_hour", utilizationPct: this.pct, resetsAt: null }], raw: {} };
   }
 }
 
@@ -82,7 +84,7 @@ describe("QuotaSampler", () => {
     expect((await sampler.status("claude-official")).state).toBe("none");
   });
 
-  it("存了会话、还没抓过时是 pending；抓到后入库并按 间隔 + 抖动 排下一次", async () => {
+  it("存了会话、还没抓过时是 pending；抓到后入库，第一次没得比，按最短间隔 + 抖动排下一次", async () => {
     await vault.write("claude-official", KEY);
     expect((await sampler.status("claude-official")).state).toBe("pending");
 
@@ -91,16 +93,16 @@ describe("QuotaSampler", () => {
     const s = await sampler.status("claude-official");
     expect(s.state).toBe("ok");
     expect(s.lastOkAt).toEqual(at(0));
-    expect(s.nextAttemptAt).toEqual(at(5 * MIN + 30_000)); // random 0.5 × 60s 抖动
+    expect(s.nextAttemptAt).toEqual(at(11_000)); // 10s + 0.5 × (10s × 20%) 抖动
   });
 
   it("没到点不抓，到点再抓；org 只解析一次", async () => {
     await vault.write("claude-official", KEY);
     await sampler.tickAll();
-    clock = at(4 * MIN);
+    clock = at(5_000);
     await sampler.tickAll();
     expect(recorded).toHaveLength(1);
-    clock = at(6 * MIN);
+    clock = at(11_000);
     await sampler.tickAll();
     expect(recorded).toHaveLength(2);
     expect(claude.calls.filter((c) => c.startsWith("org:"))).toHaveLength(1);
@@ -213,6 +215,79 @@ describe("QuotaSampler", () => {
     const s = await sampler.status("claude-official");
     expect(JSON.stringify(logs)).not.toContain(KEY);
     expect(JSON.stringify(s)).not.toContain(KEY);
+  });
+});
+
+describe("QuotaSampler · 间隔随额度变化伸缩", () => {
+  const P = "claude-official";
+  const next = async () => (await sampler.status(P)).nextAttemptAt!;
+  /** 走到下一次排好的时刻采一次，返回这次排出的间隔（毫秒） */
+  const step = async () => {
+    clock = await next();
+    const before = clock.getTime();
+    await sampler.tickAll();
+    return (await next()).getTime() - before;
+  };
+  // random 固定 0.5：抖动 = 0.5 × 间隔 × 20%，实际间隔 = 基础 × 1.1
+  const S = 1_000;
+
+  it("额度不动：10s → 20s → 40s → 80s → 160s 逐次翻倍，封顶 5 分钟", async () => {
+    await vault.write(P, KEY);
+    await sampler.tickAll();
+    const gaps = [];
+    for (let i = 0; i < 6; i++) gaps.push(await step());
+    expect(gaps).toEqual([22 * S, 44 * S, 88 * S, 176 * S, 330 * S, 330 * S]);
+  });
+
+  it("额度一变就回到 10 秒（网页版、手机端的消耗探针看不到，也靠这个发现）", async () => {
+    await vault.write(P, KEY);
+    await sampler.tickAll();
+    for (let i = 0; i < 6; i++) await step();
+    claude.pct = 50;
+    expect(await step()).toBe(11 * S);
+    expect(await step()).toBe(22 * S); // 之后又不动了，重新开始翻倍
+  });
+
+  it("探针报来新事件：间隔回到最短，已排在几分钟后的下一次提前", async () => {
+    await vault.write(P, KEY);
+    await sampler.tickAll();
+    for (let i = 0; i < 6; i++) await step();
+    const last = clock;
+    expect((await next()).getTime() - last.getTime()).toBe(330 * S);
+
+    clock = new Date(last.getTime() + 3 * S);
+    sampler.noteActivity(P, clock);
+    expect(await next()).toEqual(new Date(last.getTime() + 10 * S)); // 上次采集 + 10s
+    expect(await step()).toBe(22 * S); // 这次百分比没变 → 从最短翻倍
+  });
+
+  it("上次采集已过去超过最短间隔时，报来事件就下一轮立刻采", async () => {
+    await vault.write(P, KEY);
+    await sampler.tickAll();
+    for (let i = 0; i < 6; i++) await step();
+    clock = new Date(clock.getTime() + MIN);
+    sampler.noteActivity(P);
+    expect(await next()).toEqual(clock);
+  });
+
+  it("补传的旧事件不算在用", async () => {
+    await vault.write(P, KEY);
+    await sampler.tickAll();
+    for (let i = 0; i < 6; i++) await step();
+    const scheduled = await next();
+    sampler.noteActivity(P, new Date(clock.getTime() - 60 * MIN));
+    expect(await next()).toEqual(scheduled);
+  });
+
+  it("退避中（会话失效）不因为在用就提前去敲", async () => {
+    await vault.write(P, KEY);
+    claude.mode = "session";
+    await sampler.tickAll();
+    const backoff = await next();
+    expect(backoff).toEqual(at(15 * MIN));
+    clock = at(MIN);
+    sampler.noteActivity(P);
+    expect(await next()).toEqual(backoff);
   });
 });
 

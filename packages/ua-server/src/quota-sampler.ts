@@ -69,6 +69,10 @@ interface Slot {
   lastAttemptAt: Date | null;
   nextAttemptAt: Date | null;
   error: string | null;
+  /** 上一次成功采到的各窗口百分比，用来判断「额度在动」 */
+  lastPcts: Map<string, number> | null;
+  /** 当前的正常采样间隔：一有变化就回到最短，之后每次没变化翻一倍，封顶到 intervalMs */
+  curIntervalMs: number;
 }
 
 interface Log {
@@ -89,8 +93,16 @@ export interface QuotaSamplerOptions {
   /** 入库 + 推送，与探针上报走同一条路（app.ts recordQuota） */
   record: (snapshot: QuotaSnapshot) => Promise<void>;
   log: Log;
+  /** 最长采样间隔（一直没变化时稳定在这里） */
   intervalMs?: number;
+  /** 抖动上限；实际抖动取当前间隔的 20% 与它的较小者 */
   jitterMs?: number;
+  /**
+   * 最短采样间隔。Fable 跑起来 5h 额度 6 分钟能涨 10 个点以上，5 分钟一采根本跟不上；
+   * 一直空闲又没必要频繁去敲 claude.ai。所以像指数退避那样走：
+   * 额度一变（或探针报来新事件）就回到最短，之后每次没变化翻一倍，直到 intervalMs。
+   */
+  minIntervalMs?: number;
   authBackoffMs?: number[];
   /** 轮询粒度：多久看一次谁到点了。远小于 intervalMs，抖动才落得准 */
   pollMs?: number;
@@ -100,6 +112,7 @@ export interface QuotaSamplerOptions {
   random?: () => number;
 }
 
+const DEFAULT_MIN_INTERVAL_MS = 10_000;
 const DEFAULT_BACKOFF_MS = [15 * 60_000, 60 * 60_000, 6 * 60 * 60_000];
 /** 一次采集最多两三个 20 秒超时的请求加几条 SQL，90 秒足够宽 */
 const DEFAULT_ATTEMPT_TIMEOUT_MS = 90_000;
@@ -119,6 +132,7 @@ export class QuotaSampler {
   private readonly inflight = new Map<string, Promise<void>>();
   private readonly intervalMs: number;
   private readonly jitterMs: number;
+  private readonly minIntervalMs: number;
   private readonly backoffMs: number[];
   private readonly pollMs: number;
   private readonly attemptTimeoutMs: number;
@@ -128,8 +142,10 @@ export class QuotaSampler {
   constructor(private readonly opts: QuotaSamplerOptions) {
     this.intervalMs = opts.intervalMs ?? 300_000;
     this.jitterMs = opts.jitterMs ?? 60_000;
+    this.minIntervalMs = Math.min(opts.minIntervalMs ?? DEFAULT_MIN_INTERVAL_MS, this.intervalMs);
     this.backoffMs = opts.authBackoffMs?.length ? opts.authBackoffMs : DEFAULT_BACKOFF_MS;
-    this.pollMs = opts.pollMs ?? 30_000;
+    // 最短间隔只有 10 秒，轮询粒度要比它细，否则实际间隔会被拉长
+    this.pollMs = opts.pollMs ?? 2_000;
     this.attemptTimeoutMs = opts.attemptTimeoutMs ?? DEFAULT_ATTEMPT_TIMEOUT_MS;
     this.now = opts.now ?? (() => new Date());
     this.random = opts.random ?? Math.random;
@@ -151,6 +167,28 @@ export class QuotaSampler {
 
   forget(profileId: string): void {
     this.slots.delete(profileId);
+  }
+
+  /**
+   * 这个 profile 正在被使用（探针刚报来新事件）：间隔回到最短，并把已经排好的下一次提前 ——
+   * 不用等满当前间隔才发现在用。
+   * 只动正常状态的：退避中的（会话失效、被拦）照旧等，不能因为在用就去狂敲。
+   */
+  noteActivity(profileId: string, at: Date = this.now()): void {
+    const now = this.now();
+    if (now.getTime() - at.getTime() > this.intervalMs) return; // 补传的旧事件不算
+    const slot = this.slots.get(profileId);
+    if (!slot || slot.state !== "ok" || !slot.nextAttemptAt || !slot.lastAttemptAt) return;
+    slot.curIntervalMs = this.minIntervalMs;
+    const soonest = new Date(Math.max(slot.lastAttemptAt.getTime() + this.minIntervalMs, now.getTime()));
+    if (slot.nextAttemptAt > soonest) slot.nextAttemptAt = soonest;
+  }
+
+  /** 按当前间隔排下一次正常采集，抖动随间隔缩放 */
+  private nextOk(slot: Slot, now: Date): Date {
+    const base = slot.curIntervalMs;
+    const jitter = Math.min(this.jitterMs, base * 0.2);
+    return new Date(now.getTime() + base + Math.round(this.random() * jitter));
   }
 
   async status(profileId: string): Promise<SamplerStatus> {
@@ -254,6 +292,8 @@ export class QuotaSampler {
         lastAttemptAt: null,
         nextAttemptAt: null,
         error: null,
+        lastPcts: null,
+        curIntervalMs: this.minIntervalMs,
       };
       this.slots.set(profileId, slot);
     }
@@ -291,12 +331,19 @@ export class QuotaSampler {
         throw err;
       }
       await this.opts.record(snap);
+      // 百分比变了 = 有人在用（网页版、手机端也算，这些探针看不到）：回到最短间隔；
+      // 没变就翻倍，慢慢放到最长。第一次采（没得比）按最短，刚启动或刚换会话时先密一点
+      const pcts = new Map(snap.windows.map((w) => [w.windowKind, w.utilizationPct] as const));
+      const prev = slot.lastPcts;
+      const changed = !prev || [...pcts].some(([k, v]) => prev.has(k) && prev.get(k) !== v);
+      slot.curIntervalMs = changed ? this.minIntervalMs : Math.min(slot.curIntervalMs * 2, this.intervalMs);
+      slot.lastPcts = pcts;
       if (was !== "ok") this.opts.log.info({ profileId, windows: snap.windows.length }, "额度采集正常");
       slot.state = "ok";
       slot.failures = 0;
       slot.lastOkAt = now;
       slot.error = null;
-      slot.nextAttemptAt = new Date(now.getTime() + this.intervalMs + Math.round(this.random() * this.jitterMs));
+      slot.nextAttemptAt = this.nextOk(slot, now);
     } catch (err) {
       if (err instanceof QuotaAuthError) {
         slot.failures++;
